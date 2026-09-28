@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import Navbar from './components/Navbar';
 import Dashboard from './components/Dashboard';
 import MasterBarang from './components/MasterBarang';
@@ -7,9 +7,13 @@ import DivisiFO from './components/DivisiFO';
 import DivisiTower from './components/DivisiTower';
 import KeluarMasukBarang from './components/KeluarMasukBarang';
 import Laporan from './components/Laporan';
-import BarcodeScannerModal from './components/BarcodeScannerModal';
 import BarcodeLabelModal from './components/BarcodeLabelModal';
+import { subscribe } from './utils/notify';
 import { RefreshCw, CheckCircle2, AlertTriangle } from 'lucide-react';
+
+// Pemindai barcode memuat library kamera yang besar (html5-qrcode),
+// jadi baru diunduh saat pengguna benar-benar membuka pemindai.
+const BarcodeScannerModal = lazy(() => import('./components/BarcodeScannerModal'));
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState('dashboard');
@@ -23,17 +27,28 @@ export default function App() {
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [isLabelModalOpen, setIsLabelModalOpen] = useState(false);
   const [itemForLabel, setItemForLabel] = useState(null);
+  const [itemToAdjust, setItemToAdjust] = useState(null);
   const [isResetting, setIsResetting] = useState(false);
 
   // Toast / notification
   const [toast, setToast] = useState(null);
+  const toastTimer = useRef(null);
 
-  const showToast = (message, type = 'success') => {
+  const showToast = useCallback((message, type = 'success') => {
     setToast({ message, type });
-    setTimeout(() => {
-      setToast(null);
-    }, 4000);
-  };
+    clearTimeout(toastTimer.current);
+    // Pesan error dibiarkan lebih lama karena biasanya lebih panjang & penting
+    toastTimer.current = setTimeout(() => setToast(null), type === 'error' ? 7000 : 4000);
+  }, []);
+
+  // Komponen lain bisa memanggil notify() tanpa perlu menerima prop
+  useEffect(() => {
+    const unsubscribe = subscribe(({ message, type }) => showToast(message, type));
+    return () => {
+      unsubscribe();
+      clearTimeout(toastTimer.current);
+    };
+  }, [showToast]);
 
   // Load all master and division records
   const loadAllData = useCallback(async () => {
@@ -91,13 +106,19 @@ export default function App() {
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans text-slate-800 antialiased selection:bg-indigo-500 selection:text-white">
       {/* Toast Alert Notification */}
       {toast && (
-        <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2 px-4 py-3 bg-slate-900 text-white rounded-xl shadow-2xl border border-slate-700 animate-slideUp text-xs font-medium">
+        <div
+          role="status"
+          className={`fixed bottom-4 left-4 right-4 sm:left-auto sm:right-5 sm:bottom-5 z-[60] flex items-start justify-center sm:justify-start gap-2 px-4 py-3 bg-slate-900 text-white rounded-xl shadow-2xl border animate-slideUp text-xs font-medium sm:max-w-md sm:ml-auto ${
+            toast.type === 'success' ? 'border-emerald-500/40' : 'border-rose-500/50'
+          }`}
+          style={{ marginBottom: 'env(safe-area-inset-bottom)' }}
+        >
           {toast.type === 'success' ? (
             <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
           ) : (
             <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
           )}
-          <span>{toast.message}</span>
+          <span className="leading-snug">{toast.message}</span>
         </div>
       )}
 
@@ -111,7 +132,7 @@ export default function App() {
       />
 
       {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6">
         {loading ? (
           <div className="flex flex-col items-center justify-center py-32 text-slate-400">
             <RefreshCw className="w-10 h-10 animate-spin text-indigo-600 mb-3" />
@@ -134,6 +155,8 @@ export default function App() {
                 onRefresh={loadAllData}
                 onOpenBarcodeModal={handleOpenBarcodeLabel}
                 onOpenScanner={() => setIsScannerOpen(true)}
+                itemToAdjust={itemToAdjust}
+                onItemToAdjustHandled={() => setItemToAdjust(null)}
               />
             )}
 
@@ -179,8 +202,8 @@ export default function App() {
       </main>
 
       {/* Footer */}
-      <footer className="no-print bg-white border-t border-slate-200 py-6 text-xs text-slate-500 mt-auto">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-3">
+      <footer className="no-print bg-white border-t border-slate-200 py-5 sm:py-6 text-xs text-slate-500 mt-auto">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-2 sm:gap-3 text-center sm:text-left">
           <div className="flex items-center gap-2">
             <span className="font-bold text-slate-800">SIM-ASET ISP</span>
             <span>•</span>
@@ -193,18 +216,32 @@ export default function App() {
       </footer>
 
       {/* Barcode Scanner Modal (Webcam + USB Barcode Gun) */}
-      <BarcodeScannerModal
-        isOpen={isScannerOpen}
-        onClose={() => setIsScannerOpen(false)}
-        onPrintBarcode={(item) => {
-          setIsScannerOpen(false);
-          handleOpenBarcodeLabel(item);
-        }}
-        onStockAdjust={(item) => {
-          setIsScannerOpen(false);
-          setCurrentTab('master');
-        }}
-      />
+      {isScannerOpen && (
+        <Suspense
+          fallback={
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-sm">
+              <div className="flex items-center gap-2 px-4 py-3 bg-white rounded-xl shadow-xl border border-slate-200 text-xs font-semibold text-slate-700">
+                <RefreshCw className="w-4 h-4 animate-spin text-indigo-600" />
+                <span>Memuat pemindai barcode...</span>
+              </div>
+            </div>
+          }
+        >
+          <BarcodeScannerModal
+            isOpen
+            onClose={() => setIsScannerOpen(false)}
+            onPrintBarcode={(item) => {
+              setIsScannerOpen(false);
+              handleOpenBarcodeLabel(item);
+            }}
+            onStockAdjust={(item) => {
+              setIsScannerOpen(false);
+              setItemToAdjust(item);
+              setCurrentTab('master');
+            }}
+          />
+        </Suspense>
+      )}
 
       {/* Barcode Label Print Modal */}
       <BarcodeLabelModal

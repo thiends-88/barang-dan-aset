@@ -6,6 +6,91 @@
   }
 }
 
+/* ============================================================
+   OPTIMASI MOBILE / RESPONSIF
+   ============================================================ */
+
+/* Cegah pembesaran teks otomatis pada layar kecil */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* Cegah scroll horizontal yang tidak diinginkan.
+   Memakai `clip` (bukan `hidden`) agar position: sticky pada Navbar tetap bekerja. */
+body {
+  overflow-x: clip;
+}
+
+/* Hilangkan highlight biru saat elemen di-tap di perangkat sentuh */
+button,
+a,
+[role="button"],
+summary,
+label {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+/* Scroll di perangkat iOS terasa lebih halus & tidak "mentok" */
+.overflow-x-auto,
+.overflow-y-auto {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Utility: sembunyikan scrollbar (dipakai navigasi mobile di Navbar) */
+.scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* Animasi toast notifikasi (dipakai App.jsx) */
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-slideUp {
+  animation: slideUp 0.25s ease-out both;
+}
+
+/* Kunci zoom otomatis iOS: ukuran input minimal 16px di layar kecil */
+@media (max-width: 767px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+
+  /* Area sentuh lebih nyaman untuk tombol di dalam tabel (jari, bukan kursor) */
+  table button {
+    min-height: 36px;
+    min-width: 36px;
+  }
+}
+
+/* Kurangi animasi bagi pengguna yang mengaktifkan "reduce motion" */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 @media print {
   body {
     background-color: white !important;

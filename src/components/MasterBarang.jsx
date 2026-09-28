@@ -20,6 +20,7 @@ import {
 import BarcodeRenderer from './BarcodeRenderer';
 import CategoryManagerModal from './CategoryManagerModal';
 import { formatRupiah, formatNumber } from '../utils/formatters';
+import { notify } from '../utils/notify';
 
 const DEFAULT_CATEGORIES = [
   'Perangkat Aktif Pelanggan',
@@ -39,7 +40,9 @@ export default function MasterBarang({
   items, 
   onRefresh, 
   onOpenBarcodeModal, 
-  onOpenScanner 
+  onOpenScanner,
+  itemToAdjust,
+  onItemToAdjustHandled
 }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
@@ -160,6 +163,15 @@ export default function MasterBarang({
     setIsFormModalOpen(true);
   };
 
+  // Dibuka otomatis saat pengguna menekan "Sesuaikan Stok" dari hasil pemindaian barcode
+  useEffect(() => {
+    if (!itemToAdjust) return;
+    const terbaru = items.find((i) => i.kode_barang === itemToAdjust.kode_barang) || itemToAdjust;
+    handleOpenAdjust(terbaru, 'MASUK');
+    if (onItemToAdjustHandled) onItemToAdjustHandled();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itemToAdjust]);
+
   const handleOpenAdjust = (item, type = 'MASUK') => {
     setAdjustingItem(item);
     setAdjustData({
@@ -207,6 +219,7 @@ export default function MasterBarang({
       }
 
       setIsFormModalOpen(false);
+      notify(editingItem ? 'Master barang berhasil diperbarui' : 'Master barang baru berhasil disimpan', 'success');
       onRefresh();
       fetchCategories();
     } catch (err) {
@@ -234,9 +247,10 @@ export default function MasterBarang({
       }
 
       setIsAdjustModalOpen(false);
+      notify(data.message || 'Stok berhasil disesuaikan', 'success');
       onRefresh();
     } catch (err) {
-      alert(err.message);
+      notify(err.message, 'error');
     } finally {
       setIsSubmitting(false);
     }
@@ -253,9 +267,10 @@ export default function MasterBarang({
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Gagal menghapus barang');
       }
+      notify(data.message || `Barang ${item.nama_barang} berhasil dihapus`, 'success');
       onRefresh();
     } catch (err) {
-      alert(err.message);
+      notify(err.message, 'error');
     }
   };
 
@@ -392,7 +407,7 @@ export default function MasterBarang({
 
         {/* Table Content */}
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+          <table className="w-full min-w-[960px] text-left text-xs">
             <thead className="bg-slate-50 text-slate-600 border-b border-slate-200 uppercase tracking-wider font-semibold">
               <tr>
                 <th className="py-3 px-4">Kode & Barcode</th>
@@ -555,9 +570,9 @@ export default function MasterBarang({
 
       {/* Add / Edit Master Barang Modal */}
       {isFormModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
-          <div className="relative w-full max-w-xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-8">
-            <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between border-b border-slate-800">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
+          <div className="relative w-full max-w-xl bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl border border-slate-200 overflow-hidden sm:my-8 pb-[env(safe-area-inset-bottom)] sm:pb-0 max-h-[92vh] flex flex-col">
+            <div className="bg-slate-900 text-white px-4 sm:px-6 py-3.5 sm:py-4 flex items-center justify-between border-b border-slate-800">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-lg bg-indigo-600/40 border border-indigo-400/30 flex items-center justify-center">
                   <Package className="w-5 h-5 text-indigo-300" />
@@ -579,7 +594,7 @@ export default function MasterBarang({
               </button>
             </div>
 
-            <form onSubmit={handleSaveItem} className="p-6 space-y-4">
+            <form onSubmit={handleSaveItem} className="p-4 sm:p-6 space-y-4 overflow-y-auto flex-1">
               {formError && (
                 <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs flex items-center gap-2">
                   <AlertTriangle className="w-4 h-4 shrink-0" />
@@ -833,9 +848,9 @@ export default function MasterBarang({
 
       {/* Quick Stock Adjust Modal */}
       {isAdjustModalOpen && adjustingItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
-          <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-8">
-            <div className={`px-6 py-4 text-white flex items-center justify-between ${
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
+          <div className="relative w-full max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl border border-slate-200 overflow-hidden sm:my-8 pb-[env(safe-area-inset-bottom)] sm:pb-0 max-h-[92vh] flex flex-col">
+            <div className={`px-4 sm:px-6 py-3.5 sm:py-4 text-white flex items-center justify-between ${
               adjustData.jenis === 'MASUK' ? 'bg-emerald-700' : 'bg-rose-700'
             }`}>
               <div className="flex items-center gap-3">
@@ -857,7 +872,7 @@ export default function MasterBarang({
               </button>
             </div>
 
-            <form onSubmit={handleSaveAdjust} className="p-6 space-y-4">
+            <form onSubmit={handleSaveAdjust} className="p-4 sm:p-6 space-y-4 overflow-y-auto flex-1">
               <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between text-xs">
                 <div>
                   <span className="text-slate-500 block">Stok Gudang Saat Ini:</span>
@@ -877,7 +892,7 @@ export default function MasterBarang({
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Jenis Mutasi
                 </label>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <button
                     type="button"
                     onClick={() => setAdjustData({ ...adjustData, jenis: 'MASUK' })}

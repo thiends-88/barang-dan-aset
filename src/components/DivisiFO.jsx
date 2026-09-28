@@ -17,6 +17,7 @@ import {
   Printer
 } from 'lucide-react';
 import { formatRupiah, formatNumber, formatDate } from '../utils/formatters';
+import { notify } from '../utils/notify';
 import WorkOrderPrintModal from './WorkOrderPrintModal';
 
 const DEFAULT_UNITS = ['unit', 'roll', 'meter', 'bks', 'pcs'];
@@ -213,6 +214,7 @@ export default function DivisiFO({ foSites, items, onRefresh }) {
       }
 
       setIsFormModalOpen(false);
+      notify(editingSite ? 'Data titik FO berhasil diperbarui' : 'Titik FO baru berhasil disimpan', 'success');
       onRefresh();
     } catch (err) {
       setFormError(err.message);
@@ -223,7 +225,7 @@ export default function DivisiFO({ foSites, items, onRefresh }) {
 
   // Delete FO Site
   const handleDeleteFOSite = async (site) => {
-    if (!window.confirm(`Yakin ingin menghapus titik FO "${site.daerah_lokasi}"?`)) {
+    if (!window.confirm(`Yakin ingin menghapus titik FO "${site.daerah_lokasi}"? Seluruh barang yang masih terpasang akan dikembalikan ke stok gudang.`)) {
       return;
     }
 
@@ -236,9 +238,10 @@ export default function DivisiFO({ foSites, items, onRefresh }) {
       if (selectedSiteDetail && selectedSiteDetail.id === site.id) {
         setSelectedSiteDetail(null);
       }
+      notify(data.message || 'Titik FO berhasil dihapus', 'success');
       onRefresh();
     } catch (err) {
-      alert(err.message);
+      notify(err.message, 'error');
     }
   };
 
@@ -327,7 +330,7 @@ export default function DivisiFO({ foSites, items, onRefresh }) {
 
         {/* Table Content */}
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+          <table className="w-full min-w-[760px] text-left text-xs">
             <thead className="bg-slate-50 text-slate-600 border-b border-slate-200 uppercase tracking-wider font-semibold">
               <tr>
                 <th className="py-3 px-4">Daerah / Lokasi Titik FO</th>
@@ -446,9 +449,9 @@ export default function DivisiFO({ foSites, items, onRefresh }) {
 
       {/* FO Site Detail Modal */}
       {selectedSiteDetail && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
-          <div className="relative w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-8 max-h-[90vh] flex flex-col">
-            <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
+          <div className="relative w-full max-w-2xl bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl border border-slate-200 overflow-hidden sm:my-8 pb-[env(safe-area-inset-bottom)] sm:pb-0 max-h-[90vh] flex flex-col">
+            <div className="bg-slate-900 text-white px-4 sm:px-6 py-3.5 sm:py-4 flex items-center justify-between">
               <div>
                 <span className="text-xs text-emerald-300 font-mono font-bold block">{selectedSiteDetail.tipe_lokasi}</span>
                 <h3 className="text-base font-bold">{selectedSiteDetail.daerah_lokasi}</h3>
@@ -461,8 +464,8 @@ export default function DivisiFO({ foSites, items, onRefresh }) {
               </button>
             </div>
 
-            <div className="p-6 overflow-y-auto space-y-5">
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs">
+            <div className="p-4 sm:p-6 overflow-y-auto space-y-5">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-slate-50 p-3 sm:p-4 rounded-xl border border-slate-200 text-xs">
                 <div>
                   <span className="text-slate-500 block">Tipe Node:</span>
                   <span className="font-bold text-slate-800">{selectedSiteDetail.tipe_lokasi}</span>
@@ -492,7 +495,7 @@ export default function DivisiFO({ foSites, items, onRefresh }) {
                 </div>
 
                 <div className="border border-slate-200 rounded-xl overflow-hidden">
-                  <table className="w-full text-left text-xs">
+                  <table className="w-full min-w-[640px] text-left text-xs">
                     <thead className="bg-slate-50 text-slate-600 border-b border-slate-200 font-semibold">
                       <tr>
                         <th className="py-2.5 px-3">Kode Barang</th>
@@ -572,9 +575,9 @@ export default function DivisiFO({ foSites, items, onRefresh }) {
 
       {/* Add / Edit FO Site with Dynamic Installed Items Modal */}
       {isFormModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
-          <div className="relative w-full max-w-4xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-8 max-h-[92vh] flex flex-col">
-            <div className="bg-gradient-to-r from-emerald-900 to-slate-900 text-white px-6 py-4 flex items-center justify-between border-b border-emerald-800">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
+          <div className="relative w-full max-w-4xl bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl border border-slate-200 overflow-hidden sm:my-8 pb-[env(safe-area-inset-bottom)] sm:pb-0 max-h-[92vh] flex flex-col">
+            <div className="bg-gradient-to-r from-emerald-900 to-slate-900 text-white px-4 sm:px-6 py-3.5 sm:py-4 flex items-center justify-between border-b border-emerald-800">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-lg bg-emerald-600/40 border border-emerald-400/30 flex items-center justify-center">
                   <Network className="w-5 h-5 text-emerald-300" />

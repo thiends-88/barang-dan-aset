@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { X, Tag, Plus, Edit2, Trash2, Check, AlertCircle, Package } from 'lucide-react';
+import { notify } from '../utils/notify';
 
 export default function CategoryManagerModal({
   isOpen,
@@ -99,7 +100,7 @@ export default function CategoryManagerModal({
   const handleDelete = async (cat) => {
     const count = getItemCount(cat.nama_kategori);
     if (count > 0) {
-      alert(`Kategori "${cat.nama_kategori}" masih digunakan oleh ${count} barang. Pindahkan atau ubah kategori barang terlebih dahulu sebelum menghapus.`);
+      notify(`Kategori "${cat.nama_kategori}" masih digunakan oleh ${count} barang. Pindahkan atau ubah kategori barang terlebih dahulu sebelum menghapus.`, 'error');
       return;
     }
 
@@ -113,15 +114,15 @@ export default function CategoryManagerModal({
       }
       onRefreshCategories();
     } catch (err) {
-      alert(err.message);
+      notify(err.message, 'error');
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
-      <div className="relative w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-8 max-h-[90vh] flex flex-col">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
+      <div className="relative w-full max-w-2xl bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl border border-slate-200 overflow-hidden sm:my-8 pb-[env(safe-area-inset-bottom)] sm:pb-0 max-h-[90vh] flex flex-col">
         {/* Header */}
-        <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between border-b border-slate-800">
+        <div className="bg-slate-900 text-white px-4 sm:px-6 py-3.5 sm:py-4 flex items-center justify-between border-b border-slate-800">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-indigo-600/40 border border-indigo-400/30 flex items-center justify-center">
               <Tag className="w-5 h-5 text-indigo-300" />
@@ -142,7 +143,7 @@ export default function CategoryManagerModal({
         </div>
 
         {/* Content Body */}
-        <div className="p-6 overflow-y-auto space-y-6 flex-1">
+        <div className="p-4 sm:p-6 overflow-y-auto space-y-6 flex-1">
           {errorMsg && (
             <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs flex items-center gap-2">
               <AlertCircle className="w-4 h-4 shrink-0" />

@@ -561,7 +561,7 @@ export default function Laporan({ onRefreshData }) {
             </div>
 
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
+              <table className="w-full min-w-[1000px] print:min-w-0 text-left text-xs">
                 <thead className="bg-slate-50 text-slate-600 border-b border-slate-200 font-semibold uppercase">
                   <tr>
                     <th className="py-2.5 px-3">Tanggal</th>
@@ -675,7 +675,7 @@ export default function Laporan({ onRefreshData }) {
           {/* Comprehensive Table Matrix */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
+              <table className="w-full min-w-[820px] print:min-w-0 text-left text-xs">
                 <thead className="bg-slate-900 text-white uppercase text-[11px] font-semibold">
                   <tr>
                     <th className="py-3 px-3">Kode & Barang</th>

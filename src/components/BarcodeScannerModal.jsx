@@ -150,10 +150,10 @@ export default function BarcodeScannerModal({ isOpen, onClose, onPrintBarcode, o
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
-      <div className="relative w-full max-w-4xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-8 max-h-[92vh] flex flex-col">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
+      <div className="relative w-full max-w-4xl bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl border border-slate-200 overflow-hidden sm:my-8 pb-[env(safe-area-inset-bottom)] sm:pb-0 max-h-[92vh] flex flex-col">
         {/* Header */}
-        <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white px-6 py-4 flex items-center justify-between border-b border-indigo-800">
+        <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white px-4 sm:px-6 py-3.5 sm:py-4 flex items-center justify-between border-b border-indigo-800">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-indigo-600/50 flex items-center justify-center border border-indigo-400/30">
               <BarcodeIcon className="w-6 h-6 text-indigo-300" />
@@ -177,7 +177,7 @@ export default function BarcodeScannerModal({ isOpen, onClose, onPrintBarcode, o
         </div>
 
         {/* Search & Camera Toolbar */}
-        <div className="p-6 bg-slate-50 border-b border-slate-200">
+        <div className="p-4 sm:p-6 bg-slate-50 border-b border-slate-200">
           <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row gap-3">
             <div className="relative flex-1">
               <input
@@ -267,7 +267,7 @@ export default function BarcodeScannerModal({ isOpen, onClose, onPrintBarcode, o
         </div>
 
         {/* Content Body */}
-        <div className="p-6 overflow-y-auto flex-1 space-y-6">
+        <div className="p-4 sm:p-6 overflow-y-auto flex-1 space-y-6">
           {!lookupData && !loading && !errorMsg && (
             <div className="text-center py-12 text-slate-400">
               <div className="w-16 h-16 rounded-2xl bg-slate-100 border border-slate-200 flex items-center justify-center mx-auto mb-3 text-slate-400">
@@ -460,7 +460,7 @@ export default function BarcodeScannerModal({ isOpen, onClose, onPrintBarcode, o
                     </div>
                   ) : (
                     <div className="overflow-x-auto">
-                      <table className="w-full text-left text-xs">
+                      <table className="w-full min-w-[640px] text-left text-xs">
                         <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
                           <tr>
                             <th className="py-2 px-3">ID Pelanggan</th>
@@ -523,7 +523,7 @@ export default function BarcodeScannerModal({ isOpen, onClose, onPrintBarcode, o
                     </div>
                   ) : (
                     <div className="overflow-x-auto">
-                      <table className="w-full text-left text-xs">
+                      <table className="w-full min-w-[640px] text-left text-xs">
                         <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
                           <tr>
                             <th className="py-2 px-3">Tipe</th>
@@ -576,7 +576,7 @@ export default function BarcodeScannerModal({ isOpen, onClose, onPrintBarcode, o
                     </div>
                   ) : (
                     <div className="overflow-x-auto">
-                      <table className="w-full text-left text-xs">
+                      <table className="w-full min-w-[640px] text-left text-xs">
                         <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
                           <tr>
                             <th className="py-2 px-3">Jenis & Type</th>
@@ -627,7 +627,7 @@ export default function BarcodeScannerModal({ isOpen, onClose, onPrintBarcode, o
                     </div>
                   ) : (
                     <div className="overflow-x-auto max-h-52">
-                      <table className="w-full text-left text-xs">
+                      <table className="w-full min-w-[640px] text-left text-xs">
                         <thead className="bg-slate-50 text-slate-600 border-b border-slate-200 sticky top-0">
                           <tr>
                             <th className="py-2 px-3">Tanggal</th>

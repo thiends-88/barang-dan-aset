@@ -190,6 +190,29 @@ export function initDb() {
       // Column already exists, ignore
     }
   }
+
+  // Index untuk mempercepat laporan, pencarian, dan penghapusan berantai (cascade)
+  const indexes = [
+    'CREATE INDEX IF NOT EXISTS idx_trx_tanggal ON transactions (tanggal)',
+    'CREATE INDEX IF NOT EXISTS idx_trx_jenis ON transactions (jenis)',
+    'CREATE INDEX IF NOT EXISTS idx_trx_divisi ON transactions (divisi)',
+    'CREATE INDEX IF NOT EXISTS idx_trx_kode_barang ON transactions (kode_barang)',
+    'CREATE INDEX IF NOT EXISTS idx_items_jenis ON items (jenis_barang)',
+    'CREATE INDEX IF NOT EXISTS idx_customer_items_customer ON customer_items (customer_id)',
+    'CREATE INDEX IF NOT EXISTS idx_customer_items_kode ON customer_items (kode_barang)',
+    'CREATE INDEX IF NOT EXISTS idx_fo_items_fo ON fo_items (fo_id)',
+    'CREATE INDEX IF NOT EXISTS idx_fo_items_kode ON fo_items (kode_barang)',
+    'CREATE INDEX IF NOT EXISTS idx_tower_items_tower ON tower_items (tower_id)',
+    'CREATE INDEX IF NOT EXISTS idx_tower_items_kode ON tower_items (kode_barang)'
+  ];
+
+  for (const sql of indexes) {
+    try {
+      db.exec(sql);
+    } catch (e) {
+      // Index sudah ada, abaikan
+    }
+  }
 }
 
 export default db;

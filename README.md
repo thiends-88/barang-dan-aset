@@ -110,3 +110,145 @@ Aplikasi enterprise untuk manajemen inventaris barang dan pelacakan aset jaringa
 
 3. **Reset Data Simulasi (Demo Data)**:
    Klik tombol **"Reset Data Contoh"** di navbar atas kapan saja untuk mengembalikan dan mengisi ulang database simulasi ISP lengkap.
+
+4. **Smoke Test Render (opsional)**:
+   ```bash
+   npm run test:render
+   ```
+   Memuat setiap komponen dengan data asli dari API untuk memastikan tidak ada error saat render tabel, kartu, dan modal. Server API harus aktif lebih dulu.
+
+5. **Test Integritas API (opsional)**:
+   ```bash
+   npm run test:api
+   ```
+   Menguji alur pemasangan, pengeditan, dismantle, dan penghapusan barang untuk Pelanggan, Divisi FO, dan Divisi Tower, lalu memeriksa bahwa stok gudang tidak pernah minus dan **selalu cocok dengan riwayat mutasi**. Data contoh akan direset otomatis di akhir pengujian. Menjalankan keduanya sekaligus: `npm test`.
+
+---
+
+## 🖥️ Deploy ke Proxmox (Production)
+
+Aplikasi ini sudah **siap jalan tanpa build** di server: hasil build frontend ikut tersimpan di folder `dist/`, dan server Express menyajikan `dist/` sekaligus API dari port yang sama (`PORT`, default `3000`).
+
+### 1. Persiapan (sekali saja)
+
+```bash
+# Prasyarat: Node.js 22+ (fitur database memakai modul bawaan node:sqlite)
+node -v
+
+git clone https://github.com/thiends-88/barang-dan-aset.git /opt/barang-dan-aset
+cd /opt/barang-dan-aset
+npm install --omit=dev     # cukup dependensi runtime, tanpa alat build
+PORT=3000 npm start
+```
+
+Buka `http://IP-PROXMOX:3000`.
+
+### 2. Update versi terbaru (setiap kali ada PR di-merge)
+
+> ⚠️ **PENTING:** file database `data/inventory.db` ikut tersimpan di repository. Menjalankan `git pull` akan **menimpa database di server dengan data contoh**, sehingga data asli bisa hilang. Selalu cadangkan dulu:
+
+```bash
+cd /opt/barang-dan-aset
+
+# 1) WAJIB: cadangkan database sebelum menarik pembaruan
+cp data/inventory.db "data/inventory.backup-$(date +%Y%m%d-%H%M).db"
+
+# 2) Tarik versi terbaru
+git pull origin main
+
+# 3) Pasang dependensi bila ada perubahan
+npm install --omit=dev
+
+# 4) Jalankan ulang aplikasi
+npm start
+```
+
+Untuk mengembalikan data setelah `git pull`, salin kembali berkas cadangannya:
+
+```bash
+cp data/inventory.backup-YYYYMMDD-HHMM.db data/inventory.db
+```
+
+> 💡 **Saran:** agar `git pull` tidak lagi menyentuh database produksi, hapus pelacakan berkas database dari repository (sekali saja, dari komputer pengembangan):
+> ```bash
+> git rm --cached data/inventory.db
+> printf 'data/*.db\n' >> .gitignore
+> git commit -m "Berhenti melacak database agar tidak menimpa data produksi"
+> ```
+
+### 3. Jalankan otomatis saat server menyala (systemd)
+
+Buat berkas `/etc/systemd/system/barang-dan-aset.service`:
+
+```ini
+[Unit]
+Description=Sistem Manajemen Barang & Aset ISP
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/barang-dan-aset
+Environment=PORT=3000
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node server/index.js
+Restart=always
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Aktifkan:
+
+```bash
+systemctl daemon-reload
+systemctl enable --now barang-dan-aset
+systemctl status barang-dan-aset      # cek status
+journalctl -u barang-dan-aset -f      # lihat log
+```
+
+### 4. Catatan
+
+- **Port**: ubah lewat environment `PORT`, mis. `PORT=8080 npm start`.
+- **Firewall**: pastikan port tersebut dibuka di Proxmox/LXC (`ufw allow 3000` atau aturan di router).
+- **Reverse proxy**: bila memakai Nginx/PM2/Caddy, arahkan ke `127.0.0.1:3000`. Server sudah mendukung semua host, jadi tidak perlu konfigurasi tambahan.
+- **Backup berkala**: cukup salin folder `data/` (berisi `inventory.db`) atau jadwalkan cron harian:
+  ```bash
+  0 2 * * * cd /opt/barang-dan-aset && cp data/inventory.db "data/backup-$(date +\%Y\%m\%d).db"
+  ```
+
+---
+
+## 🔒 Integritas Data Stok
+
+Seluruh perubahan stok divalidasi di sisi server:
+
+- **Stok tidak bisa minus** — pemasangan/pengeditan ditolak dengan pesan jelas (mis. *"Stok gudang tidak mencukupi untuk ... Tersedia: 20 unit, dibutuhkan: 999 unit."*).
+- **Jumlah tidak boleh negatif** — mencegah stok bertambah diam-diam.
+- **Kode barang wajib terdaftar** di master data.
+- **Pengeditan memakai penyesuaian selisih** — stok hanya berubah sebesar perbedaan pemasangan lama vs baru, dan setiap selisih otomatis tercatat sebagai mutasi masuk/keluar.
+- **Menghapus data Pelanggan / FO / Tower mengembalikan stok** barang yang masih terpasang beserta catatan mutasinya, sehingga tidak ada stok yang hilang.
+- **Sebelum berubah, semua operasi dibungkus transaksi database** — bila ada satu baris gagal, seluruh perubahan dibatalkan (rollback).
+
+---
+
+## ⚡ Optimasi
+
+- **Pemindai barcode dimuat terpisah (lazy load)** — library kamera `html5-qrcode` hanya diunduh ketika pemindai dibuka, sehingga bundle awal turun dari ~906 kB menjadi ~517 kB (gzip 230 kB → 119 kB).
+- **Indeks database** pada kolom yang sering difilter (`transactions.tanggal/jenis/divisi/kode_barang`, kolom kode barang, dan kolom relasi antar tabel) mempercepat laporan, pencarian, dan penghapusan berantai.
+- **Notifikasi in-app** menggantikan `alert()` bawaan browser: pesan error panjang (mis. stok tidak mencukupi) tampil rapi, tidak memblokir, dan bertahan lebih lama.
+
+---
+
+## 📱 Dukungan Mobile & Responsif
+
+Aplikasi dirancang agar nyaman dipakai di HP, tablet, dan desktop:
+
+- **Navigasi mobile**: navbar atas ringkas, tab divisi dapat digeser horizontal (scroll), dan tab aktif otomatis digeser ke tengah. Scrollbar disembunyikan agar tampilan bersih.
+- **Tabel lebar**: semua tabel memiliki lebar minimum sehingga tetap terbaca dan bisa digeser ke samping, bukan terhimpit menjadi kolom sempit.
+- **Modal / dialog**: berubah menjadi *bottom sheet* di layar kecil (menempel di bawah, sudut atas membulat), dengan tinggi maksimal `92vh`, header dan tombol aksi tetap terlihat, serta isi yang bisa di-scroll.
+- **Form**: bidang input otomatis menjadi satu kolom di HP; ukuran huruf input minimal `16px` untuk mencegah browser HP melakukan zoom otomatis saat mengetik.
+- **Sentuhan**: area tap tombol dalam tabel diperbesar, highlight biru saat tap dihilangkan, dan animasi dihormati bagi pengguna yang mengaktifkan *reduce motion*.
+- **Notch / safe area**: elemen yang menempel di bawah (toast, bottom sheet) memberi ruang untuk *safe area* perangkat iOS.
+- **Cetak**: hasil cetak (label barcode, berita acara, laporan) tidak terpengaruh perubahan layout layar — lebar minimum tabel dinonaktifkan saat mode cetak.

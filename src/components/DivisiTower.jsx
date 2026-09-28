@@ -17,6 +17,7 @@ import {
   Printer
 } from 'lucide-react';
 import { formatRupiah, formatNumber, formatDate } from '../utils/formatters';
+import { notify } from '../utils/notify';
 import WorkOrderPrintModal from './WorkOrderPrintModal';
 
 const JENIS_TOWER_OPTIONS = ['tower', 'monopol'];
@@ -230,6 +231,7 @@ export default function DivisiTower({ towerSites, items, onRefresh }) {
       }
 
       setIsFormModalOpen(false);
+      notify(editingSite ? 'Data site tower berhasil diperbarui' : 'Site tower baru berhasil disimpan', 'success');
       onRefresh();
     } catch (err) {
       setFormError(err.message);
@@ -240,7 +242,7 @@ export default function DivisiTower({ towerSites, items, onRefresh }) {
 
   // Delete Tower Site
   const handleDeleteTowerSite = async (site) => {
-    if (!window.confirm(`Yakin ingin menghapus site tower "${site.daerah_lokasi}"?`)) {
+    if (!window.confirm(`Yakin ingin menghapus site tower "${site.daerah_lokasi}"? Seluruh barang yang masih terpasang akan dikembalikan ke stok gudang.`)) {
       return;
     }
 
@@ -253,9 +255,10 @@ export default function DivisiTower({ towerSites, items, onRefresh }) {
       if (selectedSiteDetail && selectedSiteDetail.id === site.id) {
         setSelectedSiteDetail(null);
       }
+      notify(data.message || 'Site tower berhasil dihapus', 'success');
       onRefresh();
     } catch (err) {
-      alert(err.message);
+      notify(err.message, 'error');
     }
   };
 
@@ -371,7 +374,7 @@ export default function DivisiTower({ towerSites, items, onRefresh }) {
 
         {/* Table Content */}
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+          <table className="w-full min-w-[960px] text-left text-xs">
             <thead className="bg-slate-50 text-slate-600 border-b border-slate-200 uppercase tracking-wider font-semibold">
               <tr>
                 <th className="py-3 px-4">Jenis & Tipe</th>
@@ -506,9 +509,9 @@ export default function DivisiTower({ towerSites, items, onRefresh }) {
 
       {/* Tower Site Detail Modal */}
       {selectedSiteDetail && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
-          <div className="relative w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-8 max-h-[90vh] flex flex-col">
-            <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
+          <div className="relative w-full max-w-2xl bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl border border-slate-200 overflow-hidden sm:my-8 pb-[env(safe-area-inset-bottom)] sm:pb-0 max-h-[90vh] flex flex-col">
+            <div className="bg-slate-900 text-white px-4 sm:px-6 py-3.5 sm:py-4 flex items-center justify-between">
               <div>
                 <span className="text-xs text-purple-300 font-mono font-bold uppercase block">
                   {selectedSiteDetail.jenis} - {selectedSiteDetail.type} ({selectedSiteDetail.ketinggian})
@@ -523,8 +526,8 @@ export default function DivisiTower({ towerSites, items, onRefresh }) {
               </button>
             </div>
 
-            <div className="p-6 overflow-y-auto space-y-5">
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs">
+            <div className="p-4 sm:p-6 overflow-y-auto space-y-5">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-50 p-3 sm:p-4 rounded-xl border border-slate-200 text-xs">
                 <div>
                   <span className="text-slate-500 block">Jenis:</span>
                   <span className="font-bold uppercase text-slate-800">{selectedSiteDetail.jenis}</span>
@@ -566,7 +569,7 @@ export default function DivisiTower({ towerSites, items, onRefresh }) {
                 </div>
 
                 <div className="border border-slate-200 rounded-xl overflow-hidden">
-                  <table className="w-full text-left text-xs">
+                  <table className="w-full min-w-[640px] text-left text-xs">
                     <thead className="bg-slate-50 text-slate-600 border-b border-slate-200 font-semibold">
                       <tr>
                         <th className="py-2.5 px-3">Kode Barang</th>
@@ -646,9 +649,9 @@ export default function DivisiTower({ towerSites, items, onRefresh }) {
 
       {/* Add / Edit Tower Site with Dynamic Installed Items Modal */}
       {isFormModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
-          <div className="relative w-full max-w-4xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-8 max-h-[92vh] flex flex-col">
-            <div className="bg-gradient-to-r from-purple-950 to-slate-900 text-white px-6 py-4 flex items-center justify-between border-b border-purple-900">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
+          <div className="relative w-full max-w-4xl bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl border border-slate-200 overflow-hidden sm:my-8 pb-[env(safe-area-inset-bottom)] sm:pb-0 max-h-[92vh] flex flex-col">
+            <div className="bg-gradient-to-r from-purple-950 to-slate-900 text-white px-4 sm:px-6 py-3.5 sm:py-4 flex items-center justify-between border-b border-purple-900">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-lg bg-purple-600/40 border border-purple-400/30 flex items-center justify-center">
                   <Radio className="w-5 h-5 text-purple-300" />
