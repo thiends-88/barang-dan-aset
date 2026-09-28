@@ -11,11 +11,13 @@ import {
   PlusCircle, 
   DollarSign, 
   MapPin, 
-  TowerControl,
-  Ruler,
-  Layers
+  TowerControl, 
+  Ruler, 
+  Layers,
+  Printer
 } from 'lucide-react';
 import { formatRupiah, formatNumber, formatDate } from '../utils/formatters';
+import WorkOrderPrintModal from './WorkOrderPrintModal';
 
 const JENIS_TOWER_OPTIONS = ['tower', 'monopol'];
 const TYPE_TOWER_OPTIONS = ['monopol', 'triangle', 'square'];
@@ -29,6 +31,7 @@ export default function DivisiTower({ towerSites, items, onRefresh }) {
   const [selectedSiteDetail, setSelectedSiteDetail] = useState(null);
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
   const [editingSite, setEditingSite] = useState(null);
+  const [printSite, setPrintSite] = useState(null);
 
   // Form State
   const [formData, setFormData] = useState({
@@ -460,9 +463,17 @@ export default function DivisiTower({ towerSites, items, onRefresh }) {
                           </button>
 
                           <button
+                            onClick={() => setPrintSite(site)}
+                            title="Cetak Berita Acara Site Tower"
+                            className="p-1.5 rounded-lg text-purple-700 hover:bg-purple-50 transition"
+                          >
+                            <Printer className="w-4 h-4" />
+                          </button>
+
+                          <button
                             onClick={() => handleOpenEdit(site)}
                             title="Edit Site Tower & Barang"
-                            className="p-1.5 rounded-lg text-purple-700 hover:bg-purple-50 hover:text-purple-800 transition"
+                            className="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50 hover:text-blue-700 transition"
                           >
                             <Edit3 className="w-4 h-4" />
                           </button>
@@ -605,10 +616,20 @@ export default function DivisiTower({ towerSites, items, onRefresh }) {
               <button
                 onClick={() => {
                   const s = selectedSiteDetail;
+                  setPrintSite(s);
+                }}
+                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 transition"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>Cetak Berita Acara Tower</span>
+              </button>
+              <button
+                onClick={() => {
+                  const s = selectedSiteDetail;
                   setSelectedSiteDetail(null);
                   handleOpenEdit(s);
                 }}
-                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-xs font-medium rounded-xl transition"
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-xl transition"
               >
                 Edit Data
               </button>
@@ -937,6 +958,14 @@ export default function DivisiTower({ towerSites, items, onRefresh }) {
           </div>
         </div>
       )}
+
+      {/* Work Order / Berita Acara Tower Print Modal */}
+      <WorkOrderPrintModal
+        isOpen={!!printSite}
+        onClose={() => setPrintSite(null)}
+        data={printSite}
+        type="tower"
+      />
     </div>
   );
 }

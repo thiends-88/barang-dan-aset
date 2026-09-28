@@ -282,6 +282,15 @@ export default function BarcodeScannerModal({ isOpen, onClose, onPrintBarcode, o
 
           {lookupData && (
             <div className="space-y-6 animate-fadeIn">
+              {lookupData.matchedBySN && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800 flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>
+                    Perangkat berhasil teridentifikasi berdasarkan <strong>Nomor Seri / SN: {lookupData.scannedCode}</strong>
+                  </span>
+                </div>
+              )}
+
               {/* Item Profile Card */}
               <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
                 <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">

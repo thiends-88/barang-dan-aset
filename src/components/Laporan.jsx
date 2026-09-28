@@ -503,6 +503,47 @@ export default function Laporan({ onRefreshData }) {
             </div>
           </div>
 
+          {/* Visual Ratio & Division Breakdown Bar */}
+          {txSummary && (txSummary.total_masuk_qty > 0 || txSummary.total_keluar_qty > 0) && (
+            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-bold text-slate-800">Rasio Pergerakan Barang Periode Ini:</span>
+                <span className="text-slate-500">
+                  Total Volume Mutasi: {formatNumber(txSummary.total_masuk_qty + txSummary.total_keluar_qty)} Unit
+                </span>
+              </div>
+
+              {/* Progress Bar */}
+              <div className="w-full h-4 bg-slate-100 rounded-full overflow-hidden flex shadow-inner">
+                <div
+                  style={{
+                    width: `${Math.round((txSummary.total_masuk_qty / ((txSummary.total_masuk_qty + txSummary.total_keluar_qty) || 1)) * 100)}%`
+                  }}
+                  className="bg-emerald-500 h-full transition-all"
+                  title={`Barang Masuk: ${txSummary.total_masuk_qty} unit`}
+                />
+                <div
+                  style={{
+                    width: `${Math.round((txSummary.total_keluar_qty / ((txSummary.total_masuk_qty + txSummary.total_keluar_qty) || 1)) * 100)}%`
+                  }}
+                  className="bg-rose-500 h-full transition-all"
+                  title={`Barang Keluar: ${txSummary.total_keluar_qty} unit`}
+                />
+              </div>
+
+              <div className="flex items-center justify-between text-xs pt-1">
+                <span className="text-emerald-700 font-bold flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                  Barang Masuk: {Math.round((txSummary.total_masuk_qty / ((txSummary.total_masuk_qty + txSummary.total_keluar_qty) || 1)) * 100)}% ({formatNumber(txSummary.total_masuk_qty)} unit)
+                </span>
+                <span className="text-rose-700 font-bold flex items-center gap-1.5">
+                  Barang Keluar: {Math.round((txSummary.total_keluar_qty / ((txSummary.total_masuk_qty + txSummary.total_keluar_qty) || 1)) * 100)}% ({formatNumber(txSummary.total_keluar_qty)} unit)
+                  <span className="w-2.5 h-2.5 rounded-full bg-rose-500" />
+                </span>
+              </div>
+            </div>
+          )}
+
           {/* Table */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="p-4 border-b border-slate-200 flex items-center justify-between">

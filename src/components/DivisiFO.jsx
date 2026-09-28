@@ -13,9 +13,11 @@ import {
   MapPin, 
   UserCheck, 
   Calendar,
-  Layers
+  Layers,
+  Printer
 } from 'lucide-react';
 import { formatRupiah, formatNumber, formatDate } from '../utils/formatters';
+import WorkOrderPrintModal from './WorkOrderPrintModal';
 
 const TIPE_FO_OPTIONS = ['ODP', 'ODC', 'Closure', 'Tiang Distribusi', 'Sentral Hub / ODF', 'Jalur Feeder Backbone'];
 const DEFAULT_UNITS = ['unit', 'roll', 'meter', 'bks', 'pcs'];
@@ -26,6 +28,7 @@ export default function DivisiFO({ foSites, items, onRefresh }) {
   const [selectedSiteDetail, setSelectedSiteDetail] = useState(null);
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
   const [editingSite, setEditingSite] = useState(null);
+  const [printSite, setPrintSite] = useState(null);
 
   // Form State
   const [formData, setFormData] = useState({
@@ -416,9 +419,17 @@ export default function DivisiFO({ foSites, items, onRefresh }) {
                           </button>
 
                           <button
+                            onClick={() => setPrintSite(site)}
+                            title="Cetak Berita Acara Titik FO"
+                            className="p-1.5 rounded-lg text-emerald-700 hover:bg-emerald-50 transition"
+                          >
+                            <Printer className="w-4 h-4" />
+                          </button>
+
+                          <button
                             onClick={() => handleOpenEdit(site)}
                             title="Edit Titik FO & Barang"
-                            className="p-1.5 rounded-lg text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800 transition"
+                            className="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50 hover:text-blue-700 transition"
                           >
                             <Edit3 className="w-4 h-4" />
                           </button>
@@ -547,10 +558,20 @@ export default function DivisiFO({ foSites, items, onRefresh }) {
               <button
                 onClick={() => {
                   const s = selectedSiteDetail;
+                  setPrintSite(s);
+                }}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 transition"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>Cetak Berita Acara FO</span>
+              </button>
+              <button
+                onClick={() => {
+                  const s = selectedSiteDetail;
                   setSelectedSiteDetail(null);
                   handleOpenEdit(s);
                 }}
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium rounded-xl transition"
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-xl transition"
               >
                 Edit Data
               </button>
@@ -831,6 +852,14 @@ export default function DivisiFO({ foSites, items, onRefresh }) {
           </div>
         </div>
       )}
+
+      {/* Work Order / Berita Acara FO Print Modal */}
+      <WorkOrderPrintModal
+        isOpen={!!printSite}
+        onClose={() => setPrintSite(null)}
+        data={printSite}
+        type="fo"
+      />
     </div>
   );
 }

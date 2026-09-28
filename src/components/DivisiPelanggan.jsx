@@ -19,9 +19,13 @@ import {
   PlusCircle,
   ExternalLink,
   ChevronDown,
-  Building
+  Building,
+  Printer,
+  Barcode as BarcodeIcon,
+  FileCheck
 } from 'lucide-react';
 import { formatRupiah, formatNumber, formatDate } from '../utils/formatters';
+import WorkOrderPrintModal from './WorkOrderPrintModal';
 
 const PAKET_OPTIONS = [
   'personal',
@@ -54,6 +58,7 @@ export default function DivisiPelanggan({
   const [selectedCustDetail, setSelectedCustDetail] = useState(null);
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState(null);
+  const [printCust, setPrintCust] = useState(null);
 
   // Form State
   const [formData, setFormData] = useState({
@@ -124,6 +129,7 @@ export default function DivisiPelanggan({
           jumlah: 1,
           harga_barang: 0,
           subtotal: 0,
+          serial_number: '',
           referensi_suplayer: ''
         }
       ]
@@ -156,6 +162,7 @@ export default function DivisiPelanggan({
             jumlah: it.jumlah,
             harga_barang: it.harga_barang,
             subtotal: it.subtotal,
+            serial_number: it.serial_number || '',
             referensi_suplayer: it.referensi_suplayer || ''
           }))
         : []
@@ -195,6 +202,13 @@ export default function DivisiPelanggan({
     setFormData({ ...formData, items: updated });
   };
 
+  // Dynamic row: change Serial Number / MAC
+  const handleItemSNChange = (index, snVal) => {
+    const updated = [...formData.items];
+    updated[index].serial_number = snVal;
+    setFormData({ ...formData, items: updated });
+  };
+
   // Dynamic row: change quantity
   const handleItemQtyChange = (index, qtyVal) => {
     const updated = [...formData.items];
@@ -206,23 +220,44 @@ export default function DivisiPelanggan({
   };
 
   // Dynamic row: add new empty item row
-  const handleAddItemRow = () => {
-    setFormData({
-      ...formData,
-      items: [
-        ...formData.items,
-        {
-          kode_barang: '',
-          nama_barang: '',
-          jenis_barang: '',
-          satuan: 'unit',
-          jumlah: 1,
-          harga_barang: 0,
-          subtotal: 0,
-          referensi_suplayer: ''
-        }
-      ]
-    });
+  const handleAddItemRow = (presetItem = null) => {
+    if (presetItem) {
+      setFormData({
+        ...formData,
+        items: [
+          ...formData.items,
+          {
+            kode_barang: presetItem.kode_barang,
+            nama_barang: presetItem.nama_barang,
+            jenis_barang: presetItem.jenis_barang,
+            satuan: presetItem.satuan,
+            jumlah: 1,
+            harga_barang: presetItem.harga_barang,
+            subtotal: presetItem.harga_barang,
+            serial_number: '',
+            referensi_suplayer: presetItem.referensi_suplayer || ''
+          }
+        ]
+      });
+    } else {
+      setFormData({
+        ...formData,
+        items: [
+          ...formData.items,
+          {
+            kode_barang: '',
+            nama_barang: '',
+            jenis_barang: '',
+            satuan: 'unit',
+            jumlah: 1,
+            harga_barang: 0,
+            subtotal: 0,
+            serial_number: '',
+            referensi_suplayer: ''
+          }
+        ]
+      });
+    }
   };
 
   // Dynamic row: remove item row
@@ -537,6 +572,14 @@ export default function DivisiPelanggan({
                           </button>
 
                           <button
+                            onClick={() => setPrintCust(cust)}
+                            title="Cetak Berita Acara Instalasi (BASTP)"
+                            className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700 transition"
+                          >
+                            <Printer className="w-4 h-4" />
+                          </button>
+
+                          <button
                             onClick={() => handleOpenEdit(cust)}
                             title="Edit Pelanggan & Barang"
                             className="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50 hover:text-blue-700 transition"
@@ -699,6 +742,16 @@ export default function DivisiPelanggan({
                 </button>
               )}
               <div className="flex items-center gap-2 ml-auto">
+                <button
+                  onClick={() => {
+                    const cust = selectedCustDetail;
+                    setPrintCust(cust);
+                  }}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 transition"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Cetak BASTP</span>
+                </button>
                 <button
                   onClick={() => {
                     const cust = selectedCustDetail;
@@ -1012,17 +1065,30 @@ export default function DivisiPelanggan({
                         </div>
                       </div>
 
-                      {/* Sub-row details: Subtotal & Supplier */}
-                      {row.kode_barang && (
-                        <div className="mt-2 pt-2 border-t border-slate-200/80 flex items-center justify-between text-[11px]">
+                      {/* Sub-row details: Serial Number, Subtotal & Supplier */}
+                      <div className="mt-2.5 pt-2 border-t border-slate-200/80 grid grid-cols-1 sm:grid-cols-12 gap-3 items-center text-xs">
+                        <div className="sm:col-span-6 flex items-center gap-2">
+                          <label className="text-[11px] font-semibold text-slate-500 shrink-0">
+                            No. Seri / SN / MAC:
+                          </label>
+                          <input
+                            type="text"
+                            value={row.serial_number || ''}
+                            onChange={(e) => handleItemSNChange(index, e.target.value)}
+                            placeholder="Scan SN atau ketik MAC..."
+                            className="flex-1 px-2 py-1 bg-white border border-slate-300 rounded text-xs font-mono uppercase focus:border-blue-500"
+                          />
+                        </div>
+
+                        <div className="sm:col-span-6 flex items-center justify-between sm:justify-end gap-3 text-[11px]">
                           <span className="text-slate-500">
                             Suplayer: <strong className="text-slate-700">{row.referensi_suplayer || '-'}</strong>
                           </span>
-                          <span className="font-semibold text-indigo-700">
+                          <span className="font-bold text-indigo-700 text-xs">
                             Subtotal: {formatRupiah(row.subtotal)}
                           </span>
                         </div>
-                      )}
+                      </div>
                     </div>
                   ))}
 
@@ -1083,6 +1149,14 @@ export default function DivisiPelanggan({
           </div>
         </div>
       )}
+
+      {/* Work Order / BASTP Print Modal */}
+      <WorkOrderPrintModal
+        isOpen={!!printCust}
+        onClose={() => setPrintCust(null)}
+        data={printCust}
+        type="pelanggan"
+      />
     </div>
   );
 }

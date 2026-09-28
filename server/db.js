@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import { DatabaseSync } from 'node:sqlite';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
@@ -12,10 +12,24 @@ if (!fs.existsSync(dataDir)) {
 }
 
 const dbPath = path.join(dataDir, 'inventory.db');
-const db = new Database(dbPath);
+const db = new DatabaseSync(dbPath);
 
-// Enable foreign keys
-db.pragma('foreign_keys = ON');
+// Enable foreign keys and WAL mode for maximum performance & reliability
+db.exec('PRAGMA foreign_keys = ON;');
+db.exec('PRAGMA journal_mode = WAL;');
+
+// Transaction wrapper identical to better-sqlite3
+db.transaction = (fn) => (...args) => {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const res = fn(...args);
+    db.exec('COMMIT');
+    return res;
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+};
 
 export function initDb() {
   db.exec(`
@@ -65,6 +79,7 @@ export function initDb() {
       jumlah REAL NOT NULL DEFAULT 1,
       harga_barang REAL NOT NULL DEFAULT 0,
       subtotal REAL NOT NULL DEFAULT 0,
+      serial_number TEXT DEFAULT '',
       referensi_suplayer TEXT DEFAULT '',
       tanggal_pasang TEXT DEFAULT (date('now', 'localtime'))
     );
@@ -93,6 +108,7 @@ export function initDb() {
       jumlah REAL NOT NULL DEFAULT 1,
       harga_barang REAL NOT NULL DEFAULT 0,
       subtotal REAL NOT NULL DEFAULT 0,
+      serial_number TEXT DEFAULT '',
       referensi_suplayer TEXT DEFAULT '',
       tanggal_pasang TEXT DEFAULT (date('now', 'localtime'))
     );
@@ -124,6 +140,7 @@ export function initDb() {
       jumlah REAL NOT NULL DEFAULT 1,
       harga_barang REAL NOT NULL DEFAULT 0,
       subtotal REAL NOT NULL DEFAULT 0,
+      serial_number TEXT DEFAULT '',
       referensi_suplayer TEXT DEFAULT '',
       tanggal_pasang TEXT DEFAULT (date('now', 'localtime'))
     );
@@ -149,6 +166,22 @@ export function initDb() {
       created_at TEXT DEFAULT (datetime('now', 'localtime'))
     );
   `);
+
+  // Safe migrations for newly added columns if table already exists
+  const migrations = [
+    "ALTER TABLE customer_items ADD COLUMN serial_number TEXT DEFAULT ''",
+    "ALTER TABLE fo_items ADD COLUMN serial_number TEXT DEFAULT ''",
+    "ALTER TABLE tower_items ADD COLUMN serial_number TEXT DEFAULT ''",
+    "ALTER TABLE transactions ADD COLUMN serial_number TEXT DEFAULT ''"
+  ];
+
+  for (const m of migrations) {
+    try {
+      db.exec(m);
+    } catch (e) {
+      // Column already exists, ignore
+    }
+  }
 }
 
 export default db;

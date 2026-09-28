@@ -392,6 +392,7 @@ app.post('/api/customers', (req, res) => {
         jumlah: qty,
         harga_barang: price,
         subtotal: subtotal,
+        serial_number: it.serial_number ? it.serial_number.trim() : '',
         referensi_suplayer: master.referensi_suplayer || '',
         tanggal_pasang: installDate
       });
@@ -420,8 +421,8 @@ app.post('/api/customers', (req, res) => {
     const custId = custResult.lastInsertRowid;
 
     const insertCustItem = db.prepare(`
-      INSERT INTO customer_items (customer_id, kode_barang, nama_barang, jenis_barang, satuan, jumlah, harga_barang, subtotal, referensi_suplayer, tanggal_pasang)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO customer_items (customer_id, kode_barang, nama_barang, jenis_barang, satuan, jumlah, harga_barang, subtotal, serial_number, referensi_suplayer, tanggal_pasang)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const updateStock = db.prepare(`
@@ -429,8 +430,8 @@ app.post('/api/customers', (req, res) => {
     `);
 
     const insertTrx = db.prepare(`
-      INSERT INTO transactions (no_transaksi, tanggal, waktu, jenis, kategori_transaksi, divisi, ref_id, lokasi_penerima, kode_barang, nama_barang, satuan, jumlah, harga_satuan, total_harga, keterangan)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO transactions (no_transaksi, tanggal, waktu, jenis, kategori_transaksi, divisi, ref_id, lokasi_penerima, kode_barang, nama_barang, satuan, jumlah, harga_satuan, total_harga, serial_number, keterangan)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const now = new Date();
@@ -446,6 +447,7 @@ app.post('/api/customers', (req, res) => {
         it.jumlah,
         it.harga_barang,
         it.subtotal,
+        it.serial_number,
         it.referensi_suplayer,
         it.tanggal_pasang
       );
@@ -470,7 +472,8 @@ app.post('/api/customers', (req, res) => {
         it.jumlah,
         it.harga_barang,
         it.subtotal,
-        `Instalasi perangkat pelanggan ${id_pelanggan.trim().toUpperCase()} (${paket} - ${infrastruktur})`
+        it.serial_number,
+        `Instalasi perangkat pelanggan ${id_pelanggan.trim().toUpperCase()} (${paket} - ${infrastruktur})${it.serial_number ? ` [SN: ${it.serial_number}]` : ''}`
       );
     }
 
@@ -531,8 +534,8 @@ app.put('/api/customers/:id', (req, res) => {
       // Now insert new items and deduct stock
       totalHarga = 0;
       const insertCustItem = db.prepare(`
-        INSERT INTO customer_items (customer_id, kode_barang, nama_barang, jenis_barang, satuan, jumlah, harga_barang, subtotal, referensi_suplayer, tanggal_pasang)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO customer_items (customer_id, kode_barang, nama_barang, jenis_barang, satuan, jumlah, harga_barang, subtotal, serial_number, referensi_suplayer, tanggal_pasang)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       const updateStock = db.prepare(`
         UPDATE items SET stok = stok - ? WHERE kode_barang = ?
@@ -555,6 +558,7 @@ app.put('/api/customers/:id', (req, res) => {
           qty,
           master.harga_barang,
           subtotal,
+          it.serial_number ? it.serial_number.trim() : '',
           master.referensi_suplayer || '',
           tanggal_pasang || current.tanggal_pasang
         );
@@ -771,6 +775,7 @@ app.post('/api/fo', (req, res) => {
         jumlah: qty,
         harga_barang: price,
         subtotal: subtotal,
+        serial_number: it.serial_number ? it.serial_number.trim() : '',
         referensi_suplayer: master.referensi_suplayer || '',
         tanggal_pasang: installDate
       });
@@ -793,8 +798,8 @@ app.post('/api/fo', (req, res) => {
     const foId = foResult.lastInsertRowid;
 
     const insertFOItem = db.prepare(`
-      INSERT INTO fo_items (fo_id, kode_barang, nama_barang, jenis_barang, satuan, jumlah, harga_barang, subtotal, referensi_suplayer, tanggal_pasang)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO fo_items (fo_id, kode_barang, nama_barang, jenis_barang, satuan, jumlah, harga_barang, subtotal, serial_number, referensi_suplayer, tanggal_pasang)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const updateStock = db.prepare(`
@@ -819,6 +824,7 @@ app.post('/api/fo', (req, res) => {
         it.jumlah,
         it.harga_barang,
         it.subtotal,
+        it.serial_number,
         it.referensi_suplayer,
         it.tanggal_pasang
       );
@@ -890,8 +896,8 @@ app.put('/api/fo/:id', (req, res) => {
       // Insert updated items
       totalHarga = 0;
       const insertFOItem = db.prepare(`
-        INSERT INTO fo_items (fo_id, kode_barang, nama_barang, jenis_barang, satuan, jumlah, harga_barang, subtotal, referensi_suplayer, tanggal_pasang)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO fo_items (fo_id, kode_barang, nama_barang, jenis_barang, satuan, jumlah, harga_barang, subtotal, serial_number, referensi_suplayer, tanggal_pasang)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       const updateStock = db.prepare(`
         UPDATE items SET stok = stok - ? WHERE kode_barang = ?
@@ -914,6 +920,7 @@ app.put('/api/fo/:id', (req, res) => {
           qty,
           master.harga_barang,
           subtotal,
+          it.serial_number ? it.serial_number.trim() : '',
           master.referensi_suplayer || '',
           tanggal_pasang || current.tanggal_pasang
         );
@@ -1053,6 +1060,7 @@ app.post('/api/tower', (req, res) => {
         jumlah: qty,
         harga_barang: price,
         subtotal: subtotal,
+        serial_number: it.serial_number ? it.serial_number.trim() : '',
         referensi_suplayer: master.referensi_suplayer || '',
         tanggal_pasang: installDate
       });
@@ -1078,8 +1086,8 @@ app.post('/api/tower', (req, res) => {
     const towerId = towerResult.lastInsertRowid;
 
     const insertTowerItem = db.prepare(`
-      INSERT INTO tower_items (tower_id, kode_barang, nama_barang, jenis_barang, satuan, jumlah, harga_barang, subtotal, referensi_suplayer, tanggal_pasang)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO tower_items (tower_id, kode_barang, nama_barang, jenis_barang, satuan, jumlah, harga_barang, subtotal, serial_number, referensi_suplayer, tanggal_pasang)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const updateStock = db.prepare(`
@@ -1104,6 +1112,7 @@ app.post('/api/tower', (req, res) => {
         it.jumlah,
         it.harga_barang,
         it.subtotal,
+        it.serial_number,
         it.referensi_suplayer,
         it.tanggal_pasang
       );
@@ -1178,8 +1187,8 @@ app.put('/api/tower/:id', (req, res) => {
       // Insert updated items
       totalHarga = 0;
       const insertTowerItem = db.prepare(`
-        INSERT INTO tower_items (tower_id, kode_barang, nama_barang, jenis_barang, satuan, jumlah, harga_barang, subtotal, referensi_suplayer, tanggal_pasang)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO tower_items (tower_id, kode_barang, nama_barang, jenis_barang, satuan, jumlah, harga_barang, subtotal, serial_number, referensi_suplayer, tanggal_pasang)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       const updateStock = db.prepare(`
         UPDATE items SET stok = stok - ? WHERE kode_barang = ?
@@ -1202,6 +1211,7 @@ app.put('/api/tower/:id', (req, res) => {
           qty,
           master.harga_barang,
           subtotal,
+          it.serial_number ? it.serial_number.trim() : '',
           master.referensi_suplayer || '',
           tanggal_pasang || current.tanggal_pasang
         );
@@ -1473,17 +1483,31 @@ app.post('/api/transactions', (req, res) => {
 // 6. BARCODE SCANNER & ASSET LOOKUP
 // ==========================================
 
-// Lookup scanned barcode / item code
+// Lookup scanned barcode / item code / serial number
 app.get('/api/scanner/lookup/:code', (req, res) => {
   try {
     const rawCode = req.params.code.trim();
     // Search exact code or case-insensitive
-    const item = db.prepare('SELECT * FROM items WHERE UPPER(kode_barang) = UPPER(?)').get(rawCode);
+    let item = db.prepare('SELECT * FROM items WHERE UPPER(kode_barang) = UPPER(?)').get(rawCode);
+    let matchedBySN = false;
+
+    if (!item) {
+      // Check if rawCode matches a serial_number in customer_items, fo_items, or tower_items
+      const ciMatch = db.prepare('SELECT kode_barang FROM customer_items WHERE UPPER(serial_number) = UPPER(?)').get(rawCode);
+      const foMatch = !ciMatch && db.prepare('SELECT kode_barang FROM fo_items WHERE UPPER(serial_number) = UPPER(?)').get(rawCode);
+      const twrMatch = !ciMatch && !foMatch && db.prepare('SELECT kode_barang FROM tower_items WHERE UPPER(serial_number) = UPPER(?)').get(rawCode);
+
+      const matchedCode = ciMatch?.kode_barang || foMatch?.kode_barang || twrMatch?.kode_barang;
+      if (matchedCode) {
+        item = db.prepare('SELECT * FROM items WHERE UPPER(kode_barang) = UPPER(?)').get(matchedCode);
+        matchedBySN = true;
+      }
+    }
 
     if (!item) {
       return res.status(404).json({
         success: false,
-        error: `Barang dengan kode barcode "${rawCode}" tidak ditemukan di database`
+        error: `Barang atau Nomor Seri (SN) "${rawCode}" tidak ditemukan di database`
       });
     }
 
@@ -1491,7 +1515,7 @@ app.get('/api/scanner/lookup/:code', (req, res) => {
     const inCustomers = db.prepare(`
       SELECT 
         c.id, c.id_pelanggan, c.nama_pelanggan, c.infrastruktur, c.paket, c.status, c.alamat, c.telepon,
-        ci.jumlah, ci.satuan, ci.harga_barang, ci.subtotal, ci.tanggal_pasang
+        ci.jumlah, ci.satuan, ci.harga_barang, ci.subtotal, ci.serial_number, ci.tanggal_pasang
       FROM customer_items ci
       JOIN customers c ON ci.customer_id = c.id
       WHERE UPPER(ci.kode_barang) = UPPER(?)
@@ -1502,7 +1526,7 @@ app.get('/api/scanner/lookup/:code', (req, res) => {
     const inFO = db.prepare(`
       SELECT 
         f.id, f.daerah_lokasi, f.tipe_lokasi, f.pic_teknisi,
-        fi.jumlah, fi.satuan, fi.harga_barang, fi.subtotal, fi.tanggal_pasang
+        fi.jumlah, fi.satuan, fi.harga_barang, fi.subtotal, fi.serial_number, fi.tanggal_pasang
       FROM fo_items fi
       JOIN fo_sites f ON fi.fo_id = f.id
       WHERE UPPER(fi.kode_barang) = UPPER(?)
@@ -1513,7 +1537,7 @@ app.get('/api/scanner/lookup/:code', (req, res) => {
     const inTower = db.prepare(`
       SELECT 
         t.id, t.daerah_lokasi, t.jenis, t.type, t.ketinggian, t.kepemilikan, t.pic_teknisi,
-        ti.jumlah, ti.satuan, ti.harga_barang, ti.subtotal, ti.tanggal_pasang
+        ti.jumlah, ti.satuan, ti.harga_barang, ti.subtotal, ti.serial_number, ti.tanggal_pasang
       FROM tower_items ti
       JOIN tower_sites t ON ti.tower_id = t.id
       WHERE UPPER(ti.kode_barang) = UPPER(?)
@@ -1539,6 +1563,8 @@ app.get('/api/scanner/lookup/:code', (req, res) => {
       success: true,
       data: {
         item,
+        matchedBySN,
+        scannedCode: rawCode,
         distribution: {
           gudang_stock: item.stok,
           installed_pelanggan: totalInstalledCust,
