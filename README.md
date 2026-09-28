@@ -43,13 +43,14 @@ Aplikasi enterprise untuk manajemen inventaris barang dan pelacakan aset jaringa
   - Saat pelanggan berhenti langganan (status putus) atau perangkat ditarik, fitur dismantle otomatis mengembalikan stok barang ke gudang dan mencatat log mutasi masuk.
 
 ### 3. Divisi FO (Fiber Optic)
-- **Daerah / Lokasi**: Titik sebaran FO (contoh: `ODP-01 Jl. Sudirman`, `Closure KM-12`, `ODC Hub Sentral`).
-- **Tipe Node**: ODC, ODP, Closure, Tiang Distribusi, Sentral Hub / ODF, Jalur Feeder.
-- **PIC / Teknisi FO**: Penanggung jawab teknis.
-- **Barang Terpasang**:
-  - Multi-item dynamic input dengan auto-fill jenis, harga, dan referensi suplayer.
+- **Daerah / Lokasi**: Titik sebaran FO (contoh: `Jl. Sudirman Depan Gedung Bank`, `Simpang KM 12`, `ODP-01 Sentral Hub`).
+- **PIC / Teknisi FO**: Penanggung jawab teknis pemasangan.
+- **Tanggal Pasang & Catatan**: Tanggal instalasi dan keterangan rincian titik FO.
+- **Barang Terpasang (Multi-Item Dynamic Rows)**:
+  - Input beberapa barang sekaligus secara dinamis dengan auto-fill jenis, harga, dan referensi suplayer berdasarkan kode barang.
+  - Pencatatan Serial Number (SN / MAC) untuk setiap perangkat FO terpasang.
   - Subtotal & Total harga barang terpasang dihitung otomatis.
-  - Memotong stok gudang dan mencatat log barang keluar divisi FO secara otomatis.
+  - Memotong stok gudang dan mencatat log mutasi barang keluar divisi FO secara otomatis.
 
 ### 4. Divisi Tower (BTS Wireless)
 - **Daerah / Lokasi Site**: Contoh `Site Tower BTS Bukit Bintang`, `Monopole Cabang Barat`.

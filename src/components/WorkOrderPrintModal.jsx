@@ -116,14 +116,16 @@ export default function WorkOrderPrintModal({ isOpen, onClose, data, type }) {
 
             {isFO && (
               <div className="grid grid-cols-2 gap-y-1.5 gap-x-4">
-                <div>
+                <div className={data.tipe_lokasi ? '' : 'col-span-2'}>
                   <span className="text-slate-500 block">Titik / Daerah Lokasi:</span>
                   <span className="font-bold text-slate-900 text-sm">{data.daerah_lokasi}</span>
                 </div>
-                <div>
-                  <span className="text-slate-500 block">Tipe Node FO:</span>
-                  <span className="font-bold text-emerald-800">{data.tipe_lokasi}</span>
-                </div>
+                {data.tipe_lokasi && (
+                  <div>
+                    <span className="text-slate-500 block">Tipe Node FO:</span>
+                    <span className="font-bold text-emerald-800">{data.tipe_lokasi}</span>
+                  </div>
+                )}
                 <div>
                   <span className="text-slate-500 block">PIC / Teknisi Penanggung Jawab:</span>
                   <span className="font-bold text-slate-800">{data.pic_teknisi || '-'}</span>

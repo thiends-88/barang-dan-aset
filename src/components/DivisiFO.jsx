@@ -19,12 +19,10 @@ import {
 import { formatRupiah, formatNumber, formatDate } from '../utils/formatters';
 import WorkOrderPrintModal from './WorkOrderPrintModal';
 
-const TIPE_FO_OPTIONS = ['ODP', 'ODC', 'Closure', 'Tiang Distribusi', 'Sentral Hub / ODF', 'Jalur Feeder Backbone'];
 const DEFAULT_UNITS = ['unit', 'roll', 'meter', 'bks', 'pcs'];
 
 export default function DivisiFO({ foSites, items, onRefresh }) {
   const [searchTerm, setSearchTerm] = useState('');
-  const [typeFilter, setTypeFilter] = useState('');
   const [selectedSiteDetail, setSelectedSiteDetail] = useState(null);
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
   const [editingSite, setEditingSite] = useState(null);
@@ -33,7 +31,7 @@ export default function DivisiFO({ foSites, items, onRefresh }) {
   // Form State
   const [formData, setFormData] = useState({
     daerah_lokasi: '',
-    tipe_lokasi: 'ODP',
+    tipe_lokasi: '',
     pic_teknisi: '',
     tanggal_pasang: new Date().toISOString().split('T')[0],
     catatan: '',
@@ -51,18 +49,15 @@ export default function DivisiFO({ foSites, items, onRefresh }) {
         (site.pic_teknisi && site.pic_teknisi.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (site.catatan && site.catatan.toLowerCase().includes(searchTerm.toLowerCase()));
 
-      const matchType = !typeFilter || site.tipe_lokasi === typeFilter;
-      return matchSearch && matchType;
+      return matchSearch;
     });
-  }, [foSites, searchTerm, typeFilter]);
+  }, [foSites, searchTerm]);
 
   // Aggregate stats
   const stats = useMemo(() => {
     const totalSites = foSites.length;
     const totalAssetVal = foSites.reduce((acc, s) => acc + (Number(s.total_harga) || 0), 0);
-    const odpCount = foSites.filter(s => s.tipe_lokasi === 'ODP').length;
-    const odcCount = foSites.filter(s => s.tipe_lokasi === 'ODC').length;
-    return { totalSites, totalAssetVal, odpCount, odcCount };
+    return { totalSites, totalAssetVal };
   }, [foSites]);
 
   // Open Add modal
@@ -70,7 +65,7 @@ export default function DivisiFO({ foSites, items, onRefresh }) {
     setEditingSite(null);
     setFormData({
       daerah_lokasi: '',
-      tipe_lokasi: 'ODP',
+      tipe_lokasi: '',
       pic_teknisi: '',
       tanggal_pasang: new Date().toISOString().split('T')[0],
       catatan: '',
@@ -81,6 +76,7 @@ export default function DivisiFO({ foSites, items, onRefresh }) {
           jenis_barang: '',
           satuan: 'unit',
           jumlah: 1,
+          serial_number: '',
           harga_barang: 0,
           subtotal: 0,
           referensi_suplayer: ''
@@ -96,7 +92,7 @@ export default function DivisiFO({ foSites, items, onRefresh }) {
     setEditingSite(site);
     setFormData({
       daerah_lokasi: site.daerah_lokasi,
-      tipe_lokasi: site.tipe_lokasi || 'ODP',
+      tipe_lokasi: site.tipe_lokasi || '',
       pic_teknisi: site.pic_teknisi || '',
       tanggal_pasang: site.tanggal_pasang || new Date().toISOString().split('T')[0],
       catatan: site.catatan || '',
@@ -107,6 +103,7 @@ export default function DivisiFO({ foSites, items, onRefresh }) {
             jenis_barang: it.jenis_barang,
             satuan: it.satuan,
             jumlah: it.jumlah,
+            serial_number: it.serial_number || '',
             harga_barang: it.harga_barang,
             subtotal: it.subtotal,
             referensi_suplayer: it.referensi_suplayer || ''
@@ -253,7 +250,7 @@ export default function DivisiFO({ foSites, items, onRefresh }) {
           <div>
             <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider block">Total Titik / Node FO</span>
             <div className="text-2xl font-bold text-slate-900 mt-1">{formatNumber(stats.totalSites)} <span className="text-xs font-normal text-slate-500">Lokasi</span></div>
-            <span className="text-[11px] text-emerald-600 font-semibold mt-0.5 block">{stats.odpCount} ODP • {stats.odcCount} ODC Hub</span>
+            <span className="text-[11px] text-emerald-600 font-semibold mt-0.5 block">Jaringan Distribusi Fiber Optic</span>
           </div>
           <div className="w-12 h-12 rounded-xl bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-600">
             <Network className="w-6 h-6" />
@@ -317,19 +314,6 @@ export default function DivisiFO({ foSites, items, onRefresh }) {
               />
               <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
             </div>
-
-            <select
-              value={typeFilter}
-              onChange={(e) => setTypeFilter(e.target.value)}
-              className="px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-medium text-slate-700 focus:bg-white"
-            >
-              <option value="">Semua Tipe Titik FO</option>
-              {TIPE_FO_OPTIONS.map((t) => (
-                <option key={t} value={t}>
-                  Tipe: {t}
-                </option>
-              ))}
-            </select>
           </div>
 
           <button
@@ -346,7 +330,6 @@ export default function DivisiFO({ foSites, items, onRefresh }) {
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-50 text-slate-600 border-b border-slate-200 uppercase tracking-wider font-semibold">
               <tr>
-                <th className="py-3 px-4">Tipe Node</th>
                 <th className="py-3 px-4">Daerah / Lokasi Titik FO</th>
                 <th className="py-3 px-4">PIC / Teknisi</th>
                 <th className="py-3 px-4">Tanggal Pasang</th>
@@ -358,7 +341,7 @@ export default function DivisiFO({ foSites, items, onRefresh }) {
             <tbody className="divide-y divide-slate-100">
               {filteredSites.length === 0 ? (
                 <tr>
-                  <td colSpan="7" className="py-12 text-center text-slate-400">
+                  <td colSpan="6" className="py-12 text-center text-slate-400">
                     <Network className="w-10 h-10 mx-auto mb-2 text-slate-300" />
                     <p className="font-medium text-slate-600">Tidak ada data titik FO yang cocok</p>
                   </td>
@@ -368,16 +351,17 @@ export default function DivisiFO({ foSites, items, onRefresh }) {
                   const itemsCount = site.items ? site.items.length : 0;
                   return (
                     <tr key={site.id} className="hover:bg-emerald-50/20 transition">
-                      <td className="py-3 px-4 whitespace-nowrap">
-                        <span className="px-2.5 py-1 rounded-md text-[10px] font-mono font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                          {site.tipe_lokasi}
-                        </span>
-                      </td>
-
                       <td className="py-3 px-4">
-                        <div className="font-semibold text-slate-900">{site.daerah_lokasi}</div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-slate-900">{site.daerah_lokasi}</span>
+                          {site.tipe_lokasi && (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                              {site.tipe_lokasi}
+                            </span>
+                          )}
+                        </div>
                         {site.catatan && (
-                          <div className="text-[11px] text-slate-500 max-w-sm truncate">{site.catatan}</div>
+                          <div className="text-[11px] text-slate-500 max-w-sm truncate mt-0.5">{site.catatan}</div>
                         )}
                       </td>
 
@@ -627,7 +611,7 @@ export default function DivisiFO({ foSites, items, onRefresh }) {
                   1. Data Titik Lokasi FO
                 </h4>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <div className="sm:col-span-2">
+                  <div className="sm:col-span-3">
                     <label className="block text-xs font-semibold text-slate-700 mb-1">
                       Daerah / Lokasi *
                     </label>
@@ -636,29 +620,12 @@ export default function DivisiFO({ foSites, items, onRefresh }) {
                       required
                       value={formData.daerah_lokasi}
                       onChange={(e) => setFormData({ ...formData, daerah_lokasi: e.target.value })}
-                      placeholder="Contoh: ODP-01 Jl. Sudirman Depan Gedung Bank / Simpang KM 12"
+                      placeholder="Contoh: Jl. Sudirman Depan Gedung Bank / Simpang KM 12 / ODP-01"
                       className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:bg-white focus:border-emerald-500 font-medium"
                     />
                   </div>
 
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Tipe Lokasi Node *
-                    </label>
-                    <select
-                      value={formData.tipe_lokasi}
-                      onChange={(e) => setFormData({ ...formData, tipe_lokasi: e.target.value })}
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold focus:bg-white focus:border-emerald-500"
-                    >
-                      {TIPE_FO_OPTIONS.map((t) => (
-                        <option key={t} value={t}>
-                          {t}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
+                  <div className="sm:col-span-2">
                     <label className="block text-xs font-semibold text-slate-700 mb-1">
                       PIC / Teknisi FO
                     </label>
@@ -691,7 +658,7 @@ export default function DivisiFO({ foSites, items, onRefresh }) {
                       type="text"
                       value={formData.catatan}
                       onChange={(e) => setFormData({ ...formData, catatan: e.target.value })}
-                      placeholder="Cth: ODP terhubung ke Feeder ODC Hub Barat, Tiang No. T-045"
+                      placeholder="Cth: Titik sambung Feeder Barat, Tiang No. T-045"
                       className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:bg-white focus:border-emerald-500"
                     />
                   </div>
