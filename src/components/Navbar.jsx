@@ -1,0 +1,127 @@
+import React from 'react';
+import { 
+  Package, 
+  Users, 
+  Network, 
+  Radio, 
+  ArrowLeftRight, 
+  FileText, 
+  Barcode as BarcodeIcon, 
+  LayoutDashboard,
+  RotateCcw,
+  Layers,
+  Sparkles
+} from 'lucide-react';
+
+export default function Navbar({ 
+  currentTab, 
+  onSelectTab, 
+  onOpenScanner, 
+  onResetSeed,
+  isResetting 
+}) {
+  const navItems = [
+    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'master', label: 'Master Barang', icon: Package },
+    { id: 'pelanggan', label: 'Divisi Pelanggan', icon: Users },
+    { id: 'fo', label: 'Divisi FO', icon: Network },
+    { id: 'tower', label: 'Divisi Tower', icon: Radio },
+    { id: 'transaksi', label: 'Keluar / Masuk', icon: ArrowLeftRight },
+    { id: 'laporan', label: 'Laporan Terpadu', icon: FileText }
+  ];
+
+  return (
+    <header className="no-print bg-slate-900 border-b border-slate-800 text-white sticky top-0 z-40 shadow-lg">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex items-center justify-between h-16 gap-4">
+          {/* Logo & Brand Title */}
+          <div 
+            onClick={() => onSelectTab('dashboard')} 
+            className="flex items-center gap-3 cursor-pointer shrink-0"
+          >
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-blue-500 flex items-center justify-center text-white shadow-md shadow-indigo-500/20">
+              <Layers className="w-6 h-6" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="font-black text-base tracking-tight text-white">SIM-ASET</span>
+                <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-indigo-500/30 text-indigo-300 border border-indigo-400/20">
+                  ISP TERPADU
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-400 hidden sm:block">
+                Pelanggan • Divisi FO • Divisi Tower
+              </p>
+            </div>
+          </div>
+
+          {/* Desktop Navigation Items */}
+          <nav className="hidden lg:flex items-center gap-1">
+            {navItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = currentTab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => onSelectTab(item.id)}
+                  className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 transition ${
+                    isActive
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'text-slate-300 hover:text-white hover:bg-slate-800'
+                  }`}
+                >
+                  <Icon className="w-4 h-4" />
+                  <span>{item.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+
+          {/* Right Action Tools: Barcode Scanner & Reset Demo */}
+          <div className="flex items-center gap-2.5">
+            <button
+              onClick={onOpenScanner}
+              className="px-3.5 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-sm transition transform hover:-translate-y-0.5"
+              title="Buka Scanner Barcode / QR Code Kamera & USB Gun"
+            >
+              <BarcodeIcon className="w-4 h-4 text-emerald-100" />
+              <span className="hidden sm:inline">Pindai Barcode</span>
+            </button>
+
+            <button
+              onClick={onResetSeed}
+              disabled={isResetting}
+              className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-medium flex items-center gap-1.5 border border-slate-700 transition"
+              title="Reset dan isi ulang data contoh simulasi ISP"
+            >
+              <RotateCcw className={`w-3.5 h-3.5 ${isResetting ? 'animate-spin' : ''}`} />
+              <span className="hidden md:inline">Reset Data Contoh</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Mobile / Tablet Horizontal Navigation Scroll */}
+        <div className="lg:hidden flex items-center gap-1 overflow-x-auto py-2 border-t border-slate-800 scrollbar-none">
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = currentTab === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => onSelectTab(item.id)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap flex items-center gap-1.5 transition ${
+                  isActive
+                    ? 'bg-indigo-600 text-white'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Icon className="w-3.5 h-3.5" />
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </header>
+  );
+}
