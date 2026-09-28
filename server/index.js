@@ -29,6 +29,185 @@ function generateTrxNumber(type) {
 }
 
 // ==========================================
+// HELPER: VALIDASI BARANG TERPASANG & INTEGRITAS STOK
+// ==========================================
+
+/** Ambil master barang berdasarkan kode (tidak peka huruf besar/kecil). */
+function getMasterItem(kode) {
+  return db.prepare('SELECT * FROM items WHERE kode_barang = ?')
+    .get(String(kode || '').trim().toUpperCase());
+}
+
+/**
+ * Validasi daftar barang terpasang yang dikirim dari frontend.
+ * - Kode barang wajib terdaftar di master data
+ * - Jumlah wajib angka >= 0 (baris kosong / jumlah 0 otomatis dilewati, jumlah negatif ditolak)
+ * Mengembalikan { validated, totalHarga }.
+ */
+function validateInstalledItems(items, installDate) {
+  const validated = [];
+  let totalHarga = 0;
+
+  for (const it of Array.isArray(items) ? items : []) {
+    if (!it || !it.kode_barang || !String(it.kode_barang).trim()) continue;
+
+    const master = getMasterItem(it.kode_barang);
+    if (!master) {
+      throw new Error(`Kode barang "${it.kode_barang}" tidak terdaftar di master data`);
+    }
+
+    const mentah = it.jumlah;
+    if (mentah === undefined || mentah === null || mentah === '') continue; // baris belum diisi
+    const qty = Number(mentah);
+    if (!Number.isFinite(qty)) {
+      throw new Error(`Jumlah untuk "${master.nama_barang}" harus berupa angka (diterima: "${mentah}")`);
+    }
+    if (qty < 0) {
+      throw new Error(`Jumlah untuk "${master.nama_barang}" tidak boleh negatif (diterima: ${qty})`);
+    }
+    if (qty === 0) continue; // baris dengan jumlah 0 dianggap belum diisi
+
+    const subtotal = qty * master.harga_barang;
+    totalHarga += subtotal;
+
+    validated.push({
+      kode_barang: master.kode_barang,
+      nama_barang: master.nama_barang,
+      jenis_barang: master.jenis_barang,
+      satuan: master.satuan,
+      jumlah: qty,
+      harga_barang: master.harga_barang,
+      subtotal,
+      serial_number: it.serial_number ? String(it.serial_number).trim() : '',
+      referensi_suplayer: master.referensi_suplayer || '',
+      tanggal_pasang: installDate
+    });
+  }
+
+  return { validated, totalHarga };
+}
+
+/** Total jumlah per kode barang. */
+function sumQtyByCode(rows) {
+  const map = new Map();
+  for (const r of rows || []) {
+    if (!r) continue;
+    map.set(r.kode_barang, (map.get(r.kode_barang) || 0) + Number(r.jumlah || 0));
+  }
+  return map;
+}
+
+/**
+ * Pastikan stok gudang mencukupi sebelum stok dipotong.
+ * oldQtyByCode = jumlah yang sedang terpasang dan akan dikembalikan lebih dulu (kasus edit data).
+ */
+function assertStockAvailable(newQtyByCode, oldQtyByCode = new Map()) {
+  for (const [kode, qty] of newQtyByCode) {
+    const master = db.prepare('SELECT * FROM items WHERE kode_barang = ?').get(kode);
+    if (!master) {
+      throw new Error(`Barang dengan kode "${kode}" tidak ditemukan di master data`);
+    }
+    const tersedia = Number(master.stok) + Number(oldQtyByCode.get(kode) || 0);
+    if (qty > tersedia) {
+      throw new Error(
+        `Stok gudang tidak mencukupi untuk "${master.nama_barang}" (${kode}). ` +
+        `Tersedia: ${tersedia} ${master.satuan}, dibutuhkan: ${qty} ${master.satuan}.`
+      );
+    }
+  }
+}
+
+/** Catat satu baris mutasi stok ke tabel transactions. */
+function logStockMutation({ jenis, kategori, divisi, refId = null, lokasi, item, jumlah, harga_satuan, keterangan = '' }) {
+  const now = new Date();
+  const harga = Number(harga_satuan !== undefined ? harga_satuan : (item.harga_barang || 0));
+  db.prepare(`
+    INSERT INTO transactions (no_transaksi, tanggal, waktu, jenis, kategori_transaksi, divisi, ref_id, lokasi_penerima, kode_barang, nama_barang, satuan, jumlah, harga_satuan, total_harga, serial_number, keterangan)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    generateTrxNumber(jenis),
+    now.toISOString().split('T')[0],
+    now.toTimeString().split(' ')[0],
+    jenis,
+    kategori,
+    divisi,
+    refId,
+    lokasi,
+    item.kode_barang,
+    item.nama_barang,
+    item.satuan,
+    jumlah,
+    harga,
+    jumlah * harga,
+    item.serial_number || '',
+    keterangan
+  );
+}
+
+/**
+ * Sinkronkan barang terpasang pada satu data divisi (pelanggan / FO / tower).
+ * Baris lama diganti baris baru, lalu stok gudang disesuaikan berdasarkan SELISIH,
+ * sehingga tidak ada stok yang hilang/tertahan dan setiap selisih tercatat sebagai mutasi.
+ */
+function reconcileInstalledItems({ table, fkColumn, ownerId, oldItems, validatedItems, divisi, refId, lokasiPenerima, label }) {
+  const oldQtyByCode = sumQtyByCode(oldItems);
+  const newQtyByCode = sumQtyByCode(validatedItems);
+
+  db.prepare(`DELETE FROM ${table} WHERE ${fkColumn} = ?`).run(ownerId);
+  const insert = db.prepare(`
+    INSERT INTO ${table} (${fkColumn}, kode_barang, nama_barang, jenis_barang, satuan, jumlah, harga_barang, subtotal, serial_number, referensi_suplayer, tanggal_pasang)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  for (const it of validatedItems) {
+    insert.run(ownerId, it.kode_barang, it.nama_barang, it.jenis_barang, it.satuan, it.jumlah, it.harga_barang, it.subtotal, it.serial_number, it.referensi_suplayer, it.tanggal_pasang);
+  }
+
+  const semuaKode = new Set([...oldQtyByCode.keys(), ...newQtyByCode.keys()]);
+  for (const kode of semuaKode) {
+    const sebelum = oldQtyByCode.get(kode) || 0;
+    const sesudah = newQtyByCode.get(kode) || 0;
+    const selisih = sesudah - sebelum; // > 0 = ambil dari gudang, < 0 = kembali ke gudang
+    if (selisih === 0) continue;
+
+    db.prepare("UPDATE items SET stok = stok - ?, updated_at = datetime('now','localtime') WHERE kode_barang = ?").run(selisih, kode);
+    const master = db.prepare('SELECT * FROM items WHERE kode_barang = ?').get(kode);
+    if (!master) continue;
+
+    logStockMutation({
+      jenis: selisih > 0 ? 'KELUAR' : 'MASUK',
+      kategori: selisih > 0 ? 'Penyesuaian Pemasangan' : 'Penyesuaian Pengembalian',
+      divisi,
+      refId,
+      lokasi: lokasiPenerima,
+      item: master,
+      jumlah: Math.abs(selisih),
+      harga_satuan: master.harga_barang,
+      keterangan: `${label} — ${selisih > 0 ? 'tambahan pemasangan' : 'pengembalian ke gudang'} ${Math.abs(selisih)} ${master.satuan}`
+    });
+  }
+}
+
+/** Kembalikan stok semua barang yang masih terpasang pada satu data divisi (dipakai saat hapus data). */
+function restoreInstalledStock({ table, fkColumn, ownerId, divisi, refId, lokasi, label }) {
+  const items = db.prepare(`SELECT * FROM ${table} WHERE ${fkColumn} = ?`).all(ownerId);
+  for (const it of items) {
+    db.prepare("UPDATE items SET stok = stok + ?, updated_at = datetime('now','localtime') WHERE kode_barang = ?").run(it.jumlah, it.kode_barang);
+    logStockMutation({
+      jenis: 'MASUK',
+      kategori: 'Penghapusan Data',
+      divisi,
+      refId,
+      lokasi,
+      item: it,
+      jumlah: it.jumlah,
+      harga_satuan: it.harga_barang,
+      keterangan: `${label} — ${it.jumlah} ${it.satuan} dikembalikan ke stok gudang`
+    });
+  }
+  return items.length;
+}
+
+// ==========================================
 // 0. MASTER KATEGORI / JENIS BARANG
 // ==========================================
 
@@ -383,7 +562,7 @@ app.post('/api/items/:id/stock-adjust', (req, res) => {
       newStock -= qty;
     }
 
-    db.prepare('UPDATE items SET stok = ?, updated_at = datetime("now", "localtime") WHERE id = ?').run(newStock, id);
+    db.prepare("UPDATE items SET stok = ?, updated_at = datetime('now', 'localtime') WHERE id = ?").run(newStock, id);
 
     const now = new Date();
     const tanggal = now.toISOString().split('T')[0];
@@ -487,34 +666,9 @@ app.post('/api/customers', (req, res) => {
 
     const installDate = tanggal_pasang || new Date().toISOString().split('T')[0];
 
-    // Calculate total price and prepare items
-    let totalHarga = 0;
-    const validatedItems = [];
-
-    for (const it of items) {
-      if (!it.kode_barang) continue;
-      const master = db.prepare('SELECT * FROM items WHERE kode_barang = ?').get(it.kode_barang);
-      if (!master) {
-        throw new Error(`Kode barang "${it.kode_barang}" tidak terdaftar di master data`);
-      }
-      const qty = Number(it.jumlah) || 1;
-      const price = master.harga_barang;
-      const subtotal = qty * price;
-      totalHarga += subtotal;
-
-      validatedItems.push({
-        kode_barang: master.kode_barang,
-        nama_barang: master.nama_barang,
-        jenis_barang: master.jenis_barang,
-        satuan: master.satuan,
-        jumlah: qty,
-        harga_barang: price,
-        subtotal: subtotal,
-        serial_number: it.serial_number ? it.serial_number.trim() : '',
-        referensi_suplayer: master.referensi_suplayer || '',
-        tanggal_pasang: installDate
-      });
-    }
+    // Validasi barang terpasang & pastikan stok gudang mencukupi
+    const { validated: validatedItems, totalHarga } = validateInstalledItems(items, installDate);
+    assertStockAvailable(sumQtyByCode(validatedItems));
 
     const insertCust = db.prepare(`
       INSERT INTO customers (id_pelanggan, nama_pelanggan, infrastruktur, paket, keterangan_paket, kategori, status, alamat, telepon, tanggal_pasang, total_harga, catatan)
@@ -639,49 +793,25 @@ app.put('/api/customers/:id', (req, res) => {
       }
     }
 
-    // If items are provided in update, reconcile items
     let totalHarga = current.total_harga;
     if (Array.isArray(items)) {
-      // First, get old items and restore their stock
       const oldItems = db.prepare('SELECT * FROM customer_items WHERE customer_id = ?').all(id);
-      for (const oldIt of oldItems) {
-        db.prepare('UPDATE items SET stok = stok + ? WHERE kode_barang = ?').run(oldIt.jumlah, oldIt.kode_barang);
-      }
-      db.prepare('DELETE FROM customer_items WHERE customer_id = ?').run(id);
+      const installDate = tanggal_pasang || current.tanggal_pasang;
+      const { validated, totalHarga: totalBaru } = validateInstalledItems(items, installDate);
+      assertStockAvailable(sumQtyByCode(validated), sumQtyByCode(oldItems));
 
-      // Now insert new items and deduct stock
-      totalHarga = 0;
-      const insertCustItem = db.prepare(`
-        INSERT INTO customer_items (customer_id, kode_barang, nama_barang, jenis_barang, satuan, jumlah, harga_barang, subtotal, serial_number, referensi_suplayer, tanggal_pasang)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-      const updateStock = db.prepare(`
-        UPDATE items SET stok = stok - ? WHERE kode_barang = ?
-      `);
-
-      for (const it of items) {
-        if (!it.kode_barang) continue;
-        const master = db.prepare('SELECT * FROM items WHERE kode_barang = ?').get(it.kode_barang);
-        if (!master) continue;
-        const qty = Number(it.jumlah) || 1;
-        const subtotal = qty * master.harga_barang;
-        totalHarga += subtotal;
-
-        insertCustItem.run(
-          id,
-          master.kode_barang,
-          master.nama_barang,
-          master.jenis_barang,
-          master.satuan,
-          qty,
-          master.harga_barang,
-          subtotal,
-          it.serial_number ? it.serial_number.trim() : '',
-          master.referensi_suplayer || '',
-          tanggal_pasang || current.tanggal_pasang
-        );
-        updateStock.run(qty, master.kode_barang);
-      }
+      totalHarga = totalBaru;
+      reconcileInstalledItems({
+        table: 'customer_items',
+        fkColumn: 'customer_id',
+        ownerId: id,
+        oldItems,
+        validatedItems: validated,
+        divisi: 'PELANGGAN',
+        refId: Number(id),
+        lokasiPenerima: (nama_pelanggan ? nama_pelanggan.trim() : current.nama_pelanggan),
+        label: `Edit data pelanggan ${current.id_pelanggan}`
+      });
     }
 
     db.prepare(`
@@ -784,7 +914,7 @@ app.post('/api/customers/:id/dismantle', (req, res) => {
     db.prepare('DELETE FROM customer_items WHERE customer_id = ?').run(id);
 
     // Update customer status to putus and total_harga to 0
-    db.prepare('UPDATE customers SET status = "putus", total_harga = 0, updated_at = datetime("now", "localtime") WHERE id = ?').run(id);
+    db.prepare("UPDATE customers SET status = 'putus', total_harga = 0, updated_at = datetime('now', 'localtime') WHERE id = ?").run(id);
 
     return items.length;
   });
@@ -799,16 +929,32 @@ app.post('/api/customers/:id/dismantle', (req, res) => {
 
 // Delete customer
 app.delete('/api/customers/:id', (req, res) => {
-  try {
+  const transaction = db.transaction(() => {
     const { id } = req.params;
     const cust = db.prepare('SELECT * FROM customers WHERE id = ?').get(id);
-    if (!cust) {
-      return res.status(404).json({ success: false, error: 'Pelanggan tidak ditemukan' });
-    }
+    if (!cust) throw new Error('Pelanggan tidak ditemukan');
+
+    // Stok barang yang masih terpasang dikembalikan agar tidak hilang
+    const jumlahItem = restoreInstalledStock({
+      table: 'customer_items', fkColumn: 'customer_id', ownerId: id,
+      divisi: 'PELANGGAN', refId: Number(id),
+      lokasi: `${cust.nama_pelanggan} (${cust.id_pelanggan})`,
+      label: `Hapus data pelanggan ${cust.id_pelanggan}`
+    });
+
     db.prepare('DELETE FROM customers WHERE id = ?').run(id);
-    res.json({ success: true, message: `Pelanggan ${cust.nama_pelanggan} berhasil dihapus` });
+    return { nama: cust.nama_pelanggan, jumlahItem };
+  });
+
+  try {
+    const hasil = transaction();
+    res.json({
+      success: true,
+      message: `Pelanggan ${hasil.nama} berhasil dihapus` +
+        (hasil.jumlahItem > 0 ? ` (${hasil.jumlahItem} barang terpasang dikembalikan ke stok gudang)` : '')
+    });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.message.includes('tidak ditemukan') ? 404 : 400).json({ success: false, error: err.message });
   }
 });
 
@@ -870,34 +1016,9 @@ app.post('/api/fo', (req, res) => {
 
     const installDate = tanggal_pasang || new Date().toISOString().split('T')[0];
 
-    // Calculate total price and prepare items
-    let totalHarga = 0;
-    const validatedItems = [];
-
-    for (const it of items) {
-      if (!it.kode_barang) continue;
-      const master = db.prepare('SELECT * FROM items WHERE kode_barang = ?').get(it.kode_barang);
-      if (!master) {
-        throw new Error(`Kode barang "${it.kode_barang}" tidak terdaftar di master data`);
-      }
-      const qty = Number(it.jumlah) || 1;
-      const price = master.harga_barang;
-      const subtotal = qty * price;
-      totalHarga += subtotal;
-
-      validatedItems.push({
-        kode_barang: master.kode_barang,
-        nama_barang: master.nama_barang,
-        jenis_barang: master.jenis_barang,
-        satuan: master.satuan,
-        jumlah: qty,
-        harga_barang: price,
-        subtotal: subtotal,
-        serial_number: it.serial_number ? it.serial_number.trim() : '',
-        referensi_suplayer: master.referensi_suplayer || '',
-        tanggal_pasang: installDate
-      });
-    }
+    // Validasi barang terpasang & pastikan stok gudang mencukupi
+    const { validated: validatedItems, totalHarga } = validateInstalledItems(items, installDate);
+    assertStockAvailable(sumQtyByCode(validatedItems));
 
     const insertFO = db.prepare(`
       INSERT INTO fo_sites (daerah_lokasi, tipe_lokasi, pic_teknisi, tanggal_pasang, total_harga, catatan)
@@ -1004,46 +1125,23 @@ app.put('/api/fo/:id', (req, res) => {
 
     let totalHarga = current.total_harga;
     if (Array.isArray(items)) {
-      // Restore previous items stock
       const oldItems = db.prepare('SELECT * FROM fo_items WHERE fo_id = ?').all(id);
-      for (const oldIt of oldItems) {
-        db.prepare('UPDATE items SET stok = stok + ? WHERE kode_barang = ?').run(oldIt.jumlah, oldIt.kode_barang);
-      }
-      db.prepare('DELETE FROM fo_items WHERE fo_id = ?').run(id);
+      const installDate = tanggal_pasang || current.tanggal_pasang;
+      const { validated, totalHarga: totalBaru } = validateInstalledItems(items, installDate);
+      assertStockAvailable(sumQtyByCode(validated), sumQtyByCode(oldItems));
 
-      // Insert updated items
-      totalHarga = 0;
-      const insertFOItem = db.prepare(`
-        INSERT INTO fo_items (fo_id, kode_barang, nama_barang, jenis_barang, satuan, jumlah, harga_barang, subtotal, serial_number, referensi_suplayer, tanggal_pasang)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-      const updateStock = db.prepare(`
-        UPDATE items SET stok = stok - ? WHERE kode_barang = ?
-      `);
-
-      for (const it of items) {
-        if (!it.kode_barang) continue;
-        const master = db.prepare('SELECT * FROM items WHERE kode_barang = ?').get(it.kode_barang);
-        if (!master) continue;
-        const qty = Number(it.jumlah) || 1;
-        const subtotal = qty * master.harga_barang;
-        totalHarga += subtotal;
-
-        insertFOItem.run(
-          id,
-          master.kode_barang,
-          master.nama_barang,
-          master.jenis_barang,
-          master.satuan,
-          qty,
-          master.harga_barang,
-          subtotal,
-          it.serial_number ? it.serial_number.trim() : '',
-          master.referensi_suplayer || '',
-          tanggal_pasang || current.tanggal_pasang
-        );
-        updateStock.run(qty, master.kode_barang);
-      }
+      totalHarga = totalBaru;
+      reconcileInstalledItems({
+        table: 'fo_items',
+        fkColumn: 'fo_id',
+        ownerId: id,
+        oldItems,
+        validatedItems: validated,
+        divisi: 'DIVISI FO',
+        refId: Number(id),
+        lokasiPenerima: (daerah_lokasi ? daerah_lokasi.trim() : current.daerah_lokasi),
+        label: `Edit titik FO ${current.daerah_lokasi}`
+      });
     }
 
     db.prepare(`
@@ -1081,16 +1179,30 @@ app.put('/api/fo/:id', (req, res) => {
 
 // Delete FO site
 app.delete('/api/fo/:id', (req, res) => {
-  try {
+  const transaction = db.transaction(() => {
     const { id } = req.params;
     const site = db.prepare('SELECT * FROM fo_sites WHERE id = ?').get(id);
-    if (!site) {
-      return res.status(404).json({ success: false, error: 'Titik FO tidak ditemukan' });
-    }
+    if (!site) throw new Error('Titik FO tidak ditemukan');
+
+    const jumlahItem = restoreInstalledStock({
+      table: 'fo_items', fkColumn: 'fo_id', ownerId: id,
+      divisi: 'DIVISI FO', refId: Number(id), lokasi: site.daerah_lokasi,
+      label: `Hapus titik FO ${site.daerah_lokasi}`
+    });
+
     db.prepare('DELETE FROM fo_sites WHERE id = ?').run(id);
-    res.json({ success: true, message: `Titik FO ${site.daerah_lokasi} berhasil dihapus` });
+    return { nama: site.daerah_lokasi, jumlahItem };
+  });
+
+  try {
+    const hasil = transaction();
+    res.json({
+      success: true,
+      message: `Titik FO ${hasil.nama} berhasil dihapus` +
+        (hasil.jumlahItem > 0 ? ` (${hasil.jumlahItem} barang terpasang dikembalikan ke stok gudang)` : '')
+    });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.message.includes('tidak ditemukan') ? 404 : 400).json({ success: false, error: err.message });
   }
 });
 
@@ -1155,34 +1267,9 @@ app.post('/api/tower', (req, res) => {
 
     const installDate = tanggal_pasang || new Date().toISOString().split('T')[0];
 
-    // Calculate total price and prepare items
-    let totalHarga = 0;
-    const validatedItems = [];
-
-    for (const it of items) {
-      if (!it.kode_barang) continue;
-      const master = db.prepare('SELECT * FROM items WHERE kode_barang = ?').get(it.kode_barang);
-      if (!master) {
-        throw new Error(`Kode barang "${it.kode_barang}" tidak terdaftar di master data`);
-      }
-      const qty = Number(it.jumlah) || 1;
-      const price = master.harga_barang;
-      const subtotal = qty * price;
-      totalHarga += subtotal;
-
-      validatedItems.push({
-        kode_barang: master.kode_barang,
-        nama_barang: master.nama_barang,
-        jenis_barang: master.jenis_barang,
-        satuan: master.satuan,
-        jumlah: qty,
-        harga_barang: price,
-        subtotal: subtotal,
-        serial_number: it.serial_number ? it.serial_number.trim() : '',
-        referensi_suplayer: master.referensi_suplayer || '',
-        tanggal_pasang: installDate
-      });
-    }
+    // Validasi barang terpasang & pastikan stok gudang mencukupi
+    const { validated: validatedItems, totalHarga } = validateInstalledItems(items, installDate);
+    assertStockAvailable(sumQtyByCode(validatedItems));
 
     const insertTower = db.prepare(`
       INSERT INTO tower_sites (daerah_lokasi, jenis, type, ketinggian, kepemilikan, pic_teknisi, tanggal_pasang, total_harga, catatan)
@@ -1295,46 +1382,23 @@ app.put('/api/tower/:id', (req, res) => {
 
     let totalHarga = current.total_harga;
     if (Array.isArray(items)) {
-      // Restore previous items stock
       const oldItems = db.prepare('SELECT * FROM tower_items WHERE tower_id = ?').all(id);
-      for (const oldIt of oldItems) {
-        db.prepare('UPDATE items SET stok = stok + ? WHERE kode_barang = ?').run(oldIt.jumlah, oldIt.kode_barang);
-      }
-      db.prepare('DELETE FROM tower_items WHERE tower_id = ?').run(id);
+      const installDate = tanggal_pasang || current.tanggal_pasang;
+      const { validated, totalHarga: totalBaru } = validateInstalledItems(items, installDate);
+      assertStockAvailable(sumQtyByCode(validated), sumQtyByCode(oldItems));
 
-      // Insert updated items
-      totalHarga = 0;
-      const insertTowerItem = db.prepare(`
-        INSERT INTO tower_items (tower_id, kode_barang, nama_barang, jenis_barang, satuan, jumlah, harga_barang, subtotal, serial_number, referensi_suplayer, tanggal_pasang)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-      const updateStock = db.prepare(`
-        UPDATE items SET stok = stok - ? WHERE kode_barang = ?
-      `);
-
-      for (const it of items) {
-        if (!it.kode_barang) continue;
-        const master = db.prepare('SELECT * FROM items WHERE kode_barang = ?').get(it.kode_barang);
-        if (!master) continue;
-        const qty = Number(it.jumlah) || 1;
-        const subtotal = qty * master.harga_barang;
-        totalHarga += subtotal;
-
-        insertTowerItem.run(
-          id,
-          master.kode_barang,
-          master.nama_barang,
-          master.jenis_barang,
-          master.satuan,
-          qty,
-          master.harga_barang,
-          subtotal,
-          it.serial_number ? it.serial_number.trim() : '',
-          master.referensi_suplayer || '',
-          tanggal_pasang || current.tanggal_pasang
-        );
-        updateStock.run(qty, master.kode_barang);
-      }
+      totalHarga = totalBaru;
+      reconcileInstalledItems({
+        table: 'tower_items',
+        fkColumn: 'tower_id',
+        ownerId: id,
+        oldItems,
+        validatedItems: validated,
+        divisi: 'DIVISI TOWER',
+        refId: Number(id),
+        lokasiPenerima: (daerah_lokasi ? daerah_lokasi.trim() : current.daerah_lokasi),
+        label: `Edit site tower ${current.daerah_lokasi}`
+      });
     }
 
     db.prepare(`
@@ -1378,16 +1442,30 @@ app.put('/api/tower/:id', (req, res) => {
 
 // Delete Tower site
 app.delete('/api/tower/:id', (req, res) => {
-  try {
+  const transaction = db.transaction(() => {
     const { id } = req.params;
     const site = db.prepare('SELECT * FROM tower_sites WHERE id = ?').get(id);
-    if (!site) {
-      return res.status(404).json({ success: false, error: 'Site Tower tidak ditemukan' });
-    }
+    if (!site) throw new Error('Site Tower tidak ditemukan');
+
+    const jumlahItem = restoreInstalledStock({
+      table: 'tower_items', fkColumn: 'tower_id', ownerId: id,
+      divisi: 'DIVISI TOWER', refId: Number(id), lokasi: site.daerah_lokasi,
+      label: `Hapus site tower ${site.daerah_lokasi}`
+    });
+
     db.prepare('DELETE FROM tower_sites WHERE id = ?').run(id);
-    res.json({ success: true, message: `Site Tower ${site.daerah_lokasi} berhasil dihapus` });
+    return { nama: site.daerah_lokasi, jumlahItem };
+  });
+
+  try {
+    const hasil = transaction();
+    res.json({
+      success: true,
+      message: `Site Tower ${hasil.nama} berhasil dihapus` +
+        (hasil.jumlahItem > 0 ? ` (${hasil.jumlahItem} barang terpasang dikembalikan ke stok gudang)` : '')
+    });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.message.includes('tidak ditemukan') ? 404 : 400).json({ success: false, error: err.message });
   }
 });
 
@@ -1554,9 +1632,9 @@ app.post('/api/transactions', (req, res) => {
 
     // Update stock
     if (isMasuk) {
-      db.prepare('UPDATE items SET stok = stok + ?, updated_at = datetime("now", "localtime") WHERE id = ?').run(qty, item.id);
+      db.prepare("UPDATE items SET stok = stok + ?, updated_at = datetime('now', 'localtime') WHERE id = ?").run(qty, item.id);
     } else {
-      db.prepare('UPDATE items SET stok = stok - ?, updated_at = datetime("now", "localtime") WHERE id = ?').run(qty, item.id);
+      db.prepare("UPDATE items SET stok = stok - ?, updated_at = datetime('now', 'localtime') WHERE id = ?").run(qty, item.id);
     }
 
     const subtotal = qty * item.harga_barang;

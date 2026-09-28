@@ -265,7 +265,7 @@ export default function Dashboard({
           </div>
 
           <div className="flex-1 overflow-x-auto">
-            <table className="w-full text-left text-xs">
+            <table className="w-full min-w-[680px] text-left text-xs">
               <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-100">
                 <tr>
                   <th className="py-2 px-3">Tanggal</th>

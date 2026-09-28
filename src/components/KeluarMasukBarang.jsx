@@ -16,6 +16,7 @@ import {
   FileSpreadsheet
 } from 'lucide-react';
 import { formatRupiah, formatNumber, formatDate, exportToCSV } from '../utils/formatters';
+import { notify } from '../utils/notify';
 
 const DIVISI_OPTIONS = ['SEMUA', 'PELANGGAN', 'DIVISI FO', 'DIVISI TOWER', 'GUDANG'];
 const CURRENT_YEAR = 2026;
@@ -178,6 +179,7 @@ export default function KeluarMasukBarang({ items, onRefreshMaster }) {
       }
 
       setIsModalOpen(false);
+      notify(modalData.jenis === 'MASUK' ? 'Barang masuk berhasil dicatat' : 'Barang keluar berhasil dicatat', 'success');
       fetchTransactions();
       if (onRefreshMaster) onRefreshMaster();
     } catch (err) {
@@ -442,7 +444,7 @@ export default function KeluarMasukBarang({ items, onRefreshMaster }) {
 
         {/* Transactions Table */}
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+          <table className="w-full min-w-[1000px] text-left text-xs">
             <thead className="bg-slate-50 text-slate-600 border-b border-slate-200 uppercase tracking-wider font-semibold">
               <tr>
                 <th className="py-3 px-4">Tanggal & Waktu</th>
@@ -559,9 +561,9 @@ export default function KeluarMasukBarang({ items, onRefreshMaster }) {
 
       {/* Manual Transaction Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
-          <div className="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-8">
-            <div className={`px-6 py-4 text-white flex items-center justify-between ${
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
+          <div className="relative w-full max-w-lg bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl border border-slate-200 overflow-hidden sm:my-8 pb-[env(safe-area-inset-bottom)] sm:pb-0 max-h-[92vh] flex flex-col">
+            <div className={`px-4 sm:px-6 py-3.5 sm:py-4 text-white flex items-center justify-between ${
               modalData.jenis === 'MASUK' ? 'bg-emerald-700' : 'bg-rose-700'
             }`}>
               <div className="flex items-center gap-3">
@@ -583,7 +585,7 @@ export default function KeluarMasukBarang({ items, onRefreshMaster }) {
               </button>
             </div>
 
-            <form onSubmit={handleSaveModal} className="p-6 space-y-4">
+            <form onSubmit={handleSaveModal} className="p-4 sm:p-6 space-y-4 overflow-y-auto flex-1">
               {modalError && (
                 <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs flex items-center gap-2">
                   <AlertTriangle className="w-4 h-4 shrink-0" />
@@ -591,7 +593,7 @@ export default function KeluarMasukBarang({ items, onRefreshMaster }) {
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Jenis Mutasi *
@@ -643,7 +645,7 @@ export default function KeluarMasukBarang({ items, onRefreshMaster }) {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Divisi Terkait *
@@ -690,7 +692,7 @@ export default function KeluarMasukBarang({ items, onRefreshMaster }) {
                 </select>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Jumlah (Qty) *

@@ -25,6 +25,7 @@ import {
   FileCheck
 } from 'lucide-react';
 import { formatRupiah, formatNumber, formatDate } from '../utils/formatters';
+import { notify } from '../utils/notify';
 import WorkOrderPrintModal from './WorkOrderPrintModal';
 
 const PAKET_OPTIONS = [
@@ -298,6 +299,7 @@ export default function DivisiPelanggan({
       }
 
       setIsFormModalOpen(false);
+      notify(editingCustomer ? 'Data pelanggan berhasil diperbarui' : 'Pelanggan baru berhasil disimpan', 'success');
       onRefresh();
     } catch (err) {
       setFormError(err.message);
@@ -324,19 +326,19 @@ export default function DivisiPelanggan({
         throw new Error(data.error || 'Gagal melakukan dismantle');
       }
 
-      alert(data.message);
+      notify(data.message, 'success');
       if (selectedCustDetail && selectedCustDetail.id === cust.id) {
         setSelectedCustDetail(null);
       }
       onRefresh();
     } catch (err) {
-      alert(err.message);
+      notify(err.message, 'error');
     }
   };
 
   // Delete customer
   const handleDeleteCustomer = async (cust) => {
-    if (!window.confirm(`Hapus data pelanggan "${cust.nama_pelanggan}" (${cust.id_pelanggan})? PERHATIAN: Pastikan barang telah didismantle jika ingin stok dikembalikan ke gudang.`)) {
+    if (!window.confirm(`Hapus data pelanggan "${cust.nama_pelanggan}" (${cust.id_pelanggan})? Barang yang masih terpasang akan otomatis dikembalikan ke stok gudang.`)) {
       return;
     }
 
@@ -349,9 +351,10 @@ export default function DivisiPelanggan({
       if (selectedCustDetail && selectedCustDetail.id === cust.id) {
         setSelectedCustDetail(null);
       }
+      notify(data.message || 'Pelanggan berhasil dihapus', 'success');
       onRefresh();
     } catch (err) {
-      alert(err.message);
+      notify(err.message, 'error');
     }
   };
 
@@ -466,7 +469,7 @@ export default function DivisiPelanggan({
 
         {/* Table Content */}
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+          <table className="w-full min-w-[960px] text-left text-xs">
             <thead className="bg-slate-50 text-slate-600 border-b border-slate-200 uppercase tracking-wider font-semibold">
               <tr>
                 <th className="py-3 px-4">ID Pelanggan</th>
@@ -625,9 +628,9 @@ export default function DivisiPelanggan({
 
       {/* Customer Detail Drawer / Modal */}
       {selectedCustDetail && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
-          <div className="relative w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-8 max-h-[90vh] flex flex-col">
-            <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
+          <div className="relative w-full max-w-2xl bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl border border-slate-200 overflow-hidden sm:my-8 pb-[env(safe-area-inset-bottom)] sm:pb-0 max-h-[90vh] flex flex-col">
+            <div className="bg-slate-900 text-white px-4 sm:px-6 py-3.5 sm:py-4 flex items-center justify-between">
               <div>
                 <span className="text-xs text-indigo-300 font-mono font-bold block">{selectedCustDetail.id_pelanggan}</span>
                 <h3 className="text-base font-bold">{selectedCustDetail.nama_pelanggan}</h3>
@@ -640,9 +643,9 @@ export default function DivisiPelanggan({
               </button>
             </div>
 
-            <div className="p-6 overflow-y-auto space-y-5">
+            <div className="p-4 sm:p-6 overflow-y-auto space-y-5">
               {/* Profile Details */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-50 p-3 sm:p-4 rounded-xl border border-slate-200 text-xs">
                 <div>
                   <span className="text-slate-500 block">Infrastruktur:</span>
                   <span className="font-bold uppercase text-slate-800">{selectedCustDetail.infrastruktur}</span>
@@ -685,7 +688,7 @@ export default function DivisiPelanggan({
                 </div>
 
                 <div className="border border-slate-200 rounded-xl overflow-hidden">
-                  <table className="w-full text-left text-xs">
+                  <table className="w-full min-w-[640px] text-left text-xs">
                     <thead className="bg-slate-50 text-slate-600 border-b border-slate-200 font-semibold">
                       <tr>
                         <th className="py-2.5 px-3">Kode Barang</th>
@@ -776,9 +779,9 @@ export default function DivisiPelanggan({
 
       {/* Add / Edit Customer with Dynamic Installed Items Modal */}
       {isFormModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
-          <div className="relative w-full max-w-4xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-8 max-h-[92vh] flex flex-col">
-            <div className="bg-gradient-to-r from-blue-900 to-indigo-950 text-white px-6 py-4 flex items-center justify-between border-b border-indigo-900">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
+          <div className="relative w-full max-w-4xl bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl border border-slate-200 overflow-hidden sm:my-8 pb-[env(safe-area-inset-bottom)] sm:pb-0 max-h-[92vh] flex flex-col">
+            <div className="bg-gradient-to-r from-blue-900 to-indigo-950 text-white px-4 sm:px-6 py-3.5 sm:py-4 flex items-center justify-between border-b border-indigo-900">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-lg bg-white/20 flex items-center justify-center">
                   <Users className="w-5 h-5 text-blue-200" />

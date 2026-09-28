@@ -22,10 +22,10 @@ export default function BarcodeLabelModal({ isOpen, onClose, item }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
-      <div className="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-8">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto">
+      <div className="relative w-full max-w-lg bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl border border-slate-200 overflow-hidden sm:my-8 pb-[env(safe-area-inset-bottom)] sm:pb-0 max-h-[92vh] flex flex-col">
         {/* Header (No print) */}
-        <div className="no-print bg-slate-900 text-white px-6 py-4 flex items-center justify-between border-b border-slate-800">
+        <div className="no-print bg-slate-900 text-white px-4 sm:px-6 py-3.5 sm:py-4 flex items-center justify-between border-b border-slate-800">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-lg bg-indigo-600/40 border border-indigo-400/30 flex items-center justify-center">
               <Printer className="w-5 h-5 text-indigo-300" />
@@ -81,8 +81,8 @@ export default function BarcodeLabelModal({ isOpen, onClose, item }) {
         </div>
 
         {/* Label Preview (Printable Area) */}
-        <div className="p-6 bg-slate-100 flex flex-col items-center justify-center min-h-[220px]">
-          <div className="grid grid-cols-1 gap-4 w-full max-w-sm">
+        <div className="p-4 sm:p-6 bg-slate-100 flex flex-col items-center min-h-[220px] overflow-y-auto flex-1">
+          <div className="grid grid-cols-1 gap-4 w-full max-w-sm my-auto">
             {Array.from({ length: Math.min(labelCount, 6) }).map((_, idx) => (
               <div
                 key={idx}
