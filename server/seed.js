@@ -1,6 +1,26 @@
 import db from './db.js';
 
 export function seedData() {
+  // Seed Categories if empty
+  const rowCatCount = db.prepare('SELECT COUNT(*) as count FROM categories').get();
+  if (rowCatCount.count === 0) {
+    const insertCat = db.prepare('INSERT OR IGNORE INTO categories (nama_kategori, deskripsi) VALUES (?, ?)');
+    const defaultCats = [
+      ['Perangkat Aktif Pelanggan', 'ONU, ONT, Router SOHO, Modem CPE'],
+      ['Kabel Fiber Optic', 'Kabel Dropcore, Precon, Feeder, Backbone'],
+      ['Aksesoris & Pasif FO', 'Patchcord, SFP, ODP, ODC, Closure, Sleeve, Splitter'],
+      ['Perangkat Wireless Tower', 'Radio Client, Access Point, Dish Antenna, Antena Sectoral'],
+      ['Struktur & Aksesoris Tower', 'Tower Triangle, Monopole, Spanscrew, Kawat Sling'],
+      ['Kabel Jaringan', 'Kabel UTP Cat6, FTP Outdoor, Patch Cable'],
+      ['Perangkat Jaringan Core', 'RouterBOARD, OLT, Switch Gigabit, Media Converter'],
+      ['Perangkat Power & Kelistrikan', 'UPS, Aki / Baterai, Power Supply, Solar Controller'],
+      ['Alat Kerja & Splicer', 'Fusion Splicer, OTDR, OPM, Visual Fault Locator, Tang Fiber']
+    ];
+    for (const c of defaultCats) {
+      insertCat.run(...c);
+    }
+  }
+
   const rowCount = db.prepare('SELECT COUNT(*) as count FROM items').get();
   if (rowCount.count > 0) {
     return; // Already seeded

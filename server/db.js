@@ -33,6 +33,14 @@ db.transaction = (fn) => (...args) => {
 
 export function initDb() {
   db.exec(`
+    -- Master Kategori / Jenis Barang Dinamis
+    CREATE TABLE IF NOT EXISTS categories (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      nama_kategori TEXT UNIQUE NOT NULL,
+      deskripsi TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now', 'localtime'))
+    );
+
     -- Master Data Barang
     CREATE TABLE IF NOT EXISTS items (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

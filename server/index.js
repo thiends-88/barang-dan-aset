@@ -29,6 +29,112 @@ function generateTrxNumber(type) {
 }
 
 // ==========================================
+// 0. MASTER KATEGORI / JENIS BARANG
+// ==========================================
+
+// Get all categories
+app.get('/api/categories', (req, res) => {
+  try {
+    // Auto-sync any category present in items that might not be in categories table
+    const distinctItemCats = db.prepare("SELECT DISTINCT jenis_barang FROM items WHERE jenis_barang IS NOT NULL AND jenis_barang != ''").all();
+    const insertCat = db.prepare('INSERT OR IGNORE INTO categories (nama_kategori) VALUES (?)');
+    for (const c of distinctItemCats) {
+      insertCat.run(c.jenis_barang);
+    }
+
+    const categories = db.prepare('SELECT * FROM categories ORDER BY nama_kategori ASC').all();
+    res.json({ success: true, data: categories });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Create category
+app.post('/api/categories', (req, res) => {
+  try {
+    const { nama_kategori, deskripsi = '' } = req.body;
+    if (!nama_kategori || !nama_kategori.trim()) {
+      return res.status(400).json({ success: false, error: 'Nama kategori wajib diisi' });
+    }
+
+    const trimmed = nama_kategori.trim();
+    const existing = db.prepare('SELECT * FROM categories WHERE LOWER(nama_kategori) = LOWER(?)').get(trimmed);
+    if (existing) {
+      return res.status(400).json({ success: false, error: `Kategori "${trimmed}" sudah ada`, data: existing });
+    }
+
+    const insert = db.prepare('INSERT INTO categories (nama_kategori, deskripsi) VALUES (?, ?)');
+    const result = insert.run(trimmed, deskripsi.trim());
+    const newCat = db.prepare('SELECT * FROM categories WHERE id = ?').get(result.lastInsertRowid);
+    res.status(201).json({ success: true, data: newCat, message: `Kategori "${trimmed}" berhasil ditambahkan` });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Update category
+app.put('/api/categories/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { nama_kategori, deskripsi } = req.body;
+
+    const current = db.prepare('SELECT * FROM categories WHERE id = ?').get(id);
+    if (!current) {
+      return res.status(404).json({ success: false, error: 'Kategori tidak ditemukan' });
+    }
+
+    const newName = nama_kategori ? nama_kategori.trim() : current.nama_kategori;
+    if (newName.toLowerCase() !== current.nama_kategori.toLowerCase()) {
+      const dup = db.prepare('SELECT id FROM categories WHERE LOWER(nama_kategori) = LOWER(?) AND id != ?').get(newName, id);
+      if (dup) {
+        return res.status(400).json({ success: false, error: `Kategori "${newName}" sudah ada` });
+      }
+    }
+
+    // Update category and update all items using the old category name
+    db.prepare('UPDATE categories SET nama_kategori = ?, deskripsi = ? WHERE id = ?').run(
+      newName,
+      deskripsi !== undefined ? deskripsi.trim() : current.deskripsi,
+      id
+    );
+
+    if (newName !== current.nama_kategori) {
+      db.prepare('UPDATE items SET jenis_barang = ? WHERE jenis_barang = ?').run(newName, current.nama_kategori);
+    }
+
+    const updated = db.prepare('SELECT * FROM categories WHERE id = ?').get(id);
+    res.json({ success: true, data: updated, message: `Kategori berhasil diubah` });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Delete category
+app.delete('/api/categories/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const cat = db.prepare('SELECT * FROM categories WHERE id = ?').get(id);
+    if (!cat) {
+      return res.status(404).json({ success: false, error: 'Kategori tidak ditemukan' });
+    }
+
+    // Check if items are using this category
+    const used = db.prepare('SELECT COUNT(*) as count FROM items WHERE LOWER(jenis_barang) = LOWER(?)').get(cat.nama_kategori);
+    if (used.count > 0) {
+      return res.status(400).json({
+        success: false,
+        error: `Kategori "${cat.nama_kategori}" tidak dapat dihapus karena masih digunakan oleh ${used.count} barang. Ubah kategori barang terlebih dahulu.`
+      });
+    }
+
+    db.prepare('DELETE FROM categories WHERE id = ?').run(id);
+    res.json({ success: true, message: `Kategori "${cat.nama_kategori}" berhasil dihapus` });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==========================================
 // 1. MASTER BARANG (ITEMS)
 // ==========================================
 
@@ -107,6 +213,11 @@ app.post('/api/items', (req, res) => {
     );
 
     const newItemId = result.lastInsertRowid;
+
+    // Auto-register category into categories table if new
+    try {
+      db.prepare('INSERT OR IGNORE INTO categories (nama_kategori) VALUES (?)').run(jenis_barang.trim());
+    } catch {}
 
     // Log stock-in transaction if initial stock > 0
     if (Number(stok) > 0) {
@@ -198,6 +309,13 @@ app.put('/api/items/:id', (req, res) => {
       catatan !== undefined ? catatan.trim() : current.catatan,
       id
     );
+
+    // Auto-register category into categories table if new
+    if (jenis_barang) {
+      try {
+        db.prepare('INSERT OR IGNORE INTO categories (nama_kategori) VALUES (?)').run(jenis_barang.trim());
+      } catch {}
+    }
 
     const updated = db.prepare('SELECT * FROM items WHERE id = ?').get(id);
     res.json({ success: true, data: updated });

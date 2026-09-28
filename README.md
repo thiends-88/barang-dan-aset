@@ -11,11 +11,16 @@ Aplikasi enterprise untuk manajemen inventaris barang dan pelacakan aset jaringa
 - **Kode Barang**: Unique identification code dengan barcode otomatis.
 - **Nama Barang**: Deskripsi lengkap perangkat/material.
 - **Satuan**: Unit, Roll, Meter, Bks, Pcs, Pack, Set.
-- **Jenis / Kategori Barang**: Perangkat Aktif Pelanggan, Kabel FO, Aksesoris Pasif, Radio Wireless, Struktur Tower, Perangkat Core, dsb.
+- **Jenis / Kategori Barang Fleksibel (Dapat Ditambahkan Manual Sesuai Keinginan)**:
+  - Dilengkapi sistem Master Kategori dinamis (`/api/categories`).
+  - Pengguna dapat mengetikkan kategori baru secara langsung saat input barang (`+ Ketik Kategori Baru`) atau melalui menu **Kelola Kategori**.
+  - Modal Kelola Kategori: tambah kategori baru, ubah nama kategori (otomatis mengupdate semua barang terkait), lihat jumlah barang per kategori, dan hapus kategori yang sudah tidak digunakan.
+  - Dropdown filter kategori diperbarui secara realtime sesuai kategori yang tersedia.
 - **Harga Barang (Rp)**: Harga satuan standar pengadaan.
 - **Referensi Suplayer / Pembelian**: Data vendor dan suplayer pengadaan barang.
 - **Stok Gudang & Peringatan Stok Menipis**: Alert otomatis ketika sisa stok di bawah batas minimum.
 - **Cetak Label Barcode**: Generator label sticker barcode (Code128) siap cetak langsung.
+- **Pencatatan Serial Number (SN / MAC Address)**: Pelacakan perangkat unik pada tiap barang terpasang.
 
 ### 2. Divisi Pelanggan
 - **ID Pelanggan**: Format kode pelanggan (contoh: `CUST-OPT-001`).

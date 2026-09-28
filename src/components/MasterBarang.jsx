@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { 
   Package, 
   Plus, 
@@ -14,9 +14,11 @@ import {
   Barcode as BarcodeIcon,
   DollarSign,
   TrendingUp,
-  RefreshCw
+  RefreshCw,
+  Tag
 } from 'lucide-react';
 import BarcodeRenderer from './BarcodeRenderer';
+import CategoryManagerModal from './CategoryManagerModal';
 import { formatRupiah, formatNumber } from '../utils/formatters';
 
 const DEFAULT_CATEGORIES = [
@@ -44,8 +46,32 @@ export default function MasterBarang({
   const [showLowStockOnly, setShowLowStockOnly] = useState(false);
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
   const [isAdjustModalOpen, setIsAdjustModalOpen] = useState(false);
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [adjustingItem, setAdjustingItem] = useState(null);
+
+  // Category state
+  const [categories, setCategories] = useState(
+    DEFAULT_CATEGORIES.map((c, idx) => ({ id: idx + 1, nama_kategori: c }))
+  );
+  const [isCustomCategoryInput, setIsCustomCategoryInput] = useState(false);
+  const [customCategoryName, setCustomCategoryName] = useState('');
+
+  const fetchCategories = useCallback(async () => {
+    try {
+      const res = await fetch('/api/categories');
+      const data = await res.json();
+      if (data.success && Array.isArray(data.data) && data.data.length > 0) {
+        setCategories(data.data);
+      }
+    } catch (err) {
+      console.error('Failed to load categories:', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchCategories();
+  }, [fetchCategories]);
 
   // Form State
   const [formData, setFormData] = useState({
@@ -97,11 +123,14 @@ export default function MasterBarang({
 
   const handleOpenAdd = () => {
     setEditingItem(null);
+    setIsCustomCategoryInput(false);
+    setCustomCategoryName('');
+    const defaultCat = categories.length > 0 ? categories[0].nama_kategori : 'Perangkat Aktif Pelanggan';
     setFormData({
       kode_barang: `BRG-${Date.now().toString().slice(-6)}`,
       nama_barang: '',
       satuan: 'unit',
-      jenis_barang: 'Perangkat Aktif Pelanggan',
+      jenis_barang: defaultCat,
       stok: 10,
       min_stok: 5,
       harga_barang: 100000,
@@ -114,6 +143,8 @@ export default function MasterBarang({
 
   const handleOpenEdit = (item) => {
     setEditingItem(item);
+    setIsCustomCategoryInput(false);
+    setCustomCategoryName('');
     setFormData({
       kode_barang: item.kode_barang,
       nama_barang: item.nama_barang,
@@ -147,17 +178,27 @@ export default function MasterBarang({
       return;
     }
 
+    if (!formData.jenis_barang || !formData.jenis_barang.trim()) {
+      setFormError('Jenis / Kategori barang wajib diisi');
+      return;
+    }
+
     setIsSubmitting(true);
     setFormError('');
 
     try {
+      const payload = {
+        ...formData,
+        jenis_barang: formData.jenis_barang.trim()
+      };
+
       const url = editingItem ? `/api/items/${editingItem.id}` : '/api/items';
       const method = editingItem ? 'PUT' : 'POST';
 
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData)
+        body: JSON.stringify(payload)
       });
 
       const data = await res.json();
@@ -167,6 +208,7 @@ export default function MasterBarang({
 
       setIsFormModalOpen(false);
       onRefresh();
+      fetchCategories();
     } catch (err) {
       setFormError(err.message);
     } finally {
@@ -299,10 +341,10 @@ export default function MasterBarang({
                 onChange={(e) => setSelectedCategory(e.target.value)}
                 className="w-full sm:w-auto pl-3 pr-8 py-2 bg-slate-50 border border-slate-300 focus:bg-white focus:border-indigo-500 rounded-xl text-xs font-medium text-slate-700"
               >
-                <option value="">Semua Kategori</option>
-                {DEFAULT_CATEGORIES.map((cat) => (
-                  <option key={cat} value={cat}>
-                    {cat}
+                <option value="">Semua Kategori ({categories.length})</option>
+                {categories.map((cat) => (
+                  <option key={cat.id || cat.nama_kategori} value={cat.nama_kategori}>
+                    {cat.nama_kategori}
                   </option>
                 ))}
               </select>
@@ -320,7 +362,16 @@ export default function MasterBarang({
           </div>
 
           {/* Action Buttons */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => setIsCategoryModalOpen(true)}
+              className="px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold text-xs rounded-xl flex items-center gap-1.5 border border-indigo-200 transition"
+              title="Kelola & Tambah Kategori / Jenis Barang"
+            >
+              <Tag className="w-3.5 h-3.5 text-indigo-600" />
+              <span>Kelola Kategori</span>
+            </button>
+
             <button
               onClick={onOpenScanner}
               className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-xs rounded-xl flex items-center gap-2 border border-slate-300 transition"
@@ -601,20 +652,90 @@ export default function MasterBarang({
 
               {/* Jenis Barang */}
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Jenis / Kategori Barang *
-                </label>
-                <select
-                  value={formData.jenis_barang}
-                  onChange={(e) => setFormData({ ...formData, jenis_barang: e.target.value })}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-sm focus:bg-white focus:border-indigo-500"
-                >
-                  {DEFAULT_CATEGORIES.map((cat) => (
-                    <option key={cat} value={cat}>
-                      {cat}
-                    </option>
-                  ))}
-                </select>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-semibold text-slate-700">
+                    Jenis / Kategori Barang *
+                  </label>
+                  {!isCustomCategoryInput ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCustomCategoryInput(true);
+                        setCustomCategoryName('');
+                      }}
+                      className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1"
+                    >
+                      <span>+ Ketik Kategori Baru</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCustomCategoryInput(false);
+                        const defaultCat = categories.length > 0 ? categories[0].nama_kategori : '';
+                        setFormData({ ...formData, jenis_barang: defaultCat });
+                      }}
+                      className="text-xs text-slate-500 hover:text-slate-700 underline"
+                    >
+                      Pilih dari daftar yang ada
+                    </button>
+                  )}
+                </div>
+
+                {isCustomCategoryInput ? (
+                  <div className="space-y-1.5">
+                    <input
+                      type="text"
+                      required
+                      value={customCategoryName}
+                      onChange={(e) => {
+                        setCustomCategoryName(e.target.value);
+                        setFormData({ ...formData, jenis_barang: e.target.value });
+                      }}
+                      placeholder="Ketik kategori manual baru (cth: Antena Grid / SFP Modul)..."
+                      className="w-full px-3 py-2 bg-indigo-50/50 border-2 border-indigo-400 rounded-xl text-sm font-semibold text-slate-900 focus:bg-white focus:border-indigo-600"
+                      autoFocus
+                    />
+                    <div className="flex items-center justify-between text-[11px] text-slate-500">
+                      <span>Kategori ini akan otomatis tersimpan ke daftar master kategori.</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsCustomCategoryInput(false);
+                          const defaultCat = categories.length > 0 ? categories[0].nama_kategori : '';
+                          setFormData({ ...formData, jenis_barang: defaultCat });
+                        }}
+                        className="text-indigo-600 hover:underline"
+                      >
+                        Batal
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex gap-2">
+                    <select
+                      value={formData.jenis_barang}
+                      onChange={(e) => {
+                        if (e.target.value === '__add_new__') {
+                          setIsCustomCategoryInput(true);
+                          setCustomCategoryName('');
+                        } else {
+                          setFormData({ ...formData, jenis_barang: e.target.value });
+                        }
+                      }}
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-sm focus:bg-white focus:border-indigo-500 font-medium"
+                    >
+                      {categories.map((cat) => (
+                        <option key={cat.id || cat.nama_kategori} value={cat.nama_kategori}>
+                          {cat.nama_kategori}
+                        </option>
+                      ))}
+                      <option value="__add_new__" className="text-indigo-600 font-bold">
+                        + Tambah Kategori Baru Manual...
+                      </option>
+                    </select>
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -845,6 +966,16 @@ export default function MasterBarang({
           </div>
         </div>
       )}
+
+      {/* Modal Kelola Kategori */}
+      <CategoryManagerModal
+        isOpen={isCategoryModalOpen}
+        onClose={() => setIsCategoryModalOpen(false)}
+        categories={categories}
+        items={items}
+        onRefreshCategories={fetchCategories}
+        onRefreshItems={onRefresh}
+      />
     </div>
   );
 }
