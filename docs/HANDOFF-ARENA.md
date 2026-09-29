@@ -521,12 +521,14 @@ di README, info versi build (`/api/version`,
   `.github/workflows/ci.yml` yang sudah aktif sejak commit `2463996`).
 
 **Selesai di sesi `arena/01a0eda3` (perbaikan menu atas menutupi halaman):**
-- `Navbar.jsx` dipecah jadi **bar atas** (brand + alat, `sticky top-0`, tinggi tetap h-14/sm:h-16) dan
-  **baris menu** tunggal yang bisa digeser (tidak pernah membungkus). Sebelumnya header sticky memuat
-  2 baris (≈106px) di layar kecil, dan di desktop 8 menu + brand + alat melebihi lebar layar sehingga header
-  membengkak & menutupi konten. Sekarang: layar < `lg` hanya bar atas (56px) yang menempel, baris menu ikut
-  tergulung; `lg+` baris menu menempel di `top-16` tepat di bawah bar atas. Bila tinggi bar atas diubah,
-  ubah juga `lg:top-16` pada baris menu.
+- Penyebab (dari tangkapan layar pemilik, lebar ±1170px): 8 label menu dua kata membungkus jadi 2 baris,
+  ditambah brand/subtitle/tombol ber-label, sehingga header sticky membengkak & menutupi konten; di layar kecil
+  header sticky memuat 2 baris (≈106px).
+- Solusi di `Navbar.jsx`: header sticky **selalu satu baris** (h-14/sm:h-16). Lebar ≥ **1100px**
+  (`min-[1100px]:`): brand + menu + alat dalam satu baris; menu memakai label ringkas (`short`, mis. "Barang",
+  "Pelanggan", "FO", "Tower", "User"; nama lengkap di tooltip), subtitle/badge/label tombol/nama user baru
+  tampil di `2xl`. Lebar < 1100px: menu pindah ke baris geser terpisah di bawah bar atas yang **tidak sticky**
+  (ikut tergulung). Menambah menu baru → isi `label` **dan** `short`.
 
 **Belum dikerjakan / kandidat sesi berikutnya:**
 
