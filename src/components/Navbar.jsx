@@ -35,7 +35,7 @@ export default function Navbar({
   user,
   onLogout
 }) {
-  // Ref untuk navigasi horizontal di mobile: tab aktif otomatis digeser ke tengah
+  // Ref untuk baris menu horizontal: tab aktif otomatis digeser ke tengah
   const mobileNavRef = useRef(null);
   const activeTabRef = useRef(null);
 
@@ -59,7 +59,10 @@ export default function Navbar({
   }, [currentTab]);
 
   return (
-    <header className="no-print bg-slate-900 border-b border-slate-800 text-white sticky top-0 z-40 shadow-lg">
+    <>
+    {/* Bar atas (brand + alat) — satu-satunya bagian yang selalu menempel di semua ukuran layar.
+        Tinggi tetap (h-14 / sm:h-16) supaya offset sticky baris menu di bawahnya bisa dihitung pasti. */}
+    <header className="no-print bg-slate-900 text-white sticky top-0 z-40 shadow-lg">
       <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-14 sm:h-16 gap-2 sm:gap-4">
           {/* Logo & Brand Title */}
@@ -82,28 +85,6 @@ export default function Navbar({
               </p>
             </div>
           </div>
-
-          {/* Desktop Navigation Items */}
-          <nav className="hidden lg:flex items-center gap-1">
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              const isActive = currentTab === item.id;
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => onSelectTab(item.id)}
-                  className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 transition ${
-                    isActive
-                      ? 'bg-indigo-600 text-white shadow-sm'
-                      : 'text-slate-300 hover:text-white hover:bg-slate-800'
-                  }`}
-                >
-                  <Icon className="w-4 h-4" />
-                  <span>{item.label}</span>
-                </button>
-              );
-            })}
-          </nav>
 
           {/* Right Action Tools: Scanner, Reset (admin), User Chip & Logout */}
           <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
@@ -161,10 +142,20 @@ export default function Navbar({
           </div>
         </div>
 
-        {/* Mobile / Tablet Horizontal Navigation Scroll */}
+      </div>
+    </header>
+
+    {/* Baris menu: satu baris yang bisa digeser (tidak pernah membungkus jadi 2 baris).
+        - Layar kecil/tablet: ikut tergulung bersama halaman → hanya bar atas (56px) yang menutupi konten,
+          bukan 2 baris sekaligus (±106px) seperti sebelumnya.
+        - Desktop (lg+): menempel tepat di bawah bar atas (top-16) supaya tetap mudah berpindah menu. */}
+    <div className="no-print bg-slate-900 border-y border-slate-800 lg:sticky lg:top-16 z-30 shadow-md">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
         <div
           ref={mobileNavRef}
-          className="lg:hidden flex items-center gap-1 overflow-x-auto py-2 border-t border-slate-800 scrollbar-none snap-x snap-mandatory"
+          role="navigation"
+          aria-label="Menu utama"
+          className="relative flex items-center gap-1 overflow-x-auto py-1.5 lg:py-2 scrollbar-none snap-x snap-mandatory"
         >
           {navItems.map((item) => {
             const Icon = item.icon;
@@ -175,19 +166,20 @@ export default function Navbar({
                 ref={isActive ? activeTabRef : null}
                 onClick={() => onSelectTab(item.id)}
                 aria-current={isActive ? 'page' : undefined}
-                className={`px-3 py-2 rounded-lg text-xs font-semibold whitespace-nowrap flex items-center gap-1.5 transition shrink-0 snap-start ${
+                className={`px-3 py-2 rounded-lg lg:rounded-xl text-xs font-semibold whitespace-nowrap flex items-center gap-1.5 lg:gap-2 transition shrink-0 snap-start ${
                   isActive
-                    ? 'bg-indigo-600 text-white'
-                    : 'text-slate-400 hover:text-slate-200'
+                    ? 'bg-indigo-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800'
                 }`}
               >
-                <Icon className="w-3.5 h-3.5" />
+                <Icon className="w-3.5 h-3.5 lg:w-4 lg:h-4" />
                 <span>{item.label}</span>
               </button>
             );
           })}
         </div>
       </div>
-    </header>
+    </div>
+    </>
   );
 }

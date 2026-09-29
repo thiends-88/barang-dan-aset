@@ -520,6 +520,14 @@ di README, info versi build (`/api/version`,
 - **Dokumentasi CI diselaraskan** di `README.md`, `docs/ci.yml`, dan dokumen ini (mencerminkan
   `.github/workflows/ci.yml` yang sudah aktif sejak commit `2463996`).
 
+**Selesai di sesi `arena/01a0eda3` (perbaikan menu atas menutupi halaman):**
+- `Navbar.jsx` dipecah jadi **bar atas** (brand + alat, `sticky top-0`, tinggi tetap h-14/sm:h-16) dan
+  **baris menu** tunggal yang bisa digeser (tidak pernah membungkus). Sebelumnya header sticky memuat
+  2 baris (≈106px) di layar kecil, dan di desktop 8 menu + brand + alat melebihi lebar layar sehingga header
+  membengkak & menutupi konten. Sekarang: layar < `lg` hanya bar atas (56px) yang menempel, baris menu ikut
+  tergulung; `lg+` baris menu menempel di `top-16` tepat di bawah bar atas. Bila tinggi bar atas diubah,
+  ubah juga `lg:top-16` pada baris menu.
+
 **Belum dikerjakan / kandidat sesi berikutnya:**
 
 1. **Tindakan pemilik di server Proxmox (bukan kode):**
