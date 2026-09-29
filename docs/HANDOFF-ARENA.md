@@ -5,8 +5,8 @@
 > pernah kena, dan hal-hal yang belum selesai — supaya sesi baru tidak mengulang debat yang
 > sama atau merusak hal yang sudah disepakati.
 >
-> Terakhir diperbarui: **29 September 2026** · basis commit: `2463996` (merge PR #6 + aktivasi CI)
-> Repo: <https://github.com/thiends-88/barang-dan-aset> · Branch kerja sesi terakhir: `arena/01a0ed85-barang-dan-aset`
+> Terakhir diperbarui: **29 September 2026** · basis commit: `e44df08` (merge PR #8)
+> Repo: <https://github.com/thiends-88/barang-dan-aset> · Branch kerja sesi terakhir: `arena/01a0edaf-barang-dan-aset`
 > Sesi baru cukup diminta: *"Baca docs/HANDOFF-ARENA.md lalu lanjutkan dari §12."*
 
 ---
@@ -189,6 +189,10 @@ itu wajar karena perbedaan versi toolchain, bukan bug.
 
 > Deskripsi PR #3 menyebut akun "kantor/kantor123" — itu **tidak ada di kode**. Yang benar
 > adalah `viewer/viewer123`. Selalu jadikan kode sebagai sumber kebenaran.
+>
+> Sejak sesi `arena/01a0edaf`, panel "AKUN CONTOH PER PERAN (klik untuk mengisi form)" di
+> bawah kartu login **dihapus dari UI** agar aplikasi terlihat profesional — akun seed-nya
+> tetap ada dan test tetap memakainya. Jangan kembalikan panel itu.
 
 ---
 
@@ -529,6 +533,13 @@ di README, info versi build (`/api/version`,
   "Pelanggan", "FO", "Tower", "User"; nama lengkap di tooltip), subtitle/badge/label tombol/nama user baru
   tampil di `2xl`. Lebar < 1100px: menu pindah ke baris geser terpisah di bawah bar atas yang **tidak sticky**
   (ikut tergulung). Menambah menu baru → isi `label` **dan** `short`.
+
+**Selesai di sesi `arena/01a0edaf` (tampilan halaman login):**
+- Panel **"AKUN CONTOH PER PERAN (klik untuk mengisi form)"** (berisi 4 akun demo + tombol
+  pengisi otomatis) dihapus dari bawah kartu login di `src/components/LoginPage.jsx` supaya
+  halaman login terlihat profesional — kredensial demo tidak lagi terekspos di UI produksi.
+  Akun seed (`server/seed.js`) dan test tetap memakai akun yang sama; `dist/` di-build ulang.
+  Hasil: API 78/78 lolos, SSR 18/18 lolos, `npm run build` sukses.
 
 **Belum dikerjakan / kandidat sesi berikutnya:**
 
