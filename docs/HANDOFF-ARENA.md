@@ -98,7 +98,7 @@ update-proxmox.sh      → skrip update server: cadangkan DB → reset --hard �
 docs/ci.yml              → salinan rujukan workflow CI (tempat aman bila sesi Arena perlu mengusulkan edit CI)
 
 api-test.mjs       → 78 tes integrasi API (integritas stok, auth, peran, waktu, scan tertaut, import massal, versi)
-ssr-test.mjs       → 18 smoke test render komponen dengan data asli API
+ssr-test.mjs       → 18 smoke test render + 11 tes regresi Navbar (Seksi 19), data asli API
 contoh-import/     → barang.csv, pelanggan.csv (contoh file import)
 data/inventory.db  → database (TIDAK dilacak git sejak PR #5 — lihat §7)
 data/backups/      → cadangan otomatis dari update-proxmox.sh (diabaikan git)
@@ -144,11 +144,12 @@ reverse proxy) ada di `README.md` bagian **Deploy ke Proxmox**.
 PORT=3001 node server/index.js &     # siapkan server untuk pengujian
 npm test                             # = api-test.mjs && ssr-test.mjs
 npm run test:api                     # 78 tes integrasi API
-npm run test:render                  # 18 smoke test render (SSR)
+npm run test:render                  # 29 tes render (18 smoke + 11 regresi Navbar)
 ```
 
-> Hasil terakhir (sesi `arena/01a0ed85`, 29 Sep 2026): **API 78/78 lolos, SSR 18/18 lolos,
-> `npm run build` sukses** (bundle awal 273 kB). Rangkaian yang sama jalan otomatis di CI.
+> Hasil terakhir (sesi `arena/01a0edc1`, 29 Sep 2026): **API 78/78 lolos, SSR 29/29 lolos**
+> (18 smoke test render + **11 tes regresi tampilan Navbar**, Seksi 19),
+> `npm run build` sukses** (bundle awal 271,92 kB). Rangkaian yang sama jalan otomatis di CI.
 >
 > ⚠️ `api-test.mjs` **menulis ke database asli**; data contoh direset di awal (diverifikasi —
 > gagal reset = test berhenti) dan di akhir. Bila test crash di tengah, pengaman
@@ -439,7 +440,7 @@ itu wajar karena perbedaan versi toolchain, bukan bug.
    dependensi baru wajib tercermin di `package-lock.json`.
 2. Jalankan server di 3001, lalu:
    - `npm run test:api` → harapan **78/78 lolos**
-   - `npm run test:render` → harapan **18/18 lolos**
+   - `npm run test:render` → harapan **29/29 lolos**
    - bila menambah fitur, **tambahkan seksi tesnya** di `api-test.mjs` / `ssr-test.mjs`
      mengikuti gaya yang ada (fungsi `ok()` / `bad()`, judul seksi `=== N. ... ===`).
 3. `npm run build` bila menyentuh frontend; pastikan `dist/` ter-commit.
@@ -474,6 +475,7 @@ itu wajar karena perbedaan versi toolchain, bukan bug.
 | Body JSON default Express | Import massal ditolak 413 | Limit dinaikkan ke 5 MB + batas 5000 baris |
 | Run uji mati di tengah / reset awal gagal diam-diam | Run berikutnya bisa mewarisi DB kotor | Reset awal diverifikasi; pengaman crash memulihkan data contoh; jangan uji di server yang sedang dipakai |
 | `generateTrxNumber` acak 4 digit (`1000–9999`) tanpa cek `UNIQUE` | Paradoks ulang tahun: ~1% run `api-test.mjs` gagal di "Tower: hapus mengembalikan stok" (stok 15 vs 20 + 4 gagal lanjutan) karena `DELETE /api/tower/:id` kena `UNIQUE constraint failed: transactions.no_transaksi` dan ter-rollback; import ≥200 barang gagal ~89% | `generateTrxNumber(type, tanggal)` wajib cek `SELECT 1 FROM transactions WHERE no_transaksi = ?` + fallback sekuensial 5+ digit bila padat; `YYYYMM` mengikuti `tanggal` transaksi |
+| Varian arbitrer Tailwind v4 (`min-[1100px]:` dsb) kalah urutan dari `sm:`/`md:`/`2xl:` | Aturan `min-[1100px]:hidden sm:inline` diam-diam TIDAK menyembunyikan apa pun — `sm:` ditulis SETELAH-nya di CSS dan menang (spesifisitas sama), sehingga label tombol tetap tampil, baris menu terjepit jadi scroller, dan item menu tertimpa tombol sebelah | Untuk breakpoint kustom pakai **varian bernama**: `--breakpoint-nav: 1100px` di `@theme` `src/index.css` → `nav:` / `max-nav:` (terurut bersama sm/md/lg/2xl). **Jangan** mencampur varian arbitrer dengan breakpoint standar pada satu className; maksimal SATU pasangan tampil/sembunyi per elemen. Ditegakkan Seksi 19 `ssr-test.mjs` |
 | App Arena tanpa izin `workflows` | `git push` ditolak saat commit memuat `.github/workflows/*.yml`; `gh api` contents → 403 | `.github/workflows/ci.yml` sudah aktif (commit `2463996`) — **jangan pernah menyentuh berkas di `.github/workflows/`** dari commit Arena; gunakan `docs/ci.yml` bila ingin mengusulkan perubahan workflow |
 
 ---
@@ -533,6 +535,9 @@ di README, info versi build (`/api/version`,
   "Pelanggan", "FO", "Tower", "User"; nama lengkap di tooltip), subtitle/badge/label tombol/nama user baru
   tampil di `2xl`. Lebar < 1100px: menu pindah ke baris geser terpisah di bawah bar atas yang **tidak sticky**
   (ikut tergulung). Menambah menu baru → isi `label` **dan** `short`.
+  ⚠️ **Koreksi (29 Sep 2026, sesi `arena/01a0edc1`): perbaikan ini ternyata TIDAK BERJALAN.**
+  `min-[1100px]:` tidak pernah menyalakan/mematikan apa pun — lihat jebakan di §11. Pendekatan
+  `min-[1100px]:hidden sm:inline` sudah dibuang total; pakai varian bernama `nav:`.
 
 **Selesai di sesi `arena/01a0edaf` (tampilan halaman login):**
 - Panel **"AKUN CONTOH PER PERAN (klik untuk mengisi form)"** (berisi 4 akun demo + tombol
@@ -540,6 +545,41 @@ di README, info versi build (`/api/version`,
   halaman login terlihat profesional — kredensial demo tidak lagi terekspos di UI produksi.
   Akun seed (`server/seed.js`) dan test tetap memakai akun yang sama; `dist/` di-build ulang.
   Hasil: API 78/78 lolos, SSR 18/18 lolos, `npm run build` sukses.
+
+**Selesai di sesi `arena/01a0edc1` (menu utama tertimpa di browser laptop):**
+- **Keluhan pemilik**: "menu utama ada yang tertimpa … ketutup sebagian oleh menu lain" di browser laptop.
+  Ter reproduced persis: pada lebar **1100–1535px** (termasuk 1170px yang dilaporkan, juga 1280/1366/1440)
+  dari 8 menu hanya terlihat 4 ("Pelanggan, FO, Tower, Keluar/Mas…"), sisanya tergeser keluar kotak dan
+  **tertimpa tombol "Pindai Barcode"**; `Dashboard` dan `Barang` hilang sama sekali.
+- **Akar masalah (bukan sekadar "label kepanjangan")**: kelas `min-[1100px]:hidden sm:inline` dsb. di
+  `Navbar.jsx` **tidak pernah menghasilkan efek**. Tailwind v4.3 menaruh blok `@media (width>=1100px)`
+  (varian arbitrer) di posisi **61011**, sedangkan `@media (width>=40rem)` (varian `sm:`) di **61107** —
+  *setelahnya*. Spesifisitas sama-sama satu kelas, jadi aturan yang ditulis belakangan menang:
+  `sm:inline` menimpa `min-[1100px]:hidden`. Akibatnya "sembunyikan label di 1100–1535px" tidak berlaku,
+  blok alat membengkak jadi **541px** (bukan ±150px), menu tinggal dapat **392px** dari **602px** yang
+  dibutuhkan → `overflow-x-auto` + `justify-center` memotongnya. Verifikasi: `dist/assets/*.css`.
+- **Perbaikan**: (1) `--breakpoint-nav: 1100px` di `@theme` `src/index.css` → varian bernama `nav:` /
+  `max-nav:` yang urutannya dijamin benar bersama sm/md/lg/2xl; (2) `Navbar.jsx` tidak lagi memakai
+  satu pun varian arbitrer untuk tampil/sembunyi — brand cukup logo + "SIM-ASET" (badge & subtitle
+  pindah ke hero Dashboard, isinya sudah ada di sana), tombol alat jadi **ikon saja** (label penuh di
+  `title`/`aria-label`), nama & peran user baru tampil di `2xl`. Menu utama kini selalu dapat ruangnya:
+  di 1100px tersedia 724px untuk kebutuhan 724px (8 menu utuh, tanpa geser).
+- **Pengaman tambahan**: `justify-center-safe` (kelas sendiri di `index.css`) sebagai pengaman bila menu
+  ke-9 someday ditambahkan, plus peringatan `console.warn` bila `nav.scrollWidth > nav.clientWidth`;
+  brand jadi `<button>` dengan `aria-label` (sebelumnya `<div onClick>`).
+- **Bonus ketemu saat pengujian**: pada lebar 760–1099px tombol Keluar terdorong **12px keluar viewport**
+  (brand + alat sama-sama `shrink-0`) — ikut beres dengan brand/alat yang diringkas.
+- **Verifikasi**: 16 lebar (1920→390, termasuk batas 1100/1099) diukur di Chromium sungguhan — **16/16
+  lolos**, di dev **dan** di build produksi `dist/`; tidak ada item terpotong, tidak ada tumpang tindih,
+  tidak ada overflow horizontal, tinggi header tetap 64px. Screenshot di `shots/`.
+- **Tes regresi baru — Seksi 19 di `ssr-test.mjs` (+11 → total 29/29)**: `--breakpoint-nav` terdaftar;
+  tidak ada className yang mencampur varian arbitrer dengan `sm:/md:/2xl:`; **tepat satu** `nav:flex` +
+  **tepat satu** `nav:hidden` (menangkap bug dua baris menu); 8 menu punya `label`+`short` dengan
+  `short` ≤ 10 karakter; kelas `.justify-center-safe`/`.scrollbar-none` terdefinisi di `index.css`;
+  jumlah menu per peran (admin 8, staff_gudang 7, teknisi 6, viewer 6) dan label `short`/`label` muncul
+  di baris yang benar. Ketiga mutasi bug (kembali ke `max-nav:hidden`, pakai `min-[…]`+`sm:`, dan
+  `short` kepanjangan) sudah diuji **benar-benar membuat test gagal**.
+- Hasil: **API 78/78 lolos, SSR 29/29 lolos, `npm run build` sukses** (bundle 273 kB → 271,92 kB).
 
 **Belum dikerjakan / kandidat sesi berikutnya:**
 
@@ -561,7 +601,7 @@ npm run dev                              # Vite di :3000, proxy /api → :3001
 
 # Uji
 PORT=3001 node server/index.js &         # server untuk pengujian
-npm test                                 # 78 tes API + 18 tes render
+npm test                                 # 78 tes API + 29 tes render
 npm run test:api ; npm run test:render   # terpisah
 
 # Produksi

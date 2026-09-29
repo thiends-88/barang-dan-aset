@@ -15,19 +15,24 @@ import {
 } from 'lucide-react';
 import { canAccessMenu, ROLE_LABELS } from '../utils/auth';
 
-// `label` = nama lengkap (baris menu geser di layar kecil + tooltip),
-// `short` = nama ringkas agar 8 menu muat dalam SATU baris bersama brand & alat di desktop.
-// Label panjang dua kata sebelumnya membungkus jadi 2 baris dan membuat header membengkak.
+// `label`  = nama lengkap → dipakai di baris menu geser (layar kecil/sempit) & tooltip.
+// `short`  = nama ringkas → dipakai di baris menu utama desktop. WAJIB diisi: tanpa
+//            `short` yang cukup pendek, 8 menu tidak muat satu baris di laptop
+//            dan baris menu ikut tergulir/menabrak tombol di sebelahnya.
+// Menambah menu baru? Isi KEDUA kunci di bawah.
 const ALL_NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', short: 'Dashboard', icon: LayoutDashboard },
   { id: 'master', label: 'Master Barang', short: 'Barang', icon: Package },
   { id: 'pelanggan', label: 'Divisi Pelanggan', short: 'Pelanggan', icon: Users },
   { id: 'fo', label: 'Divisi FO', short: 'FO', icon: Network },
   { id: 'tower', label: 'Divisi Tower', short: 'Tower', icon: Radio },
-  { id: 'transaksi', label: 'Keluar / Masuk', short: 'Keluar/Masuk', icon: ArrowLeftRight },
+  { id: 'transaksi', label: 'Keluar / Masuk', short: 'Mutasi', icon: ArrowLeftRight },
   { id: 'laporan', label: 'Laporan Terpadu', short: 'Laporan', icon: FileText },
   { id: 'users', label: 'Manajemen User', short: 'User', icon: ShieldCheck }
 ];
+
+// Lebar minimum agar menu utama tampil satu baris (lihat --breakpoint-nav di index.css).
+const NAV_BREAKPOINT_PX = 1100;
 
 export default function Navbar({
   currentTab,
@@ -38,9 +43,11 @@ export default function Navbar({
   user,
   onLogout
 }) {
-  // Ref untuk baris menu horizontal: tab aktif otomatis digeser ke tengah
+  // Ref untuk baris menu geser: tab aktif otomatis digeser ke tengah
   const mobileNavRef = useRef(null);
   const activeTabRef = useRef(null);
+  // Ref baris menu utama: dipakai untuk mengukur sisa ruang tiap resize
+  const mainNavRef = useRef(null);
 
   const role = user?.role || 'admin';
   const isAdmin = role === 'admin';
@@ -61,39 +68,74 @@ export default function Navbar({
     }
   }, [currentTab]);
 
+  // Peringatan developer (konsol) bila 8 menu tidak lagi muat dalam satu baris:
+  // biasanya berarti ada menu ke-9 atau label `short` yang terlalu panjang.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mq = window.matchMedia(`(min-width: ${NAV_BREAKPOINT_PX}px)`);
+    const warn = () => {
+      const nav = mainNavRef.current;
+      if (!nav || nav.clientWidth === 0) return;
+      if (nav.scrollWidth > nav.clientWidth + 1) {
+        console.warn(
+          `[Navbar] Menu utama tidak muat satu baris (butuh ${nav.scrollWidth}px, tersedia ${nav.clientWidth}px). ` +
+          'Menu bisa tergulir/tertimpa. Pendekkan `short` atau turunkan --breakpoint-nav.'
+        );
+      }
+    };
+    warn();
+    mq.addEventListener?.('change', warn);
+    window.addEventListener('resize', warn);
+    return () => {
+      mq.removeEventListener?.('change', warn);
+      window.removeEventListener('resize', warn);
+    };
+  }, [navItems.length]);
+
   return (
     <>
-    {/* Header menempel = SATU baris saja (h-14 / sm:h-16) di semua ukuran layar.
-        - Lebar >= 1100px: brand + menu + alat dalam satu baris (menu ringkas, tidak membungkus).
-        - Lebih sempit: menu pindah ke baris geser terpisah di bawah yang ikut tergulung (tidak menempel). */}
+    {/* ------------------------------------------------------------------
+        Header menempel = SATU baris (h-14 / sm:h-16) pada lebar >= 1100px
+        (varian `nav:` dari --breakpoint-nav).
+
+        Aturan ruang di baris ini — JANGAN dilanggar:
+        1. Menu utama yang diprioritaskan. Brand & tombol alat dibuat RINGKAS
+           (ikon saja, tanpa teks) supaya 8 menu selalu muat tanpa tergulir.
+           Inilah penyebab bug lama: label tombol ikut tampil pada 1100–1535px,
+           memakan ~540px, sehingga menu hanya dapat 392px dari 602px yang
+           dibutuhkan → item menu tergeser keluar & tertimpa tombol "Pindai
+           Barcode". Jangan pakai `min-[1100px]:` untuk menyalakan/mematikan
+           tampilan: varian arbitrer kalah urutan dari sm:/md:/2xl: (lihat index.css).
+        2. Maksimal SATU pasangan tampil/sembunyi per elemen
+           (`hidden` + `nav:`/`2xl:`). Menggabungkannya dengan `sm:`/`md:`
+           berisiko aturan salah urutan diam-diam.
+        ------------------------------------------------------------------ */}
     <header className="no-print bg-slate-900 text-white sticky top-0 z-40 shadow-lg">
       <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-14 sm:h-16 gap-2 sm:gap-4">
-          {/* Logo & Brand Title */}
-          <div 
-            onClick={() => onSelectTab('dashboard')} 
-            className="flex items-center gap-2 sm:gap-3 cursor-pointer shrink-0 min-w-0"
+        <div className="flex items-center justify-between h-14 sm:h-16 gap-2 sm:gap-3">
+          {/* Brand: logo + nama saja. Badge "ISP TERPADU" & subtitle dipindah ke
+              hero Dashboard agar tidak memakan lebar dari menu utama. */}
+          <button
+            type="button"
+            onClick={() => onSelectTab('dashboard')}
+            title="Kembali ke Dashboard"
+            aria-label="SIM-ASET — kembali ke Dashboard"
+            className="flex items-center gap-2 shrink-0 min-w-0 cursor-pointer"
           >
-            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-blue-500 flex items-center justify-center text-white shadow-md shadow-indigo-500/20 shrink-0">
-              <Layers className="w-5 h-5 sm:w-6 sm:h-6" />
-            </div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="font-black text-sm sm:text-base tracking-tight text-white whitespace-nowrap">SIM-ASET</span>
-                <span className="hidden sm:inline-block min-[1100px]:hidden 2xl:inline-block px-1.5 py-0.2 rounded text-[10px] font-bold bg-indigo-500/30 text-indigo-300 border border-indigo-400/20 whitespace-nowrap">
-                  ISP TERPADU
-                </span>
-              </div>
-              <p className="text-[11px] text-slate-400 hidden sm:block min-[1100px]:hidden 2xl:block">
-                Pelanggan • Divisi FO • Divisi Tower
-              </p>
-            </div>
-          </div>
+            <span className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-blue-500 flex items-center justify-center text-white shadow-md shadow-indigo-500/20 shrink-0">
+              <Layers className="w-4 h-4 sm:w-5 sm:h-5" />
+            </span>
+            <span className="font-black text-sm sm:text-base tracking-tight text-white whitespace-nowrap">SIM-ASET</span>
+          </button>
 
-          {/* Menu desktop (>= 1100px): satu baris, tidak membungkus; bila sempit tetap bisa digeser */}
+          {/* Menu utama (>= 1100px): satu baris, tidak pernah membungkus.
+              `overflow-x-auto` + `justify-center-safe` berfungsi sebagai pengaman:
+              andai someday menu tidak muat, isinya bergeser ke kiri (bukan
+              tertimpa tombol di sebelah kanan). */}
           <nav
+            ref={mainNavRef}
             aria-label="Menu utama"
-            className="hidden min-[1100px]:flex flex-1 min-w-0 items-center justify-center gap-0.5 overflow-x-auto scrollbar-none"
+            className="hidden nav:flex flex-1 min-w-0 items-center justify-center-safe gap-0.5 overflow-x-auto scrollbar-none"
           >
             {navItems.map((item) => {
               const Icon = item.icon;
@@ -117,47 +159,48 @@ export default function Navbar({
             })}
           </nav>
 
-          {/* Right Action Tools: Scanner, Reset (admin), User Chip & Logout */}
-          <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
+          {/* Alat: HANYA IKON (label penuh pindah ke title/aria-label).
+              Menghemat ~390px, cukup untuk seluruh menu utama + brand. */}
+          <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
             <button
               onClick={onOpenScanner}
-              className="px-2.5 sm:px-3.5 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-sm transition transform hover:-translate-y-0.5"
-              title="Buka Scanner Barcode / QR Code Kamera & USB Gun"
+              className="p-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl shadow-sm transition transform hover:-translate-y-0.5"
+              title="Pindai Barcode / QR Code (Kamera & USB Gun)"
               aria-label="Pindai Barcode"
             >
               <BarcodeIcon className="w-4 h-4 text-emerald-100" />
-              <span className="hidden sm:inline min-[1100px]:hidden 2xl:inline">Pindai Barcode</span>
             </button>
 
             {isAdmin && (
               <button
                 onClick={onResetSeed}
                 disabled={isResetting}
-                className="px-2.5 sm:px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-medium flex items-center gap-1.5 border border-slate-700 transition disabled:opacity-60"
+                className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl border border-slate-700 transition disabled:opacity-60"
                 title="Reset dan isi ulang data contoh simulasi ISP"
                 aria-label="Reset Data Contoh"
               >
-                <RotateCcw className={`w-3.5 h-3.5 ${isResetting ? 'animate-spin' : ''}`} />
-                <span className="hidden md:inline min-[1100px]:hidden 2xl:inline">Reset Data Contoh</span>
+                <RotateCcw className={`w-4 h-4 ${isResetting ? 'animate-spin' : ''}`} />
               </button>
             )}
 
-            {/* Identitas user + logout */}
+            {/* Identitas user + logout. Nama & peran baru tampil di 2xl (>=1536px),
+                tempat ruangnya memang tersedia; di bawah itu cukup avatar + tooltip. */}
             {user && (
               <div className="flex items-center gap-1.5 pl-1.5 sm:pl-2.5 border-l border-slate-700">
-                <div className="flex items-center gap-2">
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-black shrink-0 ${
-                    isAdmin ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-200'
-                  }`}>
+                <div
+                  className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-black shrink-0 cursor-default"
+                  title={`${user.nama_lengkap || user.username} • ${ROLE_LABELS[user.role] || user.role}`}
+                >
+                  <span className={`w-8 h-8 rounded-full flex items-center justify-center ${isAdmin ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-200'}`}>
                     {(user.nama_lengkap || user.username || '?').charAt(0).toUpperCase()}
+                  </span>
+                </div>
+                <div className="hidden 2xl:block min-w-0">
+                  <div className="text-xs font-bold text-white leading-tight max-w-[120px] truncate">
+                    {user.nama_lengkap || user.username}
                   </div>
-                  <div className="hidden md:block min-[1100px]:hidden 2xl:block min-w-0">
-                    <div className="text-xs font-bold text-white leading-tight max-w-[120px] truncate">
-                      {user.nama_lengkap || user.username}
-                    </div>
-                    <div className="text-[10px] text-indigo-300 font-semibold leading-tight">
-                      {ROLE_LABELS[user.role] || user.role}
-                    </div>
+                  <div className="text-[10px] text-indigo-300 font-semibold leading-tight">
+                    {ROLE_LABELS[user.role] || user.role}
                   </div>
                 </div>
                 <button
@@ -166,19 +209,19 @@ export default function Navbar({
                   title="Keluar dari sistem"
                   aria-label="Logout"
                 >
-                  <LogOut className="w-3.5 h-3.5" />
+                  <LogOut className="w-4 h-4" />
                 </button>
               </div>
             )}
           </div>
         </div>
-
       </div>
     </header>
 
-    {/* Baris menu untuk layar < 1100px: satu baris yang bisa digeser (tidak pernah membungkus).
-        Sengaja TIDAK menempel: ikut tergulung bersama halaman supaya konten tidak tertutup 2 baris header. */}
-    <div className="no-print min-[1100px]:hidden bg-slate-900 border-y border-slate-800">
+    {/* Lebar < 1100px: menu pindah ke baris geser sendiri di bawah baris atas yang
+        TIDAK menempel (ikut tergulung), jadi konten tidak tertutup dua baris header.
+        Label penuh dipakai di sini karena layar sempit & jaraknya besar. */}
+    <div className="no-print nav:hidden bg-slate-900 border-y border-slate-800">
       <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
         <div
           ref={mobileNavRef}
