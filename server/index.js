@@ -382,15 +382,6 @@ app.delete('/api/users/:id', (req, res) => {
   }
 });
 
-// Helper to generate transaction number
-function generateTrxNumber(type) {
-  const prefix = type === 'MASUK' ? 'TRX-IN' : 'TRX-OUT';
-  const now = new Date();
-  const yearMonth = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-  const randomSuffix = Math.floor(1000 + Math.random() * 9000);
-  return `${prefix}-${yearMonth}-${randomSuffix}`;
-}
-
 const pad2 = (n) => String(n).padStart(2, '0');
 
 /**
@@ -403,6 +394,39 @@ const pad2 = (n) => String(n).padStart(2, '0');
 function todayLocal() {
   const d = new Date();
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+const hasTrxNoStmt = db.prepare('SELECT 1 FROM transactions WHERE no_transaksi = ?');
+let trxFallbackSeq = 10000;
+
+/**
+ * Buat nomor transaksi unik: TRX-IN-YYYYMM-NNNN / TRX-OUT-YYYYMM-NNNN.
+ * - Bulan (YYYYMM) mengikuti tanggal transaksi (default: todayLocal()) agar
+ *   entri bertanggal mundur tetap selaras antara `tanggal` dan `no_transaksi`.
+ * - Wajib memeriksa `transactions.no_transaksi` (UNIQUE) sebelum dipakai.
+ *   Sebelumnya memakai acak 4 digit (1000–9999) tanpa cek unik: akibat
+ *   paradoks ulang tahun, ~1% run `api-test.mjs` mengalami bentrok acak saat
+ *   DELETE /api/tower/:id (me-rollback transaksi hapus → stok tertinggal 15
+ *   dari 20 + 4 kegagalan lanjutan), dan import massal ratusan barang hampir
+ *   pasti gagal dengan "UNIQUE constraint failed: transactions.no_transaksi".
+ */
+function generateTrxNumber(type, tanggal) {
+  const prefix = type === 'MASUK' ? 'TRX-IN' : 'TRX-OUT';
+  const tgl = typeof tanggal === 'string' && /^\d{4}-\d{2}/.test(tanggal) ? tanggal : todayLocal();
+  const yearMonth = tgl.slice(0, 7).replace('-', '');
+
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+    const candidate = `${prefix}-${yearMonth}-${randomSuffix}`;
+    if (!hasTrxNoStmt.get(candidate)) return candidate;
+  }
+
+  // Cadangan deterministik bila ruang 4 digit pada bulan tersebut padat
+  // (mis. import ribuan baris barang sekaligus dalam satu bulan).
+  while (true) {
+    const candidate = `${prefix}-${yearMonth}-${trxFallbackSeq++}`;
+    if (!hasTrxNoStmt.get(candidate)) return candidate;
+  }
 }
 
 // ==========================================
@@ -497,13 +521,14 @@ function assertStockAvailable(newQtyByCode, oldQtyByCode = new Map()) {
 /** Catat satu baris mutasi stok ke tabel transactions. */
 function logStockMutation({ jenis, kategori, divisi, refId = null, lokasi, item, jumlah, harga_satuan, keterangan = '' }) {
   const now = new Date();
+  const tanggal = todayLocal();
   const harga = Number(harga_satuan !== undefined ? harga_satuan : (item.harga_barang || 0));
   db.prepare(`
     INSERT INTO transactions (no_transaksi, tanggal, waktu, jenis, kategori_transaksi, divisi, ref_id, lokasi_penerima, kode_barang, nama_barang, satuan, jumlah, harga_satuan, total_harga, serial_number, keterangan)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    generateTrxNumber(jenis),
-    todayLocal(),
+    generateTrxNumber(jenis, tanggal),
+    tanggal,
     now.toTimeString().split(' ')[0],
     jenis,
     kategori,
@@ -751,59 +776,64 @@ app.post('/api/items', (req, res) => {
       return res.status(400).json({ success: false, error: `Kode barang "${kode_barang}" sudah digunakan` });
     }
 
-    const insert = db.prepare(`
-      INSERT INTO items (kode_barang, nama_barang, satuan, jenis_barang, stok, min_stok, harga_barang, referensi_suplayer, catatan)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
+    const createItemTx = db.transaction(() => {
+      const insert = db.prepare(`
+        INSERT INTO items (kode_barang, nama_barang, satuan, jenis_barang, stok, min_stok, harga_barang, referensi_suplayer, catatan)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
 
-    const result = insert.run(
-      kode_barang.trim().toUpperCase(),
-      nama_barang.trim(),
-      satuan.trim(),
-      jenis_barang.trim(),
-      Number(stok) || 0,
-      Number(min_stok) || 0,
-      Number(harga_barang) || 0,
-      referensi_suplayer.trim(),
-      catatan.trim()
-    );
-
-    const newItemId = result.lastInsertRowid;
-
-    // Auto-register category into categories table if new
-    try {
-      db.prepare('INSERT OR IGNORE INTO categories (nama_kategori) VALUES (?)').run(jenis_barang.trim());
-    } catch {}
-
-    // Log stock-in transaction if initial stock > 0
-    if (Number(stok) > 0) {
-      const now = new Date();
-      const tanggal = todayLocal();
-      const waktu = now.toTimeString().split(' ')[0];
-      const trxNo = generateTrxNumber('MASUK');
-
-      db.prepare(`
-        INSERT INTO transactions (no_transaksi, tanggal, waktu, jenis, kategori_transaksi, divisi, ref_id, lokasi_penerima, kode_barang, nama_barang, satuan, jumlah, harga_satuan, total_harga, keterangan)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        trxNo,
-        tanggal,
-        waktu,
-        'MASUK',
-        'Pembelian Supplier',
-        'GUDANG',
-        newItemId,
-        referensi_suplayer || 'Stok Awal Master',
+      const result = insert.run(
         kode_barang.trim().toUpperCase(),
         nama_barang.trim(),
         satuan.trim(),
-        Number(stok),
+        jenis_barang.trim(),
+        Number(stok) || 0,
+        Number(min_stok) || 0,
         Number(harga_barang) || 0,
-        (Number(stok) * Number(harga_barang)) || 0,
-        'Input Master Barang Baru (Stok Awal)'
+        referensi_suplayer.trim(),
+        catatan.trim()
       );
-    }
 
+      const newItemId = result.lastInsertRowid;
+
+      // Auto-register category into categories table if new
+      try {
+        db.prepare('INSERT OR IGNORE INTO categories (nama_kategori) VALUES (?)').run(jenis_barang.trim());
+      } catch {}
+
+      // Log stock-in transaction if initial stock > 0
+      if (Number(stok) > 0) {
+        const now = new Date();
+        const tanggal = todayLocal();
+        const waktu = now.toTimeString().split(' ')[0];
+        const trxNo = generateTrxNumber('MASUK', tanggal);
+
+        db.prepare(`
+          INSERT INTO transactions (no_transaksi, tanggal, waktu, jenis, kategori_transaksi, divisi, ref_id, lokasi_penerima, kode_barang, nama_barang, satuan, jumlah, harga_satuan, total_harga, keterangan)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          trxNo,
+          tanggal,
+          waktu,
+          'MASUK',
+          'Pembelian Supplier',
+          'GUDANG',
+          newItemId,
+          referensi_suplayer || 'Stok Awal Master',
+          kode_barang.trim().toUpperCase(),
+          nama_barang.trim(),
+          satuan.trim(),
+          Number(stok),
+          Number(harga_barang) || 0,
+          (Number(stok) * Number(harga_barang)) || 0,
+          'Input Master Barang Baru (Stok Awal)'
+        );
+      }
+
+      return newItemId;
+    });
+
+    const newItemId = createItemTx();
     const item = db.prepare('SELECT * FROM items WHERE id = ?').get(newItemId);
     res.status(201).json({ success: true, data: item });
   } catch (err) {
@@ -1071,9 +1101,10 @@ app.post('/api/items/import', (req, res) => {
       // Catat stok awal sebagai transaksi masuk agar riwayat tetap konsisten
       if (stok > 0) {
         const now = new Date();
+        const tanggal = todayLocal();
         insertTrx.run(
-          generateTrxNumber('MASUK'),
-          todayLocal(),
+          generateTrxNumber('MASUK', tanggal),
+          tanggal,
           now.toTimeString().split(' ')[0],
           'MASUK',
           'Pembelian Supplier',
@@ -1211,33 +1242,37 @@ app.post('/api/items/:id/stock-adjust', (req, res) => {
       newStock -= qty;
     }
 
-    db.prepare("UPDATE items SET stok = ?, updated_at = datetime('now', 'localtime') WHERE id = ?").run(newStock, id);
+    const adjustStockTx = db.transaction(() => {
+      db.prepare("UPDATE items SET stok = ?, updated_at = datetime('now', 'localtime') WHERE id = ?").run(newStock, id);
 
-    const now = new Date();
-    const tanggal = todayLocal();
-    const waktu = now.toTimeString().split(' ')[0];
-    const trxNo = generateTrxNumber(isMasuk ? 'MASUK' : 'KELUAR');
+      const now = new Date();
+      const tanggal = todayLocal();
+      const waktu = now.toTimeString().split(' ')[0];
+      const trxNo = generateTrxNumber(isMasuk ? 'MASUK' : 'KELUAR', tanggal);
 
-    db.prepare(`
-      INSERT INTO transactions (no_transaksi, tanggal, waktu, jenis, kategori_transaksi, divisi, ref_id, lokasi_penerima, kode_barang, nama_barang, satuan, jumlah, harga_satuan, total_harga, keterangan)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      trxNo,
-      tanggal,
-      waktu,
-      isMasuk ? 'MASUK' : 'KELUAR',
-      isMasuk ? 'Pembelian Supplier' : 'Mutasi',
-      'GUDANG',
-      id,
-      suplayer_penerima || (isMasuk ? (item.referensi_suplayer || 'Gudang') : 'Operasional Internal'),
-      item.kode_barang,
-      item.nama_barang,
-      item.satuan,
-      qty,
-      item.harga_barang,
-      qty * item.harga_barang,
-      keterangan || (isMasuk ? 'Penambahan stok gudang manual' : 'Pengurangan stok gudang manual')
-    );
+      db.prepare(`
+        INSERT INTO transactions (no_transaksi, tanggal, waktu, jenis, kategori_transaksi, divisi, ref_id, lokasi_penerima, kode_barang, nama_barang, satuan, jumlah, harga_satuan, total_harga, keterangan)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        trxNo,
+        tanggal,
+        waktu,
+        isMasuk ? 'MASUK' : 'KELUAR',
+        isMasuk ? 'Pembelian Supplier' : 'Mutasi',
+        'GUDANG',
+        id,
+        suplayer_penerima || (isMasuk ? (item.referensi_suplayer || 'Gudang') : 'Operasional Internal'),
+        item.kode_barang,
+        item.nama_barang,
+        item.satuan,
+        qty,
+        item.harga_barang,
+        qty * item.harga_barang,
+        keterangan || (isMasuk ? 'Penambahan stok gudang manual' : 'Pengurangan stok gudang manual')
+      );
+    });
+
+    adjustStockTx();
 
     const updated = db.prepare('SELECT * FROM items WHERE id = ?').get(id);
     res.json({ success: true, data: updated, message: `Stok berhasil diupdate. Sisa stok: ${newStock} ${item.satuan}` });
@@ -1377,7 +1412,7 @@ app.post('/api/customers', (req, res) => {
       updateStock.run(it.jumlah, it.kode_barang);
 
       // Log Outgoing transaction
-      const trxNo = generateTrxNumber('KELUAR');
+      const trxNo = generateTrxNumber('KELUAR', installDate);
       insertTrx.run(
         trxNo,
         installDate,
@@ -1539,7 +1574,7 @@ app.post('/api/customers/:id/dismantle', (req, res) => {
       updateStock.run(it.jumlah, it.kode_barang);
 
       // Log Incoming transaction
-      const trxNo = generateTrxNumber('MASUK');
+      const trxNo = generateTrxNumber('MASUK', tanggal);
       insertTrx.run(
         trxNo,
         tanggal,
@@ -1721,7 +1756,7 @@ app.post('/api/fo', (req, res) => {
       updateStock.run(it.jumlah, it.kode_barang);
 
       // Log Outgoing transaction
-      const trxNo = generateTrxNumber('KELUAR');
+      const trxNo = generateTrxNumber('KELUAR', installDate);
       insertTrx.run(
         trxNo,
         installDate,
@@ -1975,7 +2010,7 @@ app.post('/api/tower', (req, res) => {
       updateStock.run(it.jumlah, it.kode_barang);
 
       // Log Outgoing transaction
-      const trxNo = generateTrxNumber('KELUAR');
+      const trxNo = generateTrxNumber('KELUAR', installDate);
       insertTrx.run(
         trxNo,
         installDate,
@@ -2333,7 +2368,7 @@ app.post('/api/transactions', (req, res) => {
 
         db.prepare("UPDATE items SET stok = stok + ?, updated_at = datetime('now', 'localtime') WHERE id = ?").run(qty, item.id);
 
-        const trxNo = generateTrxNumber('MASUK');
+        const trxNo = generateTrxNumber('MASUK', tgl);
         insertTrxFull.run(
           trxNo, tgl, waktu, 'MASUK',
           kategori_transaksi || `Pengembalian ${linkCfg.label}`,
@@ -2369,7 +2404,7 @@ app.post('/api/transactions', (req, res) => {
 
         db.prepare("UPDATE items SET stok = stok - ?, updated_at = datetime('now', 'localtime') WHERE id = ?").run(qty, item.id);
 
-        const trxNo = generateTrxNumber('KELUAR');
+        const trxNo = generateTrxNumber('KELUAR', tgl);
         insertTrxFull.run(
           trxNo, tgl, waktu, 'KELUAR',
           kategori_transaksi || `Pemasangan ${linkCfg.label}`,
@@ -2411,7 +2446,7 @@ app.post('/api/transactions', (req, res) => {
     }
 
     const subtotal = qty * item.harga_barang;
-    const trxNo = generateTrxNumber(isMasuk ? 'MASUK' : 'KELUAR');
+    const trxNo = generateTrxNumber(isMasuk ? 'MASUK' : 'KELUAR', tgl);
 
     insertTrxFull.run(
       trxNo,
@@ -2725,17 +2760,20 @@ app.get('/api/reports/dashboard-summary', (req, res) => {
 // Reseed demo data endpoint
 app.post('/api/reset-seed', (req, res) => {
   try {
-    db.exec(`
-      DELETE FROM customer_items;
-      DELETE FROM customers;
-      DELETE FROM fo_items;
-      DELETE FROM fo_sites;
-      DELETE FROM tower_items;
-      DELETE FROM tower_sites;
-      DELETE FROM transactions;
-      DELETE FROM items;
-    `);
-    seedData();
+    const resetTx = db.transaction(() => {
+      db.exec(`
+        DELETE FROM customer_items;
+        DELETE FROM customers;
+        DELETE FROM fo_items;
+        DELETE FROM fo_sites;
+        DELETE FROM tower_items;
+        DELETE FROM tower_sites;
+        DELETE FROM transactions;
+        DELETE FROM items;
+      `);
+      seedData();
+    });
+    resetTx();
     res.json({ success: true, message: 'Data berhasil direset dan diisi ulang dengan data simulasi ISP' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });

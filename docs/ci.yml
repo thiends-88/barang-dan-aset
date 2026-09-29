@@ -1,6 +1,8 @@
-# ⚠️ AKTIVASI OLEH PEMILIK: pindahkan/salin berkas ini ke `.github/workflows/ci.yml`
-# (lewat web GitHub: Add file → upload file / edit langsung). Akun App Arena tidak punya
-# izin `workflows`, jadi tidak bisa mem-push berkas workflow langsung ke lokasi itu.
+# ✅ SUDAH AKTIF di `.github/workflows/ci.yml` (sejak commit 2463996).
+# Berkas di `docs/ci.yml` ini disimpan sebagai salinan rujukan: akun App Arena tidak punya
+# izin `workflows` (push yang menyentuh `.github/workflows/*.yml` akan ditolak GitHub).
+# Bila sesi Arena berikutnya perlu mengusulkan perubahan workflow, ubah berkas ini lalu
+# minta pemilik menyalinnya ke `.github/workflows/ci.yml` lewat web GitHub.
 #
 # CI — dijalankan di GitHub Actions pada setiap push ke main dan setiap Pull Request.
 # Meniru alur uji lokal (§4.3 docs/HANDOFF-ARENA.md) di lingkungan yang selalu bersih:
