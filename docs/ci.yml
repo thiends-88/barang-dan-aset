@@ -1,0 +1,58 @@
+# ⚠️ AKTIVASI OLEH PEMILIK: pindahkan/salin berkas ini ke `.github/workflows/ci.yml`
+# (lewat web GitHub: Add file → upload file / edit langsung). Akun App Arena tidak punya
+# izin `workflows`, jadi tidak bisa mem-push berkas workflow langsung ke lokasi itu.
+#
+# CI — dijalankan di GitHub Actions pada setiap push ke main dan setiap Pull Request.
+# Meniru alur uji lokal (§4.3 docs/HANDOFF-ARENA.md) di lingkungan yang selalu bersih:
+# database SQLite dibuat + diisi data contoh otomatis saat server pertama kali hidup,
+# sehingga api-test.mjs dan ssr-test.mjs berjalan dari kondisi awal yang pasti.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Batalkan run lama bila ada push baru di ref yang sama (hemat menit CI)
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  uji-dan-build:
+    name: Uji API + render, lalu build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout kode
+        uses: actions/checkout@v6
+
+      - name: Siapkan Node.js 22 (modul bawaan node:sqlite)
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Instal dependensi
+        run: npm ci
+
+      # Server dibiarkan hidup di background; tunggu sampai /api/health menjawab
+      # (endpoint ini tanpa login, jadi aman dipakai sebagai penanda siap).
+      - name: Jalankan server API untuk pengujian (port 3001)
+        run: |
+          PORT=3001 node server/index.js &
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:3001/api/health > /dev/null && exit 0
+            sleep 1
+          done
+          echo "Server tidak siap dalam 30 detik"
+          exit 1
+
+      - name: Uji integrasi API + smoke test render komponen
+        run: npm test
+
+      # dist/ ikut di-commit (lihat §8 handoff): langkah ini memastikan
+      # perubahan frontend selalu bisa dibuild sebelum PR di-merge.
+      - name: Build frontend ke dist/
+        run: npm run build

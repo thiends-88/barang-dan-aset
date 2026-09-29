@@ -1,15 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import Navbar from './components/Navbar';
 import Dashboard from './components/Dashboard';
-import MasterBarang from './components/MasterBarang';
-import DivisiPelanggan from './components/DivisiPelanggan';
-import DivisiFO from './components/DivisiFO';
-import DivisiTower from './components/DivisiTower';
-import KeluarMasukBarang from './components/KeluarMasukBarang';
-import Laporan from './components/Laporan';
-import BarcodeLabelModal from './components/BarcodeLabelModal';
 import LoginPage from './components/LoginPage';
-import UserManagement from './components/UserManagement';
 import VersionBadge from './components/VersionBadge';
 import { subscribe, notify } from './utils/notify';
 import {
@@ -23,9 +15,35 @@ import {
 } from './utils/auth';
 import { RefreshCw, CheckCircle2, AlertTriangle } from 'lucide-react';
 
+// Semua halaman/tab selain Dashboard dimuat malas (React.lazy): masing-masing menjadi
+// chunk JS terpisah yang baru diunduh saat tab/modal dibuka, supaya bundle awal
+// (yang diunduh setiap kunjungan) tetap kecil. Dashboard dibiarkan eager karena
+// merupakan halaman pertama yang selalu tampil setelah login.
+const MasterBarang = lazy(() => import('./components/MasterBarang'));
+const DivisiPelanggan = lazy(() => import('./components/DivisiPelanggan'));
+const DivisiFO = lazy(() => import('./components/DivisiFO'));
+const DivisiTower = lazy(() => import('./components/DivisiTower'));
+const KeluarMasukBarang = lazy(() => import('./components/KeluarMasukBarang'));
+const Laporan = lazy(() => import('./components/Laporan'));
+const UserManagement = lazy(() => import('./components/UserManagement'));
+
+// Modal label barcode menarik jsbarcode (via BarcodeRenderer) — cukup besar,
+// jadi ikut dimuat malas sama seperti pemindai kamera di bawah.
+const BarcodeLabelModal = lazy(() => import('./components/BarcodeLabelModal'));
+
 // Pemindai barcode memuat library kamera yang besar (html5-qrcode),
 // jadi baru diunduh saat pengguna benar-benar membuka pemindai.
 const BarcodeScannerModal = lazy(() => import('./components/BarcodeScannerModal'));
+
+// Fallback ringan saat chunk halaman sedang diunduh (dipakai <Suspense> di bawah)
+function TabLoading() {
+  return (
+    <div className="flex flex-col items-center justify-center py-24 text-slate-400">
+      <RefreshCw className="w-8 h-8 animate-spin text-indigo-600 mb-3" />
+      <p className="text-xs font-semibold text-slate-600">Memuat halaman...</p>
+    </div>
+  );
+}
 
 export default function App() {
   const [session, setSession] = useState(() => getSession());
@@ -232,7 +250,7 @@ export default function App() {
             <p className="text-xs text-slate-400 mt-1">Menghubungkan ke database terintegrasi</p>
           </div>
         ) : (
-          <>
+          <Suspense fallback={<TabLoading />}>
             {currentTab === 'dashboard' && (
               <Dashboard
                 onNavigate={setCurrentTab}
@@ -297,7 +315,7 @@ export default function App() {
             {currentTab === 'users' && userRole === 'admin' && (
               <UserManagement currentUser={session.user} />
             )}
-          </>
+          </Suspense>
         )}
       </main>
 
@@ -344,15 +362,28 @@ export default function App() {
         </Suspense>
       )}
 
-      {/* Barcode Label Print Modal */}
-      <BarcodeLabelModal
-        isOpen={isLabelModalOpen}
-        onClose={() => {
-          setIsLabelModalOpen(false);
-          setItemForLabel(null);
-        }}
-        item={itemForLabel}
-      />
+      {/* Barcode Label Print Modal (lazy — menarik jsbarcode saat dibuka) */}
+      {isLabelModalOpen && itemForLabel && (
+        <Suspense
+          fallback={
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-sm">
+              <div className="flex items-center gap-2 px-4 py-3 bg-white rounded-xl shadow-xl border border-slate-200 text-xs font-semibold text-slate-700">
+                <RefreshCw className="w-4 h-4 animate-spin text-indigo-600" />
+                <span>Memuat label barcode...</span>
+              </div>
+            </div>
+          }
+        >
+          <BarcodeLabelModal
+            isOpen
+            onClose={() => {
+              setIsLabelModalOpen(false);
+              setItemForLabel(null);
+            }}
+            item={itemForLabel}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

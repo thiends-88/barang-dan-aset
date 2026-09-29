@@ -76,6 +76,19 @@ function checkNoNegativeStock(label) {
   else bad(`Tidak ada stok minus (${label})`, negatif.map(r => `${r.kode_barang}=${r.stok}`).join(', '));
 }
 
+// Pengaman kebersihan DB: bila test mati mendadak di tengah jalan (error yang tak
+// tertangkap), coba pulihkan data contoh dulu sebelum keluar supaya run berikutnya
+// tidak mewarisi database kotor. Best-effort saja — TOKEN bisa saja belum ada
+// (reset akan dijawab 401, cukup diabaikan).
+async function keluarSetelahCrash(jenis, err) {
+  console.error(`\nTest crash (${jenis}):`, err);
+  try { await req('POST', '/api/reset-seed'); } catch { /* abaikan */ }
+  try { db.close(); } catch { /* abaikan */ }
+  process.exit(1);
+}
+process.on('uncaughtException', (err) => { void keluarSetelahCrash('uncaughtException', err); });
+process.on('unhandledRejection', (err) => { void keluarSetelahCrash('unhandledRejection', err); });
+
 // ============================================================
 console.log('\n=== PERSIAPAN & OTENTIKASI ===');
 
@@ -150,7 +163,17 @@ console.log('\n=== PERSIAPAN & OTENTIKASI ===');
   }
 }
 
-await req('POST', '/api/reset-seed');
+// Reset ke data contoh SEBELUM mulai dan VERIFIKASI berhasil: seluruh pengujian di
+// bawah mengasumsikan kondisi awal yang pasti (stok seed tertentu). Dulu reset ini
+// tidak diperiksa — kalau gagal, kegagalannya baru tampak jauh di bawah sebagai
+// "flake" yang menyulitkan diagnosis.
+{
+  const rr = await req('POST', '/api/reset-seed');
+  if (!(rr.status === 200 && rr.json?.success)) {
+    console.error(`Gagal me-reset data contoh di awal pengujian (HTTP ${rr.status}: ${rr.json?.error || '-'}) — hentikan test.`);
+    process.exit(1);
+  }
+}
 const KODE = 'BRG-SW-GIGABIT-8P';           // stok awal 20 unit
 const STOK_AWAL = stockOf(KODE);
 const GLOBAL_SNAP = allStocks();            // snapshot seluruh barang sebelum pengujian

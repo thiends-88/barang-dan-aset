@@ -5,8 +5,8 @@
 > pernah kena, dan hal-hal yang belum selesai — supaya sesi baru tidak mengulang debat yang
 > sama atau merusak hal yang sudah disepakati.
 >
-> Terakhir diperbarui: **29 September 2026** · basis commit: `69546c1` (merge PR #4)
-> Repo: <https://github.com/thiends-88/barang-dan-aset> · Branch kerja sesi terakhir: `arena/01a0ecad-barang-dan-aset`
+> Terakhir diperbarui: **29 September 2026** · basis commit: `544e6a2` (merge PR #5)
+> Repo: <https://github.com/thiends-88/barang-dan-aset> · Branch kerja sesi terakhir: `arena/01a0ecc0-barang-dan-aset`
 > Sesi baru cukup diminta: *"Baca docs/HANDOFF-ARENA.md lalu lanjutkan dari §12."*
 
 ---
@@ -94,6 +94,7 @@ src/
 
 scripts/build-info.mjs → getBuildInfo()/getGitInfo(): dipakai vite.config.js (build) & server (runtime)
 update-proxmox.sh      → skrip update server: cadangkan DB → reset --hard → pulihkan DB → install → restart
+docs/ci.yml            → workflow CI siap pakai; PINDAHKAN ke .github/workflows/ci.yml utk mengaktifkan
 
 api-test.mjs       → 75 tes integrasi API (integritas stok, auth, peran, waktu, scan tertaut, versi)
 ssr-test.mjs       → 18 smoke test render komponen dengan data asli API
@@ -145,12 +146,19 @@ npm run test:api                     # 75 tes integrasi API
 npm run test:render                  # 18 smoke test render (SSR)
 ```
 
-> Hasil terakhir (PR #5, 29 Sep 2026, dimulai dari DB kosong → seed otomatis): **API 75/75 lolos,
-> SSR 18/18 lolos, `npm run build` sukses.**
+> Hasil terakhir (sesi `arena/01a0ecc0`, 29 Sep 2026): **API 75/75 lolos, SSR 18/18 lolos,
+> `npm run build` sukses** (bundle awal 273 kB). Rangkaian yang sama jalan otomatis di CI.
 >
-> ⚠️ `api-test.mjs` **menulis ke database asli** dan di akhir menjalankan ulang data contoh.
+> ⚠️ `api-test.mjs` **menulis ke database asli**; data contoh direset di awal (diverifikasi —
+> gagal reset = test berhenti) dan di akhir. Bila test crash di tengah, pengaman
+> `uncaughtException`/`unhandledRejection` tetap mencoba memulihkan data contoh sebelum keluar.
 > Kalau DB sedang berisi data penting, **cadangkan dulu** (`cp data/inventory.db /tmp/…`)
-> dan kembalikan setelah pengujian.
+> dan kembalikan setelah pengujian. **Jangan menjalankan tes di server yang sedang dipakai**
+> (interaksi pemakai ikut mengubah stok dan bisa menggagalkan tes).
+>
+> Rangkaian yang sama juga **siap dijalankan otomatis oleh CI GitHub Actions** pada setiap
+> push/PR ke `main` — workflow siap pakai ada di `docs/ci.yml`, menunggu dipindahkan pemilik
+> ke `.github/workflows/ci.yml` (lihat §12).
 
 ### 4.4 Build frontend
 
@@ -221,8 +229,11 @@ itu wajar karena perbedaan versi toolchain, bukan bug.
   `formatDate`, `formatDateTime`, `todayLocal`, `exportToCSV`) — jangan format manual.
 - Komponen harus **aman di-render di SSR** (tanpa `window`/`localStorage` di jalur render) karena
   dipakai `ssr-test.mjs`.
-- Library berat dimuat malas: `BarcodeScannerModal` lewat `React.lazy` + `Suspense` dengan
-  fallback "Memuat pemindai barcode..."; `xlsx` juga `await import()` di server untuk template.
+- Library berat & halaman dimuat malas: semua tab selain Dashboard + `BarcodeLabelModal` lewat
+  `React.lazy` + `Suspense` di `App.jsx` (fallback spinner konsisten "Memuat halaman..." /
+  "Memuat pemindai barcode..."); `BarcodeScannerModal` sudah lazy sejak awal; `html5-qrcode`
+  di `KeluarMasukBarang` di-`await import()` tepat sebelum kamera dinyalakan; `xlsx` juga
+  `await import()` (di server untuk template, di klien untuk pratinjau import).
 
 ### 5.4 Hak akses (satu sumber kebenaran = server)
 - Peta izin di `server/index.js` (`WRITE_RULES`) dan di UI (`MENU_ACCESS`, `canManageInventory`,
@@ -454,6 +465,8 @@ itu wajar karena perbedaan versi toolchain, bukan bug.
 | Skrip bash diganti `git reset --hard` saat sedang berjalan | Bash membaca sisa skrip versi baru → perilaku acak | `update-proxmox.sh` re-exec dari salinan di `/tmp` |
 | Build menghasilkan hash nama berkas berbeda | Diff `dist/` terlihat besar padahal ukuran sama | Wajar (beda toolchain); commit hasil build terbaru, jangan panik |
 | Body JSON default Express | Import massal ditolak 413 | Limit dinaikkan ke 5 MB + batas 5000 baris |
+| Run uji mati di tengah / reset awal gagal diam-diam | Run berikutnya mewarisi DB kotor → kegagalan "flake" (stok 15 vs 20) | Reset awal diverifikasi; pengaman crash memulihkan data contoh; jangan uji di server yang sedang dipakai |
+| App Arena tanpa izin `workflows` | `git push` ditolak saat commit memuat `.github/workflows/*.yml`; `gh api` contents → 403 | Simpan workflow di `docs/ci.yml`; pemilik memindahkannya lewat web GitHub (akunnya berhak penuh) |
 
 ---
 
@@ -471,20 +484,44 @@ gagal di tengah + petunjuk rollback, pemangkasan cadangan), cron cadangan harian
 di README, info versi build (`/api/version`,
 `dist/build-info.json`, `VersionBadge`), header cache `index.html`.
 
+**Selesai di sesi ini (branch `arena/01a0ecc0`):**
+
+- **Workflow CI disiapkan** di `docs/ci.yml`: checkout → Node 22 → `npm ci` → hidupkan
+  server uji port 3001 (tunggu `/api/health`, maks 30 dtk) → `npm test` → `npm run build`;
+  berjalan pada setiap push/PR ke `main` dengan pembatalan run lama (concurrency).
+  Dipin ke `actions/checkout@v6` / `actions/setup-node@v6`. **Belum aktif**: akun App Arena
+  tidak punya izin `workflows`, sehingga berkas workflow tidak bisa di-push ke
+  `.github/workflows/` (ditolak remote & API — lihat §11). Pemilik cukup memindahkan
+  `docs/ci.yml` → `.github/workflows/ci.yml` lewat web GitHub untuk mengaktifkannya;
+  badge CI di README langsung hidup setelah itu.
+- **Bundle dipecah per halaman**: semua tab selain Dashboard + modal label barcode kini
+  `React.lazy` (`Suspense` fallback spinner konsisten), dan `KeluarMasukBarang` memuat
+  `html5-qrcode` secara dinamis tepat sebelum kamera dinyalakan. `jsbarcode`, `html5-qrcode`,
+  dan `xlsx` kini berada di chunk terpisah yang baru diunduh saat dipakai.
+  **`index-*.js`: 947 kB → 273 kB (gzip ~84 kB); tanpa chunk > 500 kB.** Dashboard sengaja
+  tetap eager (halaman pertama setelah login).
+- **`api-test.mjs` dikeraskan** (2 perubahan kecil, jumlah tes tetap 75/75): reset data contoh
+  di awal kini diverifikasi (gagal → berhenti seketika, bukan lanjut dengan DB kotor), dan
+  pengaman `uncaughtException`/`unhandledRejection` memulihkan data contoh sebelum proses
+  keluar — tervalidasi dengan simulasi crash (stok tetap 20, data uji bersih).
+- **Deskripsi PR #3 dikoreksi** (akun `kantor` → `viewer/viewer123`).
+
 **Belum dikerjakan / kandidat sesi berikutnya:**
 
-1. **Tindakan pemilik di server (bukan kode):** update pertama setelah PR #5 wajib
-   `./update-proxmox.sh --dry-run` dulu (lihat §8); **ganti password akun demo** dan set
-   **`AUTH_SECRET`** (+ `APP_TZ` bila bukan WIB) di unit systemd.
+1. **Tindakan pemilik (bukan kode):**
+   - *Di server:* update pertama setelah PR #5 wajib `./update-proxmox.sh --dry-run` dulu
+     (lihat §8); **ganti password akun demo** dan set **`AUTH_SECRET`** (+ `APP_TZ` bila
+     bukan WIB) di unit systemd.
+   - *Di GitHub:* pindahkan **`docs/ci.yml` → `.github/workflows/ci.yml`** (web GitHub)
+     untuk mengaktifkan CI — App Arena tidak boleh meng-push berkas workflow (lihat §11).
 2. **Koreksi stempel waktu historis** yang masih UTC (pergeseran +7 jam) bila pemilik menghendaki.
-3. **Belum ada CI GitHub Actions**; semua tes dijalankan manual sebelum PR.
-4. **Bundle `index-*.js` masih ± 947 kB** (peringatan Vite >500 kB); bisa di-split per halaman
-   dengan `lazy()` seperti `BarcodeScannerModal`.
-5. Utang kecil: deskripsi PR #3 menyebut akun `kantor` yang tidak ada.
-6. **Flake tes belum terjelaskan:** sekali (dari ±20 putaran) `api-test.mjs` gagal di
-   "Tower: hapus mengembalikan stok" (stok 15, harap 20), dan 4 kegagalan berikutnya hanya efek
-   lanjutan. Tidak bisa direproduksi dalam 15 putaran berikutnya dari DB baru. Detail kegagalan
-   kini mencetak `id`, status HTTP, dan pesan error DELETE. Kalau muncul lagi, mulai dari sana.
+3. **Flake tes lama — dipantau, belum pernah muncul ulang:** sekali (dari ±20 putaran)
+   `api-test.mjs` gagal di "Tower: hapus mengembalikan stok" (stok 15, harap 20) dan 4 kegagalan
+   berikutnya efek lanjutan. Tidak bisa direproduksi dari DB baru; handler DELETE tower sudah
+   ditinjau ulang dan tampak benar (transaksional, memakai `restoreInstalledStock` yang sama
+   seperti divisi lain). Dugaan terkuat: run sebelumnya mati di tengah (warisan DB kotor) atau
+   server uji sedang dipakai — kedua pintu itu kini ditutup oleh pengerasan di atas. Bila masih
+   muncul lagi, mulai dari detail kegagalan yang kini tercetak (`id`, status HTTP, pesan DELETE).
 
 ---
 

@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Html5Qrcode } from 'html5-qrcode';
+// html5-qrcode sengaja TIDAK di-import statis di sini: library kamera itu besar dan
+// hanya dipakai saat tombol kamera ditekan, jadi dimuat dinamis di startTxCamera()
+// (pola yang sama seperti BarcodeScannerModal yang di-lazy-load dari App.jsx).
 import { 
   ArrowLeftRight, 
   ArrowDownLeft, 
@@ -123,6 +125,8 @@ export default function KeluarMasukBarang({ items, onRefreshMaster }) {
     try {
       setModalError('');
       setIsCameraOn(true);
+      // Muat library kamera tepat sebelum dipakai agar tidak ikut di bundle awal
+      const { Html5Qrcode } = await import('html5-qrcode');
       const html5 = new Html5Qrcode('scan-area-transaksi');
       html5QrRef.current = html5;
       await html5.start(
