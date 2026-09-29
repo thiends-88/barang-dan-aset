@@ -49,13 +49,13 @@ export default function WorkOrderPrintModal({ isOpen, onClose, data, type }) {
             <div className="flex items-center justify-between">
               <div>
                 <h1 className="text-lg font-black tracking-tight text-slate-900 uppercase">
-                  PT. TELEKOMUNIKASI DATA NUSANTARA (ISP NETWORK)
+                  PT. CINOXMEDIA NETWORK INDONESIA
                 </h1>
                 <p className="text-xs text-slate-600">
                   Divisi Operasional & Jaringan • Divisi FO • Divisi Tower • Logistik Aset
                 </p>
                 <p className="text-[11px] text-slate-500">
-                  Jl. Telekomunikasi Utama No. 88 | Helpdesk: 0811-0000-8888 | www.isp-network.id
+                  JL. Adityawarman No. 366, Kampung Jawa, Kota Solok
                 </p>
               </div>
               <div className="text-right">

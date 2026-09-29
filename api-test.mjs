@@ -29,10 +29,15 @@ function bad(name, detail = '') {
   console.log(`  ✗ ${name}${detail ? ` — ${detail}` : ''}`);
 }
 
-async function req(method, url, body) {
+let TOKEN = '';
+
+async function req(method, url, body, { noAuth = false } = {}) {
+  const headers = {};
+  if (body) headers['Content-Type'] = 'application/json';
+  if (TOKEN && !noAuth) headers['Authorization'] = `Bearer ${TOKEN}`;
   const res = await fetch(API + url, {
     method,
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    headers,
     body: body ? JSON.stringify(body) : undefined,
   });
   let json = null;
@@ -71,7 +76,56 @@ function checkNoNegativeStock(label) {
 }
 
 // ============================================================
-console.log('\n=== PERSIAPAN ===');
+console.log('\n=== PERSIAPAN & OTENTIKASI ===');
+
+// Endpoint wajib menolak akses tanpa token
+{
+  const r = await req('GET', '/api/items', undefined, { noAuth: true });
+  if (r.status === 401) ok('API menolak request tanpa login (401)');
+  else bad('API menolak request tanpa login (401)', `status=${r.status}`);
+}
+
+// Login sebagai admin bawaan
+{
+  const r = await req('POST', '/api/auth/login', { username: 'admin', password: 'admin123' }, { noAuth: true });
+  if (r.status === 200 && r.json?.success && r.json.data?.token) {
+    TOKEN = r.json.data.token;
+    ok('Login admin berhasil & token diterima');
+  } else {
+    bad('Login admin berhasil & token diterima', `status=${r.status} ${JSON.stringify(r.json)}`);
+    console.log('\nTidak bisa lanjut tanpa token — hentikan test.');
+    process.exit(1);
+  }
+}
+
+// Password salah harus ditolak
+{
+  const r = await req('POST', '/api/auth/login', { username: 'admin', password: 'salah-banjir' }, { noAuth: true });
+  if (r.status === 401) ok('Login dengan password salah ditolak (401)');
+  else bad('Login dengan password salah ditolak (401)', `status=${r.status}`);
+}
+
+// Token diterima lewat saluran cadangan (tahan proxy yang menghapus Authorization)
+{
+  const r1 = await fetch(API + '/api/items', { headers: { 'X-Session-Token': TOKEN } });
+  if (r1.status === 200) ok('Token via header X-Session-Token diterima');
+  else bad('Token via header X-Session-Token diterima', `status=${r1.status}`);
+
+  const r2 = await fetch(API + `/api/items?_token=${encodeURIComponent(TOKEN)}`);
+  if (r2.status === 200) ok('Token via query parameter diterima');
+  else bad('Token via query parameter diterima', `status=${r2.status}`);
+}
+
+// Server harus berjalan di zona waktu aplikasi (default Asia/Jakarta, UTC+7)
+{
+  const r = await fetch(API + '/api/health');
+  const j = await r.json().catch(() => null);
+  const tz = j?.data?.timezone;
+  const off = j?.data?.offsetMinutes;
+  if (r.status === 200 && off === 420) ok(`Zona waktu server sinkron WIB (${tz}, UTC+${off / 60})`);
+  else bad('Zona waktu server sinkron WIB', `timezone=${tz} offset=${off}`);
+}
+
 await req('POST', '/api/reset-seed');
 const KODE = 'BRG-SW-GIGABIT-8P';           // stok awal 20 unit
 const STOK_AWAL = stockOf(KODE);
@@ -257,9 +311,261 @@ r = await req('GET', `/api/scanner/lookup/${KODE}`);
 if (r.status === 200) ok('Lookup barcode/SN berfungsi', `HTTP 200`);
 else bad('Lookup barcode/SN berfungsi', `HTTP ${r.status}`);
 
+console.log('\n=== 6B. SINKRONISASI TANGGAL & WAKTU (semua divisi & mutasi) ===');
+{
+  // Transaksi terbaru harus memakai tanggal lokal server (bukan UTC)
+  const terbaru = db.prepare('SELECT tanggal, waktu FROM transactions ORDER BY id DESC LIMIT 1').get();
+  const tglSql = db.prepare("SELECT date('now','localtime') AS d").get().d;
+  const fmtWaktuOk = /^\d{2}:\d{2}:\d{2}$/.test(terbaru.waktu);
+  if (terbaru.tanggal === tglSql && fmtWaktuOk) {
+    ok(`Tanggal transaksi = tanggal lokal server (${terbaru.tanggal} ${terbaru.waktu})`);
+  } else {
+    bad('Tanggal transaksi = tanggal lokal server', `trx=${terbaru.tanggal} ${terbaru.waktu} vs sql=${tglSql}`);
+  }
+
+  // Seluruh transaksi yang dibuat selama pengujian: tanggal & created_at harus hari yang sama (zona lokal)
+  const beda = db.prepare(`
+    SELECT COUNT(*) AS c FROM transactions
+    WHERE id > ? AND tanggal != date(created_at, 'localtime')
+  `).get(GLOBAL_MARK).c;
+  if (beda === 0) ok('Tanggal vs created_at konsisten untuk semua mutasi uji');
+  else bad('Tanggal vs created_at konsisten untuk semua mutasi uji', `${beda} baris beda hari (indikasi campur UTC/lokal)`);
+
+  // Nomor transaksi (YYYYMM) harus selaras dengan tanggal lokalnya
+  const salahBulan = db.prepare(`
+    SELECT COUNT(*) AS c FROM transactions
+    WHERE id > ? AND no_transaksi NOT LIKE '%-' || replace(substr(tanggal, 1, 7), '-', '') || '-%'
+  `).get(GLOBAL_MARK).c;
+  if (salahBulan === 0) ok('Prefix bulan nomor transaksi selaras dengan tanggal');
+  else bad('Prefix bulan nomor transaksi selaras dengan tanggal', `${salahBulan} baris tidak selaras`);
+}
+
 console.log('\n=== 7. INVARIANT AKHIR ===');
 checkNoNegativeStock('akhir pengujian');
 checkInvariant('seluruh pengujian', GLOBAL_SNAP, GLOBAL_MARK);
+
+console.log('\n=== 8. MANAJEMEN USER & HIRARKI PERAN ===');
+
+// Admin bisa melihat daftar user
+let createdUserId = null;
+{
+  const r = await req('GET', '/api/users');
+  if (r.status === 200 && Array.isArray(r.json?.data) && r.json.data.length >= 4) {
+    ok('Daftar user bisa diambil admin', `${r.json.data.length} user terdaftar`);
+  } else {
+    bad('Daftar user bisa diambil admin', `status=${r.status}`);
+  }
+}
+
+// Buat user baru → langsung bisa login
+{
+  const uname = 'testoperator';
+  const r = await req('POST', '/api/users', {
+    username: uname, password: 'rahasia1', nama_lengkap: 'Operator Uji Coba', role: 'staff_gudang', status: 'aktif'
+  });
+  if (r.status === 201 && r.json?.data?.id) {
+    createdUserId = r.json.data.id;
+    ok('Admin dapat membuat user baru');
+  } else {
+    bad('Admin dapat membuat user baru', `status=${r.status} ${r.json?.error || ''}`);
+  }
+
+  const loginBaru = await req('POST', '/api/auth/login', { username: uname, password: 'rahasia1' }, { noAuth: true });
+  if (loginBaru.status === 200 && loginBaru.json?.data?.user?.role === 'staff_gudang') {
+    ok('User baru bisa login dengan peran yang benar');
+  } else {
+    bad('User baru bisa login dengan peran yang benar', `status=${loginBaru.status}`);
+  }
+
+  // Token user baru (staff_gudang): boleh tulis items, TIDAK boleh kelola users
+  const staffToken = loginBaru.json?.data?.token;
+  if (staffToken) {
+    const simpanToken = TOKEN;
+    TOKEN = staffToken;
+    const tulisUsers = await req('POST', '/api/users', { username: 'x12345x', password: 'rahasia1', nama_lengkap: 'Ilegal', role: 'admin' });
+    if (tulisUsers.status === 403) ok('Staff gudang ditolak mengelola user (403)');
+    else bad('Staff gudang ditolak mengelola user (403)', `status=${tulisUsers.status}`);
+    const tulisItem = await req('POST', '/api/items', { kode_barang: 'BRG-UJI-ROLE', nama_barang: 'Uji Hak Staff', jenis_barang: 'Kabel Jaringan', satuan: 'pcs' });
+    if (tulisItem.status === 201) {
+      ok('Staff gudang boleh menambah barang');
+      await req('DELETE', `/api/items/${tulisItem.json.data.id}`);
+    } else {
+      bad('Staff gudang boleh menambah barang', `status=${tulisItem.status}`);
+    }
+    TOKEN = simpanToken;
+  }
+}
+
+// Edit user: ganti nama & peran
+if (createdUserId) {
+  const r = await req('PUT', `/api/users/${createdUserId}`, { nama_lengkap: 'Operator Uji (Revisi)', role: 'teknisi' });
+  if (r.status === 200 && r.json?.data?.role === 'teknisi' && r.json.data.nama_lengkap.includes('Revisi')) {
+    ok('Edit user (nama & peran) berhasil');
+  } else {
+    bad('Edit user (nama & peran) berhasil', `status=${r.status}`);
+  }
+
+  // Nonaktifkan → login harus ditolak
+  await req('PUT', `/api/users/${createdUserId}`, { status: 'nonaktif' });
+  const loginMati = await req('POST', '/api/auth/login', { username: 'testoperator', password: 'rahasia1' }, { noAuth: true });
+  if (loginMati.status === 403) ok('User nonaktif tidak bisa login (403)');
+  else bad('User nonaktif tidak bisa login (403)', `status=${loginMati.status}`);
+
+  // Hapus user
+  const del = await req('DELETE', `/api/users/${createdUserId}`);
+  if (del.status === 200) ok('Admin dapat menghapus user');
+  else bad('Admin dapat menghapus user', `status=${del.status}`);
+}
+
+// Admin tidak bisa menghapus akunnya sendiri
+{
+  const me = await req('GET', '/api/auth/me');
+  const selfId = me.json?.data?.user?.id;
+  const del = await req('DELETE', `/api/users/${selfId}`);
+  if (del.status === 400) ok('Proteksi: admin tidak bisa menghapus akun sendiri');
+  else bad('Proteksi: admin tidak bisa menghapus akun sendiri', `status=${del.status}`);
+}
+
+console.log('\n=== 6C. SCAN BARCODE → TRANSAKSI TERTAUT DIVISI (pasang & pengembalian) ===');
+{
+  // Ambil pelanggan data contoh pertama
+  const custRes = await req('GET', '/api/customers');
+  const cust = custRes.json?.data?.[0];
+  const getCustQty = async () => {
+    const c = await req('GET', `/api/customers/${cust.id}`);
+    return (c.json?.data?.items || [])
+      .filter((it) => it.kode_barang === KODE)
+      .reduce((a, it) => a + Number(it.jumlah), 0);
+  };
+
+  // 1. KELUAR tertaut (seperti hasil scan stiker di gudang): stok turun + barang tercatat terpasang
+  const stokAwalLink = stockOf(KODE);
+  const terpasangAwal = await getCustQty();
+  let r = await req('POST', '/api/transactions', {
+    jenis: 'KELUAR', divisi: 'PELANGGAN', tujuan_id: cust.id, kode_barang: KODE, jumlah: 2, keterangan: 'uji scan pasang'
+  });
+  const terpasangSesudah = await getCustQty();
+  if (r.status === 201 && terpasangSesudah === terpasangAwal + 2 && stockOf(KODE) === stokAwalLink - 2) {
+    ok('Scan → KELUAR ke pelanggan: barang tercatat terpasang & stok gudang berkurang');
+  } else {
+    bad('Scan → KELUAR ke pelanggan', `status=${r.status} terpasang ${terpasangAwal}→${terpasangSesudah} stok ${stokAwalLink}→${stockOf(KODE)}`);
+  }
+
+  // Riwayat otomatis memakai nama pelanggan & kategori pemasangan
+  const trxTaut = db.prepare('SELECT * FROM transactions ORDER BY id DESC LIMIT 1').get();
+  if (trxTaut.divisi === 'PELANGGAN' && trxTaut.kategori_transaksi.includes('Pemasangan') && trxTaut.lokasi_penerima === cust.nama_pelanggan) {
+    ok('Riwayat tertaut: divisi + nama pelanggan + kategori Pemasangan otomatis');
+  } else {
+    bad('Riwayat tertaut otomatis', `divisi=${trxTaut.divisi} kategori=${trxTaut.kategori_transaksi} lokasi=${trxTaut.lokasi_penerima}`);
+  }
+
+  // Nilai aset pelanggan (total_harga) sinkron dengan jumlah subtotal barang terpasang
+  const sumSub = db.prepare('SELECT COALESCE(SUM(subtotal), 0) AS s FROM customer_items WHERE customer_id = ?').get(cust.id).s;
+  const custAfter = await req('GET', `/api/customers/${cust.id}`);
+  if (Math.abs(Number(custAfter.json?.data?.total_harga ?? -1) - Number(sumSub)) < 0.01) {
+    ok('Nilai aset pelanggan sinkron dengan barang terpasang');
+  } else {
+    bad('Nilai aset pelanggan sinkron', `total_harga=${custAfter.json?.data?.total_harga} vs sum=${sumSub}`);
+  }
+
+  // 2. KELUAR melebihi stok gudang harus ditolak & stok tidak berubah
+  const stokSebelumOver = stockOf(KODE);
+  r = await req('POST', '/api/transactions', {
+    jenis: 'KELUAR', divisi: 'PELANGGAN', tujuan_id: cust.id, kode_barang: KODE, jumlah: stokSebelumOver + 999
+  });
+  if (r.status === 400 && stockOf(KODE) === stokSebelumOver) {
+    ok('KELUAR tertaut melebihi stok gudang ditolak (400), stok aman');
+  } else {
+    bad('KELUAR tertaut melebihi stok ditolak', `status=${r.status}`);
+  }
+
+  // 3. Tujuan divisi tidak ditemukan harus ditolak
+  r = await req('POST', '/api/transactions', {
+    jenis: 'KELUAR', divisi: 'PELANGGAN', tujuan_id: 999999, kode_barang: KODE, jumlah: 1
+  });
+  if (r.status === 400) ok('Tujuan divisi tidak ditemukan ditolak (400)');
+  else bad('Tujuan divisi tidak ditemukan ditolak', `status=${r.status}`);
+
+  // 4. MASUK tertaut (pengembalian): terpasang berkurang & stok gudang kembali
+  const terpasangSebelumBalik = await getCustQty();
+  const stokSebelumBalik = stockOf(KODE);
+  r = await req('POST', '/api/transactions', {
+    jenis: 'MASUK', divisi: 'PELANGGAN', tujuan_id: cust.id, kode_barang: KODE, jumlah: 2
+  });
+  const terpasangSetelahBalik = await getCustQty();
+  if (r.status === 201 && terpasangSetelahBalik === terpasangSebelumBalik - 2 && stockOf(KODE) === stokSebelumBalik + 2) {
+    ok('Scan → MASUK dari pelanggan: terpasang berkurang & stok gudang kembali');
+  } else {
+    bad('Scan → MASUK dari pelanggan', `status=${r.status} terpasang ${terpasangSebelumBalik}→${terpasangSetelahBalik} stok ${stokSebelumBalik}→${stockOf(KODE)}`);
+  }
+
+  // 5. Pengembalian melebihi jumlah terpasang ditolak
+  r = await req('POST', '/api/transactions', {
+    jenis: 'MASUK', divisi: 'PELANGGAN', tujuan_id: cust.id, kode_barang: KODE, jumlah: terpasangSebelumBalik + 99999
+  });
+  if (r.status === 400) ok('Pengembalian melebihi jumlah terpasang ditolak (400)');
+  else bad('Pengembalian melebihi terpasang ditolak', `status=${r.status}`);
+
+  // 6. Site FO: buat site uji kosong, pasang via transaksi scan (dengan SN), lalu gabung baris
+  const foRes = await req('POST', '/api/fo', { daerah_lokasi: 'UJI-LINK-FO', tipe_lokasi: 'ODP', items: [] });
+  const foId = foRes.json?.data?.id;
+  const stokSebelumFo = stockOf(KODE);
+  r = await req('POST', '/api/transactions', {
+    jenis: 'KELUAR', divisi: 'DIVISI FO', tujuan_id: foId, kode_barang: KODE, jumlah: 1, serial_number: 'SN-UJI-001'
+  });
+  let foRows = db.prepare('SELECT * FROM fo_items WHERE fo_id = ? AND kode_barang = ?').all(foId, KODE);
+  if (foId && r.status === 201 && foRows.length === 1 && Number(foRows[0].jumlah) === 1 && foRows[0].serial_number === 'SN-UJI-001' && stockOf(KODE) === stokSebelumFo - 1) {
+    ok('Scan → pasang ke site FO: tercatat di fo_items (+ SN) & stok berkurang');
+  } else {
+    bad('Scan → pasang ke site FO', `status=${r.status} rows=${foRows.length}`);
+  }
+
+  const stokSebelumFo2 = stockOf(KODE);
+  r = await req('POST', '/api/transactions', {
+    jenis: 'KELUAR', divisi: 'DIVISI FO', tujuan_id: foId, kode_barang: KODE, jumlah: 1, serial_number: 'SN-UJI-001'
+  });
+  foRows = db.prepare('SELECT * FROM fo_items WHERE fo_id = ? AND kode_barang = ?').all(foId, KODE);
+  if (r.status === 201 && foRows.length === 1 && Number(foRows[0].jumlah) === 2 && stockOf(KODE) === stokSebelumFo2 - 1) {
+    ok('Pasang kode sama ke site sama: baris digabung (qty +1), tidak dobel');
+  } else {
+    bad('Baris terpasang digabung', `rows=${foRows.length} qty=${foRows[0]?.jumlah}`);
+  }
+
+  const foAfter = db.prepare('SELECT total_harga FROM fo_sites WHERE id = ?').get(foId)?.total_harga;
+  const foSum = db.prepare('SELECT COALESCE(SUM(subtotal), 0) AS s FROM fo_items WHERE fo_id = ?').get(foId).s;
+  if (Math.abs(Number(foAfter) - Number(foSum)) < 0.01) ok('Nilai aset site FO sinkron');
+  else bad('Nilai aset site FO sinkron', `total=${foAfter} vs sum=${foSum}`);
+
+  // 7. Site Tower tertaut: pengembalian menghapus baris saat jumlah habis
+  const twRes = await req('POST', '/api/tower', { daerah_lokasi: 'UJI-LINK-TWR', items: [] });
+  const twId = twRes.json?.data?.id;
+  await req('POST', '/api/transactions', { jenis: 'KELUAR', divisi: 'DIVISI TOWER', tujuan_id: twId, kode_barang: KODE, jumlah: 1 });
+  const stokSebelumTwr = stockOf(KODE);
+  r = await req('POST', '/api/transactions', { jenis: 'MASUK', divisi: 'DIVISI TOWER', tujuan_id: twId, kode_barang: KODE, jumlah: 1 });
+  const twRows = db.prepare('SELECT * FROM tower_items WHERE tower_id = ? AND kode_barang = ?').all(twId, KODE);
+  if (twId && r.status === 201 && twRows.length === 0 && stockOf(KODE) === stokSebelumTwr + 1) {
+    ok('Tower: pengembalian penuh menghapus baris & stok kembali utuh');
+  } else {
+    bad('Tower: pengembalian penuh', `status=${r.status} rows=${twRows.length}`);
+  }
+
+  // 8. Mode manual GUDANG (tanpa tautan) tetap berfungsi seperti semula
+  const stokSebelumManual = stockOf(KODE);
+  r = await req('POST', '/api/transactions', {
+    jenis: 'MASUK', divisi: 'GUDANG', kategori_transaksi: 'Pembelian Supplier',
+    lokasi_penerima: 'PT Supplier Uji', kode_barang: KODE, jumlah: 3
+  });
+  if (r.status === 201 && stockOf(KODE) === stokSebelumManual + 3) {
+    ok('Mode manual GUDANG (tanpa tautan) tetap berfungsi');
+  } else {
+    bad('Mode manual GUDANG tetap berfungsi', `status=${r.status}`);
+  }
+
+  // Mode manual tanpa lokasi/suplayer tetap wajib ditolak
+  r = await req('POST', '/api/transactions', { jenis: 'MASUK', divisi: 'GUDANG', kode_barang: KODE, jumlah: 1 });
+  if (r.status === 400) ok('Mode manual tanpa lokasi/suplayer ditolak (400)');
+  else bad('Mode manual tanpa lokasi ditolak', `status=${r.status}`);
+}
 
 console.log('\n=== PEMBERSIHAN: reset ke data contoh ===');
 await req('POST', '/api/reset-seed');

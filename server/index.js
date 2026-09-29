@@ -4,7 +4,8 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import db, { initDb } from './db.js';
-import { seedData } from './seed.js';
+import { seedData, seedUsers } from './seed.js';
+import { ROLES, hashPassword, verifyPassword, signToken, verifyToken } from './auth.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -12,12 +13,329 @@ const __dirname = path.dirname(__filename);
 // Initialize DB and Seed data
 initDb();
 seedData();
+seedUsers();
+
+// Paksa semua perubahan seed masuk ke file .db utama (bukan hanya WAL),
+// agar data tetap utuh saat workspace dipulihkan dari snapshot.
+try {
+  db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+} catch { /* abaikan bila mode WAL tidak aktif */ }
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
-app.use(express.json());
+// Batas diperbesar agar import massal (ribuan baris JSON) tidak ditolak 413
+app.use(express.json({ limit: '5mb' }));
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  next();
+});
+
+// ==========================================
+// MIDDLEWARE OTENTIKASI & HIRARKI PERAN
+// ==========================================
+
+// Jalur yang boleh diakses tanpa login
+const PUBLIC_PATHS = [
+  /^\/api\/auth\/login$/,
+  /^\/api\/health$/, // diagnostik waktu server — berguna cek sinkron jam
+  /^\/api\/import\/template\// // template file statis, aman diumumkan
+];
+
+// Diagnostik: waktu & zona waktu server (dipakai memastikan jam sinkron WIB)
+app.get('/api/health', (req, res) => {
+  const now = new Date();
+  res.json({
+    success: true,
+    data: {
+      serverTime: `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())} ${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      offsetMinutes: -now.getTimezoneOffset()
+    }
+  });
+});
+
+// Aturan hak akses tulis (POST/PUT/DELETE) per kelompok endpoint.
+// Endpoint GET boleh diakses semua peran yang sudah login.
+const WRITE_RULES = [
+  { pattern: /^\/api\/users(\/|$)/, roles: ['admin'] },
+  { pattern: /^\/api\/reset-seed$/, roles: ['admin'] },
+  { pattern: /^\/api\/(items|categories|transactions)(\/|$)/, roles: ['admin', 'staff_gudang'] },
+  { pattern: /^\/api\/(customers|fo|tower)(\/|$)/, roles: ['admin', 'staff_gudang', 'teknisi'] }
+];
+
+/*
+ * Ekstrak token dari beberapa saluran — beberapa gateway/proxy preview
+ * menghapus header Authorization, jadi klien juga mengirim lewat header
+ * kustom dan (untuk GET) query parameter sebagai cadangan.
+ */
+function extractToken(req) {
+  const authHeader = req.headers.authorization || '';
+  if (authHeader.startsWith('Bearer ')) return authHeader.slice(7);
+  if (req.headers['x-session-token']) return String(req.headers['x-session-token']);
+  if (req.headers['x-auth-token']) return String(req.headers['x-auth-token']);
+  if (typeof req.query?._token === 'string') return req.query._token;
+  return null;
+}
+
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/api/')) return next();
+  if (PUBLIC_PATHS.some((p) => p.test(req.path))) return next();
+
+  const token = extractToken(req);
+  const payload = verifyToken(token);
+  if (!payload) {
+    return res.status(401).json({ success: false, error: 'Sesi tidak valid atau sudah kedaluwarsa. Silakan login kembali.' });
+  }
+
+  // Ambil user terbaru dari DB agar perubahan peran/status langsung berlaku
+  const user = db.prepare('SELECT id, username, nama_lengkap, role, status FROM users WHERE id = ?').get(payload.uid);
+  if (!user) {
+    return res.status(401).json({ success: false, error: 'Akun tidak ditemukan. Silakan login kembali.' });
+  }
+  if (user.status !== 'aktif') {
+    return res.status(403).json({ success: false, error: 'Akun Anda dinonaktifkan. Hubungi Administrator.' });
+  }
+  req.user = user;
+
+  // Batasi operasi tulis sesuai peran
+  if (req.method !== 'GET') {
+    const rule = WRITE_RULES.find((r) => r.pattern.test(req.path));
+    const allowed = rule ? rule.roles : ['admin', 'staff_gudang', 'teknisi'];
+    if (!allowed.includes(user.role)) {
+      const label = ROLES[user.role] || user.role;
+      return res.status(403).json({ success: false, error: `Akses ditolak: peran ${label} tidak memiliki izin untuk aksi ini.` });
+    }
+  }
+  next();
+});
+
+// ==========================================
+// AUTH: LOGIN & PROFIL
+// ==========================================
+
+// Pembatas percobaan login (anti brute-force sederhana, in-memory)
+const loginAttempts = new Map(); // key: "ip|username" → { count, resetAt }
+const LOGIN_WINDOW_MS = 5 * 60 * 1000;
+const LOGIN_MAX_ATTEMPTS = 15;
+
+function loginThrottleKey(req, username) {
+  return `${req.ip || 'unknown'}|${String(username || '').toLowerCase()}`;
+}
+
+function hitLoginThrottle(key) {
+  const nowMs = Date.now();
+  let entry = loginAttempts.get(key);
+  if (!entry || entry.resetAt <= nowMs) {
+    entry = { count: 0, resetAt: nowMs + LOGIN_WINDOW_MS };
+  }
+  entry.count += 1;
+  loginAttempts.set(key, entry);
+  return entry.count > LOGIN_MAX_ATTEMPTS;
+}
+
+app.post('/api/auth/login', (req, res) => {
+  try {
+    const { username, password } = req.body || {};
+    if (!username || !password) {
+      return res.status(400).json({ success: false, error: 'Username dan password wajib diisi' });
+    }
+
+    const throttleKey = loginThrottleKey(req, username);
+    const entry = loginAttempts.get(throttleKey);
+    if (entry && entry.resetAt > Date.now() && entry.count >= LOGIN_MAX_ATTEMPTS) {
+      const menit = Math.ceil((entry.resetAt - Date.now()) / 60000);
+      return res.status(429).json({ success: false, error: `Terlalu banyak percobaan login. Coba lagi dalam ${menit} menit.` });
+    }
+
+    const user = db.prepare('SELECT * FROM users WHERE LOWER(username) = LOWER(?)').get(String(username).trim());
+    if (!user || !verifyPassword(password, user.password_hash)) {
+      hitLoginThrottle(throttleKey);
+      return res.status(401).json({ success: false, error: 'Username atau password salah' });
+    }
+    loginAttempts.delete(throttleKey);
+    if (user.status !== 'aktif') {
+      return res.status(403).json({ success: false, error: 'Akun dinonaktifkan. Hubungi Administrator.' });
+    }
+
+    db.prepare("UPDATE users SET last_login = datetime('now', 'localtime') WHERE id = ?").run(user.id);
+    const token = signToken(user.id);
+    res.json({
+      success: true,
+      data: {
+        token,
+        user: { id: user.id, username: user.username, nama_lengkap: user.nama_lengkap, role: user.role }
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/auth/me', (req, res) => {
+  res.json({ success: true, data: { user: req.user } });
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  // Token stateless — cukup dihapus di sisi klien
+  res.json({ success: true, message: 'Berhasil keluar' });
+});
+
+// ==========================================
+// MANAJEMEN USER (khusus admin)
+// ==========================================
+
+function adminOnly(req, res) {
+  if (req.user?.role !== 'admin') {
+    res.status(403).json({ success: false, error: 'Fitur ini khusus Administrator' });
+    return false;
+  }
+  return true;
+}
+
+const USERNAME_RE = /^[a-zA-Z0-9._-]{3,32}$/;
+
+// Daftar semua user (tanpa hash password)
+app.get('/api/users', (req, res) => {
+  if (!adminOnly(req, res)) return;
+  try {
+    const users = db.prepare(`
+      SELECT id, username, nama_lengkap, role, status, last_login, created_at, updated_at
+      FROM users ORDER BY role = 'admin' DESC, username ASC
+    `).all();
+    res.json({ success: true, data: users });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Tambah user baru
+app.post('/api/users', (req, res) => {
+  if (!adminOnly(req, res)) return;
+  try {
+    const { username, password, nama_lengkap, role = 'viewer', status = 'aktif' } = req.body || {};
+
+    if (!username || !USERNAME_RE.test(String(username).trim())) {
+      return res.status(400).json({ success: false, error: 'Username 3-32 karakter, hanya huruf/angka/titik/strip/underscore' });
+    }
+    if (!nama_lengkap || !String(nama_lengkap).trim()) {
+      return res.status(400).json({ success: false, error: 'Nama lengkap wajib diisi' });
+    }
+    if (!password || String(password).length < 6) {
+      return res.status(400).json({ success: false, error: 'Password minimal 6 karakter' });
+    }
+    if (!ROLES[role]) {
+      return res.status(400).json({ success: false, error: `Peran tidak dikenal. Pilihan: ${Object.keys(ROLES).join(', ')}` });
+    }
+    if (!['aktif', 'nonaktif'].includes(status)) {
+      return res.status(400).json({ success: false, error: 'Status harus aktif atau nonaktif' });
+    }
+
+    const dup = db.prepare('SELECT id FROM users WHERE LOWER(username) = LOWER(?)').get(String(username).trim());
+    if (dup) {
+      return res.status(400).json({ success: false, error: `Username "${username}" sudah digunakan` });
+    }
+
+    const result = db.prepare(`
+      INSERT INTO users (username, password_hash, nama_lengkap, role, status)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(String(username).trim().toLowerCase(), hashPassword(password), String(nama_lengkap).trim(), role, status);
+
+    const user = db.prepare('SELECT id, username, nama_lengkap, role, status, last_login, created_at, updated_at FROM users WHERE id = ?').get(result.lastInsertRowid);
+    res.status(201).json({ success: true, data: user });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Edit user
+app.put('/api/users/:id', (req, res) => {
+  if (!adminOnly(req, res)) return;
+  try {
+    const { id } = req.params;
+    const target = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+    if (!target) {
+      return res.status(404).json({ success: false, error: 'User tidak ditemukan' });
+    }
+
+    const { nama_lengkap, role, status, password } = req.body || {};
+
+    if (nama_lengkap !== undefined && !String(nama_lengkap).trim()) {
+      return res.status(400).json({ success: false, error: 'Nama lengkap tidak boleh kosong' });
+    }
+    if (role !== undefined && !ROLES[role]) {
+      return res.status(400).json({ success: false, error: `Peran tidak dikenal. Pilihan: ${Object.keys(ROLES).join(', ')}` });
+    }
+    if (status !== undefined && !['aktif', 'nonaktif'].includes(status)) {
+      return res.status(400).json({ success: false, error: 'Status harus aktif atau nonaktif' });
+    }
+    if (password !== undefined && String(password).length > 0 && String(password).length < 6) {
+      return res.status(400).json({ success: false, error: 'Password baru minimal 6 karakter' });
+    }
+
+    const newRole = role ?? target.role;
+    const newStatus = status ?? target.status;
+
+    // Lindungi diri sendiri agar admin tidak kehilangan akses
+    if (target.id === req.user.id && (newRole !== 'admin' || newStatus !== 'aktif')) {
+      return res.status(400).json({ success: false, error: 'Tidak dapat mengubah peran/status akun sendiri — gunakan akun admin lain' });
+    }
+    // Pastikan selalu ada minimal satu admin aktif
+    if (target.role === 'admin' && (newRole !== 'admin' || newStatus !== 'aktif')) {
+      const otherAdmins = db.prepare("SELECT COUNT(*) AS c FROM users WHERE role = 'admin' AND status = 'aktif' AND id != ?").get(target.id).c;
+      if (otherAdmins === 0) {
+        return res.status(400).json({ success: false, error: 'Tidak dapat menonaktifkan/menurunkan admin terakhir yang aktif' });
+      }
+    }
+
+    db.prepare(`
+      UPDATE users SET nama_lengkap = ?, role = ?, status = ?, updated_at = datetime('now', 'localtime')
+      WHERE id = ?
+    `).run(
+      nama_lengkap !== undefined ? String(nama_lengkap).trim() : target.nama_lengkap,
+      newRole,
+      newStatus,
+      target.id
+    );
+
+    if (password && String(password).length >= 6) {
+      db.prepare("UPDATE users SET password_hash = ?, updated_at = datetime('now', 'localtime') WHERE id = ?")
+        .run(hashPassword(password), target.id);
+    }
+
+    const user = db.prepare('SELECT id, username, nama_lengkap, role, status, last_login, created_at, updated_at FROM users WHERE id = ?').get(target.id);
+    res.json({ success: true, data: user });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Hapus user
+app.delete('/api/users/:id', (req, res) => {
+  if (!adminOnly(req, res)) return;
+  try {
+    const { id } = req.params;
+    const target = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+    if (!target) {
+      return res.status(404).json({ success: false, error: 'User tidak ditemukan' });
+    }
+    if (target.id === req.user.id) {
+      return res.status(400).json({ success: false, error: 'Tidak dapat menghapus akun yang sedang Anda gunakan' });
+    }
+    if (target.role === 'admin') {
+      const otherAdmins = db.prepare("SELECT COUNT(*) AS c FROM users WHERE role = 'admin' AND status = 'aktif' AND id != ?").get(target.id).c;
+      if (otherAdmins === 0) {
+        return res.status(400).json({ success: false, error: 'Tidak dapat menghapus admin terakhir yang aktif' });
+      }
+    }
+
+    db.prepare('DELETE FROM users WHERE id = ?').run(target.id);
+    res.json({ success: true, message: `User "${target.username}" berhasil dihapus` });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 // Helper to generate transaction number
 function generateTrxNumber(type) {
@@ -26,6 +344,20 @@ function generateTrxNumber(type) {
   const yearMonth = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
   const randomSuffix = Math.floor(1000 + Math.random() * 9000);
   return `${prefix}-${yearMonth}-${randomSuffix}`;
+}
+
+const pad2 = (n) => String(n).padStart(2, '0');
+
+/**
+ * Tanggal LOKAL hari ini (YYYY-MM-DD).
+ * SATU-SATUNYA sumber tanggal di server — selaras dengan SQLite
+ * datetime/date('now','localtime') dan kolom `waktu` (toTimeString lokal).
+ * DILARANG memakai toISOString() (UTC) karena bisa bergeser sehari
+ * terhadap waktu lokal, merusak rekap per tanggal di semua divisi.
+ */
+function todayLocal() {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
 
 // ==========================================
@@ -126,7 +458,7 @@ function logStockMutation({ jenis, kategori, divisi, refId = null, lokasi, item,
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     generateTrxNumber(jenis),
-    now.toISOString().split('T')[0],
+    todayLocal(),
     now.toTimeString().split(' ')[0],
     jenis,
     kategori,
@@ -401,7 +733,7 @@ app.post('/api/items', (req, res) => {
     // Log stock-in transaction if initial stock > 0
     if (Number(stok) > 0) {
       const now = new Date();
-      const tanggal = now.toISOString().split('T')[0];
+      const tanggal = todayLocal();
       const waktu = now.toTimeString().split(' ')[0];
       const trxNo = generateTrxNumber('MASUK');
 
@@ -531,6 +863,278 @@ app.delete('/api/items/:id', (req, res) => {
   }
 });
 
+// ==========================================
+// IMPORT MASSAL (dari file CSV / Excel yang sudah diparse frontend menjadi JSON)
+// ==========================================
+
+const MAX_IMPORT_ROWS = 5000;
+
+// ============================================================
+// TEMPLATE IMPORT — diunduh langsung dari server (lebih andal
+// daripada Blob URL yang sering diblokir iframe preview/browser)
+// GET /api/import/template/items?format=xlsx|csv
+// GET /api/import/template/customers?format=xlsx|csv
+// ============================================================
+const IMPORT_TEMPLATES = {
+  items: {
+    filename: 'template_import_barang',
+    sheetName: 'Data Barang',
+    headers: ['kode_barang', 'nama_barang', 'satuan', 'jenis_barang', 'stok', 'min_stok', 'harga_barang', 'referensi_suplayer', 'catatan'],
+    sample: [
+      ['BRG-ONT-F609', 'ONU ZTE F609 GPON 4FE+2POTS+WiFi', 'unit', 'Perangkat Aktif Pelanggan', 25, 5, 185000, 'PT. Fiber Solusindo Nusantara', 'CONTOH — hapus baris ini sebelum import'],
+      ['BRG-FO-SPLITTER-1-8', 'Splitter PLC 1:8 SC-UPC Cassette', 'pcs', 'Aksesoris & Pasif FO', 40, 10, 45000, 'PT. Solusi Optik Digital', '']
+    ]
+  },
+  customers: {
+    filename: 'template_import_pelanggan',
+    sheetName: 'Data Pelanggan',
+    headers: ['id_pelanggan', 'nama_pelanggan', 'infrastruktur', 'paket', 'keterangan_paket', 'kategori', 'status', 'alamat', 'telepon', 'tanggal_pasang', 'catatan'],
+    sample: [
+      ['PLG-2026-0001', 'Budi Santoso', 'optic', 'home', '20 Mbps', 'bandwidth', 'aktif', 'Jl. Merdeka No. 10, Solok', '081234567890', '2026-09-01', 'CONTOH — hapus baris ini sebelum import'],
+      ['PLG-2026-0002', 'Toko Kelontong Barokah', 'wireless', 'soho', '50 Mbps', 'rent', 'aktif', 'Pasar Raya Solok Blok C-2', '081298765432', '2026-09-03', '']
+    ]
+  }
+};
+
+app.get('/api/import/template/:type', async (req, res) => {
+  try {
+    const tpl = IMPORT_TEMPLATES[req.params.type];
+    if (!tpl) {
+      return res.status(404).json({ success: false, error: 'Template tidak dikenal. Gunakan "items" atau "customers".' });
+    }
+    const format = String(req.query.format || 'xlsx').toLowerCase() === 'csv' ? 'csv' : 'xlsx';
+    const aoa = [tpl.headers, ...tpl.sample];
+
+    if (format === 'csv') {
+      // Pemisah titik koma + BOM agar langsung rapi dibuka di Excel Indonesia
+      const csv = '﻿' + aoa
+        .map((r) => r.map((v) => String(v ?? '').replaceAll(';', ',')).join(';'))
+        .join('\r\n');
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${tpl.filename}.csv"`);
+      return res.send(csv);
+    }
+
+    const XLSX = await import('xlsx');
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = tpl.headers.map((h) => ({ wch: Math.max(h.length + 2, 16) }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, tpl.sheetName);
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${tpl.filename}.xlsx"`);
+    return res.send(buf);
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/** Validasi payload import: harus berupa { rows: [...] } dengan batas jumlah baris. */
+function parseImportPayload(req, res) {
+  const rows = req.body?.rows;
+  const mode = req.body?.mode === 'update' ? 'update' : 'skip';
+  if (!Array.isArray(rows)) {
+    res.status(400).json({ success: false, error: 'Payload tidak valid: "rows" harus berupa array' });
+    return null;
+  }
+  if (rows.length === 0) {
+    res.status(400).json({ success: false, error: 'File tidak berisi baris data untuk diimport' });
+    return null;
+  }
+  if (rows.length > MAX_IMPORT_ROWS) {
+    res.status(400).json({ success: false, error: `Maksimal ${MAX_IMPORT_ROWS} baris per sekali import (diterima: ${rows.length})` });
+    return null;
+  }
+  return { rows, mode };
+}
+
+/** Angka >= 0 atau null (angka negatif / bukan angka ditolak). */
+function toNonNegNumber(val) {
+  if (val === undefined || val === null || String(val).trim() === '') return 0;
+  const num = Number(val);
+  if (!Number.isFinite(num) || num < 0) return null;
+  return num;
+}
+
+// Import massal Master Barang
+app.post('/api/items/import', (req, res) => {
+  const payload = parseImportPayload(req, res);
+  if (!payload) return;
+  const { rows, mode } = payload;
+
+  const summary = { inserted: 0, updated: 0, skipped: 0, failed: 0, errors: [] };
+  const seenCodes = new Set();
+
+  const insertItem = db.prepare(`
+    INSERT INTO items (kode_barang, nama_barang, satuan, jenis_barang, stok, min_stok, harga_barang, referensi_suplayer, catatan)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const updateItem = db.prepare(`
+    UPDATE items SET nama_barang = ?, satuan = ?, jenis_barang = ?, min_stok = ?, harga_barang = ?,
+      referensi_suplayer = ?, catatan = ?, updated_at = datetime('now', 'localtime')
+    WHERE LOWER(kode_barang) = LOWER(?)
+  `);
+  const insertTrx = db.prepare(`
+    INSERT INTO transactions (no_transaksi, tanggal, waktu, jenis, kategori_transaksi, divisi, ref_id, lokasi_penerima, kode_barang, nama_barang, satuan, jumlah, harga_satuan, total_harga, keterangan)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const runImport = db.transaction(() => {
+    rows.forEach((raw, idx) => {
+      const baris = idx + 2; // baris 1 = header di file asal
+      const row = raw || {};
+      const kode = String(row.kode_barang ?? '').trim().toUpperCase();
+      const nama = String(row.nama_barang ?? '').trim();
+      const jenis = String(row.jenis_barang ?? '').trim();
+      const satuan = String(row.satuan ?? '').trim() || 'unit';
+      const suplayer = String(row.referensi_suplayer ?? '').trim();
+      const catatan = String(row.catatan ?? '').trim();
+
+      const fail = (error) => { summary.failed++; summary.errors.push({ baris, kode: kode || '-', error }); };
+
+      if (!kode && !nama && !jenis) return; // baris kosong murni diabaikan
+      if (!kode) return fail('Kode barang wajib diisi');
+      if (!nama) return fail(`Nama barang wajib diisi (${kode})`);
+      if (!jenis) return fail(`Jenis/kategori barang wajib diisi (${kode})`);
+      if (seenCodes.has(kode)) return fail(`Kode ${kode} muncul lebih dari sekali di file`);
+      seenCodes.add(kode);
+
+      const stok = toNonNegNumber(row.stok);
+      const minStok = toNonNegNumber(row.min_stok === '' || row.min_stok === undefined ? 5 : row.min_stok);
+      const harga = toNonNegNumber(row.harga_barang);
+      if (stok === null) return fail(`Stok "${row.stok}" bukan angka valid (${kode})`);
+      if (minStok === null) return fail(`Min stok "${row.min_stok}" bukan angka valid (${kode})`);
+      if (harga === null) return fail(`Harga "${row.harga_barang}" bukan angka valid (${kode})`);
+
+      const existing = db.prepare('SELECT id FROM items WHERE LOWER(kode_barang) = LOWER(?)').get(kode);
+      if (existing) {
+        if (mode === 'update') {
+          // Mode perbarui: update data master saja, stok tidak disentuh demi integritas transaksi
+          updateItem.run(nama, satuan, jenis, minStok, harga, suplayer, catatan, kode);
+          summary.updated++;
+        } else {
+          summary.skipped++;
+        }
+        return;
+      }
+
+      const result = insertItem.run(kode, nama, satuan, jenis, stok, minStok, harga, suplayer, catatan);
+      try {
+        db.prepare('INSERT OR IGNORE INTO categories (nama_kategori) VALUES (?)').run(jenis);
+      } catch {}
+
+      // Catat stok awal sebagai transaksi masuk agar riwayat tetap konsisten
+      if (stok > 0) {
+        const now = new Date();
+        insertTrx.run(
+          generateTrxNumber('MASUK'),
+          todayLocal(),
+          now.toTimeString().split(' ')[0],
+          'MASUK',
+          'Pembelian Supplier',
+          'GUDANG',
+          result.lastInsertRowid,
+          suplayer || 'Import Data',
+          kode,
+          nama,
+          satuan,
+          stok,
+          harga,
+          stok * harga,
+          'Import Massal Master Barang (Stok Awal)'
+        );
+      }
+      summary.inserted++;
+    });
+  });
+
+  try {
+    runImport();
+    res.json({ success: true, data: summary });
+  } catch (err) {
+    res.status(500).json({ success: false, error: `Import dibatalkan: ${err.message}` });
+  }
+});
+
+// Import massal Pelanggan (data master saja, tanpa barang terpasang)
+app.post('/api/customers/import', (req, res) => {
+  const payload = parseImportPayload(req, res);
+  if (!payload) return;
+  const { rows, mode } = payload;
+
+  const INFRA_OPTIONS = ['optic', 'wireless'];
+  const PAKET_OPTIONS = ['personal', 'home', 'family', 'middle', 'soho', 'small', 'little', 'bronze', 'free', 'parallel', 'custom', 'dedicated'];
+  const KATEGORI_OPTIONS = ['bandwidth', 'rent', 'service', 'lainnya', 'kombinasi'];
+  const STATUS_OPTIONS = ['aktif', 'blokir', 'cuti', 'putus'];
+
+  const summary = { inserted: 0, updated: 0, skipped: 0, failed: 0, errors: [] };
+  const seenIds = new Set();
+
+  const insertCust = db.prepare(`
+    INSERT INTO customers (id_pelanggan, nama_pelanggan, infrastruktur, paket, keterangan_paket, kategori, status, alamat, telepon, tanggal_pasang, total_harga, catatan)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+  `);
+  const updateCust = db.prepare(`
+    UPDATE customers SET nama_pelanggan = ?, infrastruktur = ?, paket = ?, keterangan_paket = ?, kategori = ?,
+      status = ?, alamat = ?, telepon = ?, tanggal_pasang = ?, catatan = ?, updated_at = datetime('now', 'localtime')
+    WHERE LOWER(id_pelanggan) = LOWER(?)
+  `);
+
+  const runImport = db.transaction(() => {
+    rows.forEach((raw, idx) => {
+      const baris = idx + 2;
+      const row = raw || {};
+      const idPel = String(row.id_pelanggan ?? '').trim().toUpperCase();
+      const nama = String(row.nama_pelanggan ?? '').trim();
+      const infra = String(row.infrastruktur ?? '').trim().toLowerCase() || 'optic';
+      const paket = String(row.paket ?? '').trim().toLowerCase() || 'home';
+      const ketPaket = String(row.keterangan_paket ?? '').trim();
+      const kategori = String(row.kategori ?? '').trim().toLowerCase() || 'bandwidth';
+      const status = String(row.status ?? '').trim().toLowerCase() || 'aktif';
+      const alamat = String(row.alamat ?? '').trim();
+      const telepon = String(row.telepon ?? '').trim();
+      const catatan = String(row.catatan ?? '').trim();
+      let tanggal = String(row.tanggal_pasang ?? '').trim() || todayLocal();
+      // Terima juga timestamp ISO penuh ("2026-09-01T00:00:00.000Z") → ambil bagian tanggalnya
+      if (/^\d{4}-\d{2}-\d{2}T/.test(tanggal)) tanggal = tanggal.slice(0, 10);
+
+      const fail = (error) => { summary.failed++; summary.errors.push({ baris, kode: idPel || '-', error }); };
+
+      if (!idPel && !nama) return;
+      if (!idPel) return fail('ID Pelanggan wajib diisi');
+      if (!nama) return fail(`Nama pelanggan wajib diisi (${idPel})`);
+      if (seenIds.has(idPel)) return fail(`ID ${idPel} muncul lebih dari sekali di file`);
+      seenIds.add(idPel);
+      if (!INFRA_OPTIONS.includes(infra)) return fail(`Infrastruktur "${infra}" tidak dikenal (${INFRA_OPTIONS.join('/')}) [${idPel}]`);
+      if (!PAKET_OPTIONS.includes(paket)) return fail(`Paket "${paket}" tidak dikenal (${PAKET_OPTIONS.join('/')}) [${idPel}]`);
+      if (!KATEGORI_OPTIONS.includes(kategori)) return fail(`Kategori "${kategori}" tidak dikenal (${KATEGORI_OPTIONS.join('/')}) [${idPel}]`);
+      if (!STATUS_OPTIONS.includes(status)) return fail(`Status "${status}" tidak dikenal (${STATUS_OPTIONS.join('/')}) [${idPel}]`);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(tanggal)) return fail(`Tanggal pasang "${tanggal}" tidak valid, gunakan format YYYY-MM-DD [${idPel}]`);
+
+      const existing = db.prepare('SELECT id FROM customers WHERE LOWER(id_pelanggan) = LOWER(?)').get(idPel);
+      if (existing) {
+        if (mode === 'update') {
+          updateCust.run(nama, infra, paket, ketPaket, kategori, status, alamat, telepon, tanggal, catatan, idPel);
+          summary.updated++;
+        } else {
+          summary.skipped++;
+        }
+        return;
+      }
+
+      insertCust.run(idPel, nama, infra, paket, ketPaket, kategori, status, alamat, telepon, tanggal, catatan);
+      summary.inserted++;
+    });
+  });
+
+  try {
+    runImport();
+    res.json({ success: true, data: summary });
+  } catch (err) {
+    res.status(500).json({ success: false, error: `Import dibatalkan: ${err.message}` });
+  }
+});
+
 // Quick Stock Adjust (Masuk / Keluar)
 app.post('/api/items/:id/stock-adjust', (req, res) => {
   try {
@@ -565,7 +1169,7 @@ app.post('/api/items/:id/stock-adjust', (req, res) => {
     db.prepare("UPDATE items SET stok = ?, updated_at = datetime('now', 'localtime') WHERE id = ?").run(newStock, id);
 
     const now = new Date();
-    const tanggal = now.toISOString().split('T')[0];
+    const tanggal = todayLocal();
     const waktu = now.toTimeString().split(' ')[0];
     const trxNo = generateTrxNumber(isMasuk ? 'MASUK' : 'KELUAR');
 
@@ -664,7 +1268,7 @@ app.post('/api/customers', (req, res) => {
       throw new Error(`ID Pelanggan "${id_pelanggan}" sudah digunakan`);
     }
 
-    const installDate = tanggal_pasang || new Date().toISOString().split('T')[0];
+    const installDate = tanggal_pasang || todayLocal();
 
     // Validasi barang terpasang & pastikan stok gudang mencukupi
     const { validated: validatedItems, totalHarga } = validateInstalledItems(items, installDate);
@@ -876,7 +1480,7 @@ app.post('/api/customers/:id/dismantle', (req, res) => {
     }
 
     const now = new Date();
-    const tanggal = now.toISOString().split('T')[0];
+    const tanggal = todayLocal();
     const waktu = now.toTimeString().split(' ')[0];
 
     const updateStock = db.prepare('UPDATE items SET stok = stok + ? WHERE kode_barang = ?');
@@ -1014,7 +1618,7 @@ app.post('/api/fo', (req, res) => {
       throw new Error('Daerah / Lokasi FO wajib diisi');
     }
 
-    const installDate = tanggal_pasang || new Date().toISOString().split('T')[0];
+    const installDate = tanggal_pasang || todayLocal();
 
     // Validasi barang terpasang & pastikan stok gudang mencukupi
     const { validated: validatedItems, totalHarga } = validateInstalledItems(items, installDate);
@@ -1265,7 +1869,7 @@ app.post('/api/tower', (req, res) => {
       throw new Error('Daerah / Lokasi Tower wajib diisi');
     }
 
-    const installDate = tanggal_pasang || new Date().toISOString().split('T')[0];
+    const installDate = tanggal_pasang || todayLocal();
 
     // Validasi barang terpasang & pastikan stok gudang mencukupi
     const { validated: validatedItems, totalHarga } = validateInstalledItems(items, installDate);
@@ -1594,6 +2198,16 @@ app.get('/api/transactions', (req, res) => {
 });
 
 // Manual transaction creation (Direct Stock In / Out)
+// Konfigurasi divisi yang bisa ditautkan langsung dari transaksi
+// (mis. scan barcode stiker di gudang → pilih pelanggan/site → barang langsung
+// tercatat terpasang di data tsb, stok gudang berkurang, riwayat tersimpan).
+// Nama tabel/kolom HARDCODE (whitelist) — aman dari injeksi SQL.
+const LINKED_DIVISI = {
+  'PELANGGAN':    { siteTable: 'customers',   itemsTable: 'customer_items', fk: 'customer_id', nameCol: 'nama_pelanggan', label: 'Pelanggan' },
+  'DIVISI FO':    { siteTable: 'fo_sites',    itemsTable: 'fo_items',       fk: 'fo_id',       nameCol: 'daerah_lokasi', label: 'Divisi FO' },
+  'DIVISI TOWER': { siteTable: 'tower_sites', itemsTable: 'tower_items',    fk: 'tower_id',    nameCol: 'daerah_lokasi', label: 'Divisi Tower' }
+};
+
 app.post('/api/transactions', (req, res) => {
   const transaction = db.transaction(() => {
     const {
@@ -1604,11 +2218,13 @@ app.post('/api/transactions', (req, res) => {
       kode_barang,
       jumlah,
       tanggal,
-      keterangan = ''
+      keterangan = '',
+      tujuan_id,          // opsional: id pelanggan / site FO / site tower (mode tertaut)
+      serial_number = ''  // opsional: SN unit (pelacakan di tujuan)
     } = req.body;
 
-    if (!jenis || !kode_barang || !jumlah || !lokasi_penerima) {
-      throw new Error('Jenis transaksi, kode barang, jumlah, dan lokasi/suplayer wajib diisi');
+    if (!jenis || !kode_barang || !jumlah) {
+      throw new Error('Jenis transaksi, kode barang, dan jumlah wajib diisi');
     }
 
     const item = db.prepare('SELECT * FROM items WHERE kode_barang = ?').get(kode_barang.trim());
@@ -1622,9 +2238,121 @@ app.post('/api/transactions', (req, res) => {
     }
 
     const now = new Date();
-    const tgl = tanggal || now.toISOString().split('T')[0];
+    const tgl = tanggal || todayLocal();
     const waktu = now.toTimeString().split(' ')[0];
     const isMasuk = jenis === 'MASUK';
+    const sn = (serial_number || '').toString().trim();
+
+    const linkCfg = LINKED_DIVISI[divisi] || null;
+    const isLinked = !!linkCfg && !!tujuan_id;
+
+    const insertTrxFull = db.prepare(`
+      INSERT INTO transactions (no_transaksi, tanggal, waktu, jenis, kategori_transaksi, divisi, ref_id, lokasi_penerima, kode_barang, nama_barang, satuan, jumlah, harga_satuan, total_harga, serial_number, keterangan)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    // ============================================================
+    // MODE TERTAUT: barang langsung tercatat terpasang / dikembalikan
+    // pada data pelanggan / site FO / site tower yang dipilih.
+    // ============================================================
+    if (isLinked) {
+      const owner = db.prepare(`SELECT * FROM ${linkCfg.siteTable} WHERE id = ?`).get(Number(tujuan_id));
+      if (!owner) {
+        throw new Error(`Data tujuan ${linkCfg.label} tidak ditemukan`);
+      }
+      const ownerName = owner[linkCfg.nameCol];
+
+      if (isMasuk) {
+        // --- PENGEMBALIAN: kurangi barang terpasang (baris terbaru dulu), stok gudang bertambah ---
+        const rows = db.prepare(
+          `SELECT * FROM ${linkCfg.itemsTable} WHERE ${linkCfg.fk} = ? AND kode_barang = ? ORDER BY id DESC`
+        ).all(owner.id, item.kode_barang);
+        const terpasang = rows.reduce((a, r) => a + Number(r.jumlah), 0);
+        if (terpasang < qty) {
+          throw new Error(`Barang terpasang di ${ownerName} hanya ${terpasang} ${item.satuan}; tidak bisa dikembalikan sebanyak ${qty}`);
+        }
+
+        let sisa = qty;
+        for (const row of rows) {
+          if (sisa <= 0) break;
+          const potong = Math.min(Number(row.jumlah), sisa);
+          const jumlahBaru = Number(row.jumlah) - potong;
+          if (jumlahBaru <= 0) {
+            db.prepare(`DELETE FROM ${linkCfg.itemsTable} WHERE id = ?`).run(row.id);
+          } else {
+            db.prepare(`UPDATE ${linkCfg.itemsTable} SET jumlah = ?, subtotal = ? WHERE id = ?`)
+              .run(jumlahBaru, jumlahBaru * Number(row.harga_barang), row.id);
+          }
+          sisa -= potong;
+        }
+
+        db.prepare("UPDATE items SET stok = stok + ?, updated_at = datetime('now', 'localtime') WHERE id = ?").run(qty, item.id);
+
+        const trxNo = generateTrxNumber('MASUK');
+        insertTrxFull.run(
+          trxNo, tgl, waktu, 'MASUK',
+          kategori_transaksi || `Pengembalian ${linkCfg.label}`,
+          divisi, owner.id, ownerName,
+          item.kode_barang, item.nama_barang, item.satuan, qty,
+          item.harga_barang, qty * item.harga_barang, sn,
+          keterangan.trim() || `Pengembalian dari ${linkCfg.label.toLowerCase()} ${ownerName}`
+        );
+        var hasilTrx = { trxNo, item, qty, isMasuk, terhubung: `${linkCfg.label} — ${ownerName}` };
+      } else {
+        // --- PEMASANGAN: stok gudang berkurang, tercatat terpasang di tujuan ---
+        if (item.stok < qty) {
+          throw new Error(`Stok gudang tidak cukup. Sisa: ${item.stok} ${item.satuan}, diminta: ${qty}`);
+        }
+
+        const existing = db.prepare(
+          `SELECT * FROM ${linkCfg.itemsTable} WHERE ${linkCfg.fk} = ? AND kode_barang = ? AND COALESCE(serial_number, '') = ?`
+        ).get(owner.id, item.kode_barang, sn);
+
+        if (existing) {
+          const jumlahBaru = Number(existing.jumlah) + qty;
+          db.prepare(`UPDATE ${linkCfg.itemsTable} SET jumlah = ?, subtotal = ? WHERE id = ?`)
+            .run(jumlahBaru, jumlahBaru * Number(existing.harga_barang), existing.id);
+        } else {
+          db.prepare(`
+            INSERT INTO ${linkCfg.itemsTable} (${linkCfg.fk}, kode_barang, nama_barang, jenis_barang, satuan, jumlah, harga_barang, subtotal, serial_number, referensi_suplayer, tanggal_pasang)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            owner.id, item.kode_barang, item.nama_barang, item.jenis_barang, item.satuan,
+            qty, item.harga_barang, qty * item.harga_barang, sn, item.referensi_suplayer || '', tgl
+          );
+        }
+
+        db.prepare("UPDATE items SET stok = stok - ?, updated_at = datetime('now', 'localtime') WHERE id = ?").run(qty, item.id);
+
+        const trxNo = generateTrxNumber('KELUAR');
+        insertTrxFull.run(
+          trxNo, tgl, waktu, 'KELUAR',
+          kategori_transaksi || `Pemasangan ${linkCfg.label}`,
+          divisi, owner.id, ownerName,
+          item.kode_barang, item.nama_barang, item.satuan, qty,
+          item.harga_barang, qty * item.harga_barang, sn,
+          keterangan.trim() || `Pemasangan di ${linkCfg.label.toLowerCase()} ${ownerName}`
+        );
+        var hasilTrx = { trxNo, item, qty, isMasuk, terhubung: `${linkCfg.label} — ${ownerName}` };
+      }
+
+      // Sinkronkan total nilai aset pada data induk (selalu = jumlah subtotal barang terpasang)
+      db.prepare(`
+        UPDATE ${linkCfg.siteTable}
+        SET total_harga = (SELECT COALESCE(SUM(subtotal), 0) FROM ${linkCfg.itemsTable} WHERE ${linkCfg.fk} = ?),
+            updated_at = datetime('now', 'localtime')
+        WHERE id = ?
+      `).run(owner.id, owner.id);
+
+      return hasilTrx;
+    }
+
+    // ============================================================
+    // MODE MANUAL GUDANG (perilaku lama — tidak berubah)
+    // ============================================================
+    if (!lokasi_penerima) {
+      throw new Error('Lokasi / penerima / suplayer wajib diisi');
+    }
 
     if (!isMasuk && item.stok < qty) {
       throw new Error(`Stok gudang tidak cukup. Sisa: ${item.stok} ${item.satuan}, diminta: ${qty}`);
@@ -1640,12 +2368,7 @@ app.post('/api/transactions', (req, res) => {
     const subtotal = qty * item.harga_barang;
     const trxNo = generateTrxNumber(isMasuk ? 'MASUK' : 'KELUAR');
 
-    const insertTrx = db.prepare(`
-      INSERT INTO transactions (no_transaksi, tanggal, waktu, jenis, kategori_transaksi, divisi, ref_id, lokasi_penerima, kode_barang, nama_barang, satuan, jumlah, harga_satuan, total_harga, keterangan)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    insertTrx.run(
+    insertTrxFull.run(
       trxNo,
       tgl,
       waktu,
@@ -1660,6 +2383,7 @@ app.post('/api/transactions', (req, res) => {
       qty,
       item.harga_barang,
       subtotal,
+      sn,
       keterangan.trim()
     );
 
@@ -1668,7 +2392,10 @@ app.post('/api/transactions', (req, res) => {
 
   try {
     const result = transaction();
-    res.status(201).json({ success: true, data: result, message: `Transaksi ${result.trxNo} berhasil disimpan` });
+    const pesan = result.terhubung
+      ? `Transaksi ${result.trxNo} tersimpan & terhubung ke ${result.terhubung}`
+      : `Transaksi ${result.trxNo} berhasil disimpan`;
+    res.status(201).json({ success: true, data: result, message: pesan });
   } catch (err) {
     res.status(400).json({ success: false, error: err.message });
   }

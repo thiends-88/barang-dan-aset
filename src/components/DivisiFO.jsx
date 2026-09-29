@@ -16,13 +16,13 @@ import {
   Layers,
   Printer
 } from 'lucide-react';
-import { formatRupiah, formatNumber, formatDate } from '../utils/formatters';
+import { formatRupiah, formatNumber, formatDate, todayLocal } from '../utils/formatters';
 import { notify } from '../utils/notify';
 import WorkOrderPrintModal from './WorkOrderPrintModal';
 
 const DEFAULT_UNITS = ['unit', 'roll', 'meter', 'bks', 'pcs'];
 
-export default function DivisiFO({ foSites, items, onRefresh }) {
+export default function DivisiFO({ foSites, items, onRefresh, canEdit = true }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedSiteDetail, setSelectedSiteDetail] = useState(null);
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
@@ -34,7 +34,7 @@ export default function DivisiFO({ foSites, items, onRefresh }) {
     daerah_lokasi: '',
     tipe_lokasi: '',
     pic_teknisi: '',
-    tanggal_pasang: new Date().toISOString().split('T')[0],
+    tanggal_pasang: todayLocal(),
     catatan: '',
     items: []
   });
@@ -68,7 +68,7 @@ export default function DivisiFO({ foSites, items, onRefresh }) {
       daerah_lokasi: '',
       tipe_lokasi: '',
       pic_teknisi: '',
-      tanggal_pasang: new Date().toISOString().split('T')[0],
+      tanggal_pasang: todayLocal(),
       catatan: '',
       items: [
         {
@@ -95,7 +95,7 @@ export default function DivisiFO({ foSites, items, onRefresh }) {
       daerah_lokasi: site.daerah_lokasi,
       tipe_lokasi: site.tipe_lokasi || '',
       pic_teknisi: site.pic_teknisi || '',
-      tanggal_pasang: site.tanggal_pasang || new Date().toISOString().split('T')[0],
+      tanggal_pasang: site.tanggal_pasang || todayLocal(),
       catatan: site.catatan || '',
       items: (site.items && site.items.length > 0)
         ? site.items.map(it => ({
@@ -288,13 +288,15 @@ export default function DivisiFO({ foSites, items, onRefresh }) {
         <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between">
           <div>
             <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider block">Tambah Titik Baru</span>
-            <button
-              onClick={handleOpenAdd}
-              className="mt-2 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-sm transition"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Input Titik FO Baru</span>
-            </button>
+            {canEdit && (
+              <button
+                onClick={handleOpenAdd}
+                className="mt-2 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-sm transition"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Input Titik FO Baru</span>
+              </button>
+            )}
           </div>
           <div className="w-12 h-12 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-600">
             <Package className="w-6 h-6" />
@@ -319,13 +321,15 @@ export default function DivisiFO({ foSites, items, onRefresh }) {
             </div>
           </div>
 
-          <button
-            onClick={handleOpenAdd}
-            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-xs rounded-xl flex items-center gap-2 shadow-sm shadow-emerald-200 transition"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Tambah Lokasi & Perangkat FO</span>
-          </button>
+          {canEdit && (
+            <button
+              onClick={handleOpenAdd}
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-xs rounded-xl flex items-center gap-2 shadow-sm shadow-emerald-200 transition"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Tambah Lokasi & Perangkat FO</span>
+            </button>
+          )}
         </div>
 
         {/* Table Content */}
@@ -413,21 +417,25 @@ export default function DivisiFO({ foSites, items, onRefresh }) {
                             <Printer className="w-4 h-4" />
                           </button>
 
-                          <button
-                            onClick={() => handleOpenEdit(site)}
-                            title="Edit Titik FO & Barang"
-                            className="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50 hover:text-blue-700 transition"
-                          >
-                            <Edit3 className="w-4 h-4" />
-                          </button>
+                          {canEdit && (
+                            <>
+                              <button
+                                onClick={() => handleOpenEdit(site)}
+                                title="Edit Titik FO & Barang"
+                                className="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50 hover:text-blue-700 transition"
+                              >
+                                <Edit3 className="w-4 h-4" />
+                              </button>
 
-                          <button
-                            onClick={() => handleDeleteFOSite(site)}
-                            title="Hapus Titik FO"
-                            className="p-1.5 rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                              <button
+                                onClick={() => handleDeleteFOSite(site)}
+                                title="Hapus Titik FO"
+                                className="p-1.5 rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -552,16 +560,18 @@ export default function DivisiFO({ foSites, items, onRefresh }) {
                 <Printer className="w-3.5 h-3.5" />
                 <span>Cetak Berita Acara FO</span>
               </button>
-              <button
-                onClick={() => {
-                  const s = selectedSiteDetail;
-                  setSelectedSiteDetail(null);
-                  handleOpenEdit(s);
-                }}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-xl transition"
-              >
-                Edit Data
-              </button>
+              {canEdit && (
+                <button
+                  onClick={() => {
+                    const s = selectedSiteDetail;
+                    setSelectedSiteDetail(null);
+                    handleOpenEdit(s);
+                  }}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-xl transition"
+                >
+                  Edit Data
+                </button>
+              )}
               <button
                 onClick={() => setSelectedSiteDetail(null)}
                 className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-medium rounded-xl transition"

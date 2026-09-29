@@ -10,8 +10,21 @@ import { renderToString } from 'react-dom/server';
 
 const API = 'http://127.0.0.1:3001';
 
+// API kini terproteksi login — ambil token admin terlebih dahulu
+const loginRes = await fetch(API + '/api/auth/login', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ username: 'admin', password: 'admin123' }),
+});
+const loginJson = await loginRes.json();
+if (!loginJson.success) {
+  console.error('Gagal login admin untuk SSR test:', loginJson.error || 'unknown');
+  process.exit(1);
+}
+const AUTH_HEADER = { Authorization: `Bearer ${loginJson.data.token}` };
+
 async function get(path) {
-  const res = await fetch(API + path);
+  const res = await fetch(API + path, { headers: AUTH_HEADER });
   const json = await res.json();
   return json.success ? json.data : [];
 }
@@ -87,6 +100,13 @@ await check('WorkOrderPrintModal (berita acara pelanggan)', '/src/components/Wor
 });
 await check('WorkOrderPrintModal (berita acara FO)', '/src/components/WorkOrderPrintModal.jsx', {
   isOpen: true, onClose() {}, type: 'fo', data: foSites[0],
+});
+await check('LoginPage', '/src/components/LoginPage.jsx', { onLogin() {} });
+await check('UserManagement', '/src/components/UserManagement.jsx', {
+  currentUser: { id: 1, username: 'admin', nama_lengkap: 'Administrator Sistem', role: 'admin' },
+});
+await check('ImportDataModal (barang)', '/src/components/ImportDataModal.jsx', {
+  isOpen: true, onClose() {}, type: 'items', onImported() {},
 });
 
 await vite.close();

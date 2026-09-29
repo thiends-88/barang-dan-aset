@@ -1,4 +1,31 @@
 import db from './db.js';
+import { hashPassword } from './auth.js';
+
+// ============================================================
+// Akun awal aplikasi (dibuat sekali saat tabel users kosong).
+// Password wajib diganti lewat menu Manajemen User setelah login.
+// ============================================================
+export function seedUsers() {
+  const rowCount = db.prepare('SELECT COUNT(*) as count FROM users').get();
+  if (rowCount.count > 0) return;
+
+  const insert = db.prepare(`
+    INSERT INTO users (username, password_hash, nama_lengkap, role, status)
+    VALUES (?, ?, ?, ?, 'aktif')
+  `);
+
+  const defaults = [
+    ['admin', 'admin123', 'Administrator Sistem', 'admin'],
+    ['gudang', 'gudang123', 'Staff Gudang', 'staff_gudang'],
+    ['teknisi', 'teknisi123', 'Teknisi Lapangan', 'teknisi'],
+    ['viewer', 'viewer123', 'Viewer / Pimpinan', 'viewer']
+  ];
+
+  for (const [username, pw, nama, role] of defaults) {
+    insert.run(username, hashPassword(pw), nama, role);
+  }
+  console.log('Akun awal dibuat: admin / gudang / teknisi / viewer');
+}
 
 export function seedData() {
   // Seed Categories if empty

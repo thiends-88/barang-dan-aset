@@ -1,5 +1,15 @@
-export function formatRupiah(amount) {
-  if (amount === undefined || amount === null || isNaN(amount)) return 'Rp 0';
+/**
+ * Tanggal LOKAL hari ini (YYYY-MM-DD) untuk default input tanggal.
+ * JANGAN pakai new Date().toISOString() — itu tanggal UTC yang bisa bergeser
+ * sehari dibanding waktu lokal (WIB) pada jam 00.00–06.59.
+ */
+export function todayLocal() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+export function formatRupiah(amount) {  if (amount === undefined || amount === null || isNaN(amount)) return 'Rp 0';
   return new Intl.NumberFormat('id-ID', {
     style: 'currency',
     currency: 'IDR',

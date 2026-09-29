@@ -1,0 +1,6 @@
+kode_barang;nama_barang;satuan;jenis_barang;stok;min_stok;harga_barang;referensi_suplayer;catatan
+BRG-ONT-F609;ONU ZTE F609 GPON 4FE+2POTS+WiFi;unit;Perangkat Aktif Pelanggan;25;5;185000;PT. Fiber Solusindo Nusantara;Firmware terbaru 2026
+BRG-RTR-CR1000;Router TP-Link CR1000 Dual Band AC1200;unit;Perangkat Aktif Pelanggan;30;8;240000;CV. Telekomindo Sentosa;
+BRG-FO-PRECON-80;Kabel Precon Dropcore 80M SC-UPC;pcs;Kabel Fiber Optic;50;10;65000;PT. Optik Kabel Indonesia;Siap pasang ke pelanggan
+BRG-FO-SPLITTER-1-8;Splitter PLC 1:8 SC-UPC Cassette;pcs;Aksesoris & Pasif FO;40;10;45000;PT. Solusi Optik Digital;
+BRG-KBL-LAN-CAT5E;Kabel UTP Cat5e Indoor 305M;roll;Kabel Jaringan;6;2;950000;PT. Belden Pratama;

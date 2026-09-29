@@ -22,11 +22,13 @@ import {
   Building,
   Printer,
   Barcode as BarcodeIcon,
-  FileCheck
+  FileCheck,
+  Upload
 } from 'lucide-react';
-import { formatRupiah, formatNumber, formatDate } from '../utils/formatters';
+import { formatRupiah, formatNumber, formatDate, todayLocal } from '../utils/formatters';
 import { notify } from '../utils/notify';
 import WorkOrderPrintModal from './WorkOrderPrintModal';
+import ImportDataModal from './ImportDataModal';
 
 const PAKET_OPTIONS = [
   'personal',
@@ -47,17 +49,19 @@ const KATEGORI_OPTIONS = ['bandwidth', 'rent', 'service', 'kombinasi'];
 const STATUS_OPTIONS = ['aktif', 'blokir', 'cuti', 'putus'];
 const DEFAULT_UNITS = ['unit', 'roll', 'meter', 'bks', 'pcs'];
 
-export default function DivisiPelanggan({ 
-  customers, 
-  items, 
-  onRefresh, 
-  onOpenBarcodeModal 
+export default function DivisiPelanggan({
+  customers,
+  items,
+  onRefresh,
+  onOpenBarcodeModal,
+  canEdit = true
 }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [infraFilter, setInfraFilter] = useState('');
   const [selectedCustDetail, setSelectedCustDetail] = useState(null);
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState(null);
   const [printCust, setPrintCust] = useState(null);
 
@@ -72,7 +76,7 @@ export default function DivisiPelanggan({
     status: 'aktif',
     alamat: '',
     telepon: '',
-    tanggal_pasang: new Date().toISOString().split('T')[0],
+    tanggal_pasang: todayLocal(),
     catatan: '',
     items: []
   });
@@ -119,7 +123,7 @@ export default function DivisiPelanggan({
       status: 'aktif',
       alamat: '',
       telepon: '',
-      tanggal_pasang: new Date().toISOString().split('T')[0],
+      tanggal_pasang: todayLocal(),
       catatan: '',
       items: [
         {
@@ -152,7 +156,7 @@ export default function DivisiPelanggan({
       status: cust.status,
       alamat: cust.alamat || '',
       telepon: cust.telepon || '',
-      tanggal_pasang: cust.tanggal_pasang || new Date().toISOString().split('T')[0],
+      tanggal_pasang: cust.tanggal_pasang || todayLocal(),
       catatan: cust.catatan || '',
       items: (cust.items && cust.items.length > 0)
         ? cust.items.map(it => ({
@@ -458,13 +462,26 @@ export default function DivisiPelanggan({
             </select>
           </div>
 
-          <button
-            onClick={handleOpenAdd}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium text-xs rounded-xl flex items-center gap-2 shadow-sm shadow-blue-200 transition"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Tambah Pelanggan & Barang</span>
-          </button>
+          {canEdit && (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setIsImportModalOpen(true)}
+                className="px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-semibold text-xs rounded-xl flex items-center gap-1.5 border border-emerald-200 transition"
+                title="Import data pelanggan massal dari file CSV / Excel"
+              >
+                <Upload className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Import</span>
+              </button>
+
+              <button
+                onClick={handleOpenAdd}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium text-xs rounded-xl flex items-center gap-2 shadow-sm shadow-blue-200 transition"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Tambah Pelanggan & Barang</span>
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Table Content */}
@@ -582,31 +599,35 @@ export default function DivisiPelanggan({
                             <Printer className="w-4 h-4" />
                           </button>
 
-                          <button
-                            onClick={() => handleOpenEdit(cust)}
-                            title="Edit Pelanggan & Barang"
-                            className="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50 hover:text-blue-700 transition"
-                          >
-                            <Edit3 className="w-4 h-4" />
-                          </button>
+                          {canEdit && (
+                            <>
+                              <button
+                                onClick={() => handleOpenEdit(cust)}
+                                title="Edit Pelanggan & Barang"
+                                className="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50 hover:text-blue-700 transition"
+                              >
+                                <Edit3 className="w-4 h-4" />
+                              </button>
 
-                          {itemsCount > 0 && cust.status !== 'putus' && (
-                            <button
-                              onClick={() => handleDismantle(cust)}
-                              title="Bongkar / Dismantle Barang (Tarik ke Gudang)"
-                              className="p-1.5 rounded-lg text-amber-600 hover:bg-amber-50 hover:text-amber-700 transition"
-                            >
-                              <RotateCcw className="w-4 h-4" />
-                            </button>
+                              {itemsCount > 0 && cust.status !== 'putus' && (
+                                <button
+                                  onClick={() => handleDismantle(cust)}
+                                  title="Bongkar / Dismantle Barang (Tarik ke Gudang)"
+                                  className="p-1.5 rounded-lg text-amber-600 hover:bg-amber-50 hover:text-amber-700 transition"
+                                >
+                                  <RotateCcw className="w-4 h-4" />
+                                </button>
+                              )}
+
+                              <button
+                                onClick={() => handleDeleteCustomer(cust)}
+                                title="Hapus Data Pelanggan"
+                                className="p-1.5 rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </>
                           )}
-
-                          <button
-                            onClick={() => handleDeleteCustomer(cust)}
-                            title="Hapus Data Pelanggan"
-                            className="p-1.5 rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
                         </div>
                       </td>
                     </tr>
@@ -755,16 +776,18 @@ export default function DivisiPelanggan({
                   <Printer className="w-3.5 h-3.5" />
                   <span>Cetak BASTP</span>
                 </button>
-                <button
-                  onClick={() => {
-                    const cust = selectedCustDetail;
-                    setSelectedCustDetail(null);
-                    handleOpenEdit(cust);
-                  }}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-xl transition"
-                >
-                  Edit Data
-                </button>
+                {canEdit && (
+                  <button
+                    onClick={() => {
+                      const cust = selectedCustDetail;
+                      setSelectedCustDetail(null);
+                      handleOpenEdit(cust);
+                    }}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-xl transition"
+                  >
+                    Edit Data
+                  </button>
+                )}
                 <button
                   onClick={() => setSelectedCustDetail(null)}
                   className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-medium rounded-xl transition"
@@ -1159,6 +1182,14 @@ export default function DivisiPelanggan({
         onClose={() => setPrintCust(null)}
         data={printCust}
         type="pelanggan"
+      />
+
+      {/* Modal Import Massal */}
+      <ImportDataModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        type="customers"
+        onImported={onRefresh}
       />
     </div>
   );

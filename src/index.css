@@ -91,15 +91,87 @@ label {
   }
 }
 
+/* ============================================================
+   MODE CETAK (PRINT / SIMPAN PDF)
+   ============================================================ */
+
+/* Blok khusus cetak (kop laporan, tanda tangan) disembunyikan di layar */
+.print-only {
+  display: none !important;
+}
+
+/* Ukuran & margin default seluruh dokumen cetak */
+@page {
+  margin: 10mm 8mm;
+}
+
+/* Halaman bernama "laporan": orientasi landscape agar tabel lebar muat penuh
+   (didukung Chrome/Edge/Firefox modern; browser lain tetap portrait dengan
+   konten yang tetap tidak terpotong berkat aturan di bawah) */
+@page laporan {
+  size: A4 landscape;
+}
+
 @media print {
+  html,
   body {
-    background-color: white !important;
-    color: black !important;
+    background-color: #ffffff !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
+  body {
+    color: #000000 !important;
+  }
+
   .no-print {
     display: none !important;
   }
   .print-only {
     display: block !important;
+    break-inside: avoid;
+  }
+
+  /* Kontainer halaman Laporan memakai @page "laporan" (landscape) */
+  .print-page-laporan {
+    page: laporan;
+  }
+
+  /* Buka SEMUA pembungkus scroll/hidden agar konten tidak terpotong
+     (tanpa ini, div overflow-x-auto memotong kolom kanan tabel saat cetak) */
+  .overflow-x-auto,
+  .overflow-x-scroll,
+  .overflow-y-auto,
+  .overflow-y-scroll,
+  .overflow-hidden,
+  .overflow-scroll {
+    overflow: visible !important;
+  }
+
+  /* Anulir lebar minimum tabel/sel yang memaksa konten melebihi kertas */
+  [class*="min-w-"] {
+    min-width: 0 !important;
+  }
+
+  /* Teks yang dipangkas/elipsis di layar mengalir penuh saat dicetak */
+  .truncate {
+    max-width: none !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    white-space: normal !important;
+  }
+
+  /* Tabel merentang penuh lebar kertas & header berulang tiap halaman */
+  table {
+    width: 100% !important;
+  }
+  thead {
+    display: table-header-group;
+  }
+  tfoot {
+    display: table-footer-group;
+  }
+  tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
   }
 }

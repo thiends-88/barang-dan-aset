@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { Html5Qrcode } from 'html5-qrcode';
 import { 
   ArrowLeftRight, 
   ArrowDownLeft, 
@@ -13,9 +14,11 @@ import {
   Package, 
   RefreshCw,
   AlertTriangle,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Camera,
+  ScanLine
 } from 'lucide-react';
-import { formatRupiah, formatNumber, formatDate, exportToCSV } from '../utils/formatters';
+import { formatRupiah, formatNumber, formatDate, exportToCSV, todayLocal } from '../utils/formatters';
 import { notify } from '../utils/notify';
 
 const DIVISI_OPTIONS = ['SEMUA', 'PELANGGAN', 'DIVISI FO', 'DIVISI TOWER', 'GUDANG'];
@@ -62,11 +65,81 @@ export default function KeluarMasukBarang({ items, onRefreshMaster }) {
     lokasi_penerima: '',
     kode_barang: '',
     jumlah: 1,
-    tanggal: new Date().toISOString().split('T')[0],
+    tanggal: todayLocal(),
     keterangan: ''
   });
   const [modalError, setModalError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Mode tertaut divisi + scan barcode dari stiker di barang fisik
+  const [tujuanList, setTujuanList] = useState([]);
+  const [tujuanLoading, setTujuanLoading] = useState(false);
+  const [scanInput, setScanInput] = useState('');
+  const [isCameraOn, setIsCameraOn] = useState(false);
+  const scanInputRef = useRef(null);
+  const qtyInputRef = useRef(null);
+  const html5QrRef = useRef(null);
+
+  const DIVISI_LINK_LABEL = { PELANGGAN: 'Pelanggan', 'DIVISI FO': 'Divisi FO', 'DIVISI TOWER': 'Divisi Tower' };
+  const TUJUAN_API = { PELANGGAN: '/api/customers', 'DIVISI FO': '/api/fo', 'DIVISI TOWER': '/api/tower' };
+  const isLinkedMode = modalData.divisi !== 'GUDANG';
+  const selectedItem = items.find((it) => it.kode_barang === modalData.kode_barang);
+  const labelTujuan = (row) => {
+    if (!row) return '';
+    if (modalData.divisi === 'PELANGGAN') {
+      return `${row.nama_pelanggan}${row.id_pelanggan ? ` (${row.id_pelanggan})` : ''}`;
+    }
+    if (modalData.divisi === 'DIVISI FO') {
+      return `${row.daerah_lokasi}${row.tipe_lokasi ? ` — ${row.tipe_lokasi}` : ''}`;
+    }
+    return `${row.daerah_lokasi}${row.type ? ` — ${row.type}` : ''}`;
+  };
+
+  // Terapkan hasil scan: isi otomatis kolom Barang, lalu fokus ke kolom Jumlah
+  const applyScannedCode = (raw) => {
+    const kode = (raw || '').trim().toUpperCase();
+    if (!kode) return;
+    const found = items.find((it) => it.kode_barang.toUpperCase() === kode);
+    if (!found) {
+      setModalError(`Kode "${kode}" tidak terdaftar di Master Barang`);
+      return;
+    }
+    setModalError('');
+    setModalData((m) => ({ ...m, kode_barang: found.kode_barang }));
+    notify(`Terdeteksi: ${found.kode_barang} — ${found.nama_barang}`, 'success');
+    setTimeout(() => qtyInputRef.current?.focus(), 60);
+  };
+
+  const stopTxCamera = () => {
+    const inst = html5QrRef.current;
+    html5QrRef.current = null;
+    setIsCameraOn(false);
+    if (inst) {
+      inst.stop().then(() => inst.clear().catch(() => {})).catch(() => {});
+    }
+  };
+
+  const startTxCamera = async () => {
+    try {
+      setModalError('');
+      setIsCameraOn(true);
+      const html5 = new Html5Qrcode('scan-area-transaksi');
+      html5QrRef.current = html5;
+      await html5.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: { width: 280, height: 160 }, aspectRatio: 1.777778 },
+        (decoded) => {
+          stopTxCamera();
+          applyScannedCode(decoded);
+        },
+        () => {}
+      );
+    } catch (err) {
+      console.error('Camera start error:', err);
+      setIsCameraOn(false);
+      setModalError('Gagal menyalakan kamera. Beri izin kamera di browser, atau gunakan scanner USB / ketik manual.');
+    }
+  };
 
   // Fetch transactions based on filters
   const fetchTransactions = async () => {
@@ -98,6 +171,28 @@ export default function KeluarMasukBarang({ items, onRefreshMaster }) {
       setLoading(false);
     }
   };
+
+  // Muat daftar tujuan (pelanggan / site) saat modal dibuka dengan divisi selain GUDANG
+  useEffect(() => {
+    if (!isModalOpen || modalData.divisi === 'GUDANG') {
+      setTujuanList([]);
+      return;
+    }
+    let batal = false;
+    setTujuanLoading(true);
+    fetch(TUJUAN_API[modalData.divisi])
+      .then((r) => r.json())
+      .then((j) => { if (!batal && j.success) setTujuanList(j.data || []); })
+      .catch(() => {})
+      .finally(() => { if (!batal) setTujuanLoading(false); });
+    return () => { batal = true; };
+  }, [isModalOpen, modalData.divisi]);
+
+  // Pastikan kamera scan mati saat modal ditutup / komponen dilepas
+  useEffect(() => {
+    if (!isModalOpen) stopTxCamera();
+    return () => stopTxCamera();
+  }, [isModalOpen]);
 
   useEffect(() => {
     fetchTransactions();
@@ -149,17 +244,33 @@ export default function KeluarMasukBarang({ items, onRefreshMaster }) {
       lokasi_penerima: '',
       kode_barang: items[0]?.kode_barang || '',
       jumlah: 1,
-      tanggal: new Date().toISOString().split('T')[0],
-      keterangan: ''
+      tanggal: todayLocal(),
+      keterangan: '',
+      tujuan_id: '',
+      serial_number: ''
     });
+    setScanInput('');
     setModalError('');
     setIsModalOpen(true);
+    setTimeout(() => scanInputRef.current?.focus(), 120);
   };
 
   const handleSaveModal = async (e) => {
     e.preventDefault();
-    if (!modalData.kode_barang || !modalData.jumlah || !modalData.lokasi_penerima) {
-      setModalError('Semua field wajib diisi');
+    if (!modalData.kode_barang || !modalData.jumlah) {
+      setModalError('Kode barang dan jumlah wajib diisi');
+      return;
+    }
+    if (isLinkedMode && !modalData.tujuan_id) {
+      setModalError(`Pilih ${DIVISI_LINK_LABEL[modalData.divisi]} tujuan terlebih dahulu`);
+      return;
+    }
+    if (!isLinkedMode && !modalData.lokasi_penerima) {
+      setModalError('Lokasi / penerima / suplayer wajib diisi');
+      return;
+    }
+    if (modalData.jenis === 'KELUAR' && selectedItem && Number(modalData.jumlah) > Number(selectedItem.stok)) {
+      setModalError(`Stok gudang hanya ${selectedItem.stok} ${selectedItem.satuan} — kurangi jumlah terlebih dahulu`);
       return;
     }
 
@@ -167,10 +278,28 @@ export default function KeluarMasukBarang({ items, onRefreshMaster }) {
     setModalError('');
 
     try {
+      const payload = {
+        jenis: modalData.jenis,
+        kategori_transaksi: modalData.kategori_transaksi,
+        divisi: modalData.divisi,
+        kode_barang: modalData.kode_barang,
+        jumlah: modalData.jumlah,
+        tanggal: modalData.tanggal,
+        keterangan: modalData.keterangan,
+        serial_number: modalData.serial_number || ''
+      };
+      if (isLinkedMode) {
+        payload.tujuan_id = Number(modalData.tujuan_id);
+        const tujuan = tujuanList.find((t) => Number(t.id) === Number(modalData.tujuan_id));
+        payload.lokasi_penerima = labelTujuan(tujuan);
+      } else {
+        payload.lokasi_penerima = modalData.lokasi_penerima;
+      }
+
       const res = await fetch('/api/transactions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(modalData)
+        body: JSON.stringify(payload)
       });
 
       const data = await res.json();
@@ -179,7 +308,7 @@ export default function KeluarMasukBarang({ items, onRefreshMaster }) {
       }
 
       setIsModalOpen(false);
-      notify(modalData.jenis === 'MASUK' ? 'Barang masuk berhasil dicatat' : 'Barang keluar berhasil dicatat', 'success');
+      notify(data.message || 'Transaksi berhasil dicatat', 'success');
       fetchTransactions();
       if (onRefreshMaster) onRefreshMaster();
     } catch (err) {
@@ -574,7 +703,7 @@ export default function KeluarMasukBarang({ items, onRefreshMaster }) {
                   <h3 className="font-bold text-sm">
                     {modalData.jenis === 'MASUK' ? 'Catat Barang Masuk' : 'Catat Barang Keluar'}
                   </h3>
-                  <p className="text-[11px] text-white/80">Input langsung mutasi inventaris</p>
+                  <p className="text-[11px] text-white/80">Scan stiker barcode → barang terisi otomatis → pilih divisi & tujuan</p>
                 </div>
               </div>
               <button
@@ -593,6 +722,50 @@ export default function KeluarMasukBarang({ items, onRefreshMaster }) {
                 </div>
               )}
 
+              {/* Kotak Scan Barcode — stiker kode barang yang tertempel di barang fisik */}
+              <div className="rounded-xl border-2 border-dashed border-indigo-300 bg-indigo-50/50 p-3 space-y-2">
+                <label className="block text-xs font-bold text-indigo-800 uppercase tracking-wider flex items-center gap-1.5">
+                  <ScanLine className="w-4 h-4" />
+                  Scan Barcode Stiker Barang
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    ref={scanInputRef}
+                    type="text"
+                    value={scanInput}
+                    onChange={(e) => setScanInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        applyScannedCode(scanInput);
+                        setScanInput('');
+                      }
+                    }}
+                    placeholder="Arahkan scanner USB ke sini, atau ketik kode lalu Enter..."
+                    className="flex-1 px-3 py-2 bg-white border border-indigo-200 rounded-xl text-xs font-mono font-bold focus:ring-2 focus:ring-indigo-400"
+                    autoComplete="off"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => (isCameraOn ? stopTxCamera() : startTxCamera())}
+                    className={`px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition shrink-0 ${
+                      isCameraOn ? 'bg-rose-600 text-white hover:bg-rose-700' : 'bg-indigo-600 text-white hover:bg-indigo-700'
+                    }`}
+                  >
+                    <Camera className="w-4 h-4" />
+                    <span>{isCameraOn ? 'Matikan' : 'Kamera'}</span>
+                  </button>
+                </div>
+                <div
+                  id="scan-area-transaksi"
+                  className={`rounded-lg overflow-hidden bg-slate-900 border border-slate-300 ${isCameraOn ? '' : 'hidden'}`}
+                  style={{ minHeight: isCameraOn ? 200 : 0 }}
+                />
+                <p className="text-[11px] text-indigo-700">
+                  Setiap scan langsung mengisi kolom Barang di bawah — tinggal ketik jumlah. Scanner USB (yang mengetik otomatis) dan kamera sama-sama didukung.
+                </p>
+              </div>
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -602,10 +775,13 @@ export default function KeluarMasukBarang({ items, onRefreshMaster }) {
                     value={modalData.jenis}
                     onChange={(e) => {
                       const j = e.target.value;
+                      const linked = modalData.divisi !== 'GUDANG';
                       setModalData({
                         ...modalData,
                         jenis: j,
-                        kategori_transaksi: j === 'MASUK' ? 'Pembelian Supplier' : 'Barang Rusak / Afkir'
+                        kategori_transaksi: j === 'MASUK'
+                          ? (linked ? 'Pengembalian / Dismantle' : 'Pembelian Supplier')
+                          : (linked ? `Pemasangan ${DIVISI_LINK_LABEL[modalData.divisi]}` : 'Barang Rusak / Afkir')
                       });
                     }}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold focus:bg-white"
@@ -625,21 +801,38 @@ export default function KeluarMasukBarang({ items, onRefreshMaster }) {
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:bg-white"
                   >
                     {modalData.jenis === 'MASUK' ? (
-                      <>
-                        <option value="Pembelian Supplier">Pembelian Supplier</option>
-                        <option value="Pengembalian / Dismantle">Pengembalian / Dismantle</option>
-                        <option value="Retur">Retur</option>
-                        <option value="Koreksi Stok">Koreksi Stok / Opname</option>
-                      </>
+                      isLinkedMode ? (
+                        <>
+                          <option value="Pengembalian / Dismantle">Pengembalian / Dismantle</option>
+                          <option value="Retur">Retur</option>
+                        </>
+                      ) : (
+                        <>
+                          <option value="Pembelian Supplier">Pembelian Supplier</option>
+                          <option value="Pengembalian / Dismantle">Pengembalian / Dismantle</option>
+                          <option value="Retur">Retur</option>
+                          <option value="Koreksi Stok">Koreksi Stok / Opname</option>
+                        </>
+                      )
                     ) : (
-                      <>
-                        <option value="Pemasangan Pelanggan">Pemasangan Pelanggan</option>
-                        <option value="Pemasangan Divisi FO">Pemasangan Divisi FO</option>
-                        <option value="Pemasangan Divisi Tower">Pemasangan Divisi Tower</option>
-                        <option value="Barang Rusak / Afkir">Barang Rusak / Afkir</option>
-                        <option value="Maintenance / Penggantian">Maintenance / Penggantian</option>
-                        <option value="Mutasi">Mutasi / Pemindahan</option>
-                      </>
+                      isLinkedMode ? (
+                        <>
+                          <option value={`Pemasangan ${DIVISI_LINK_LABEL[modalData.divisi]}`}>
+                            {`Pemasangan ${DIVISI_LINK_LABEL[modalData.divisi]}`}
+                          </option>
+                          <option value="Maintenance / Penggantian">Maintenance / Penggantian</option>
+                          <option value="Mutasi">Mutasi / Pemindahan</option>
+                        </>
+                      ) : (
+                        <>
+                          <option value="Pemasangan Pelanggan">Pemasangan Pelanggan</option>
+                          <option value="Pemasangan Divisi FO">Pemasangan Divisi FO</option>
+                          <option value="Pemasangan Divisi Tower">Pemasangan Divisi Tower</option>
+                          <option value="Barang Rusak / Afkir">Barang Rusak / Afkir</option>
+                          <option value="Maintenance / Penggantian">Maintenance / Penggantian</option>
+                          <option value="Mutasi">Mutasi / Pemindahan</option>
+                        </>
+                      )
                     )}
                   </select>
                 </div>
@@ -652,7 +845,21 @@ export default function KeluarMasukBarang({ items, onRefreshMaster }) {
                   </label>
                   <select
                     value={modalData.divisi}
-                    onChange={(e) => setModalData({ ...modalData, divisi: e.target.value })}
+                    onChange={(e) => {
+                      const d = e.target.value;
+                      if (d === 'GUDANG') {
+                        setModalData({ ...modalData, divisi: d, tujuan_id: '' });
+                      } else {
+                        setModalData({
+                          ...modalData,
+                          divisi: d,
+                          tujuan_id: '',
+                          kategori_transaksi: modalData.jenis === 'MASUK'
+                            ? 'Pengembalian / Dismantle'
+                            : `Pemasangan ${DIVISI_LINK_LABEL[d]}`
+                        });
+                      }
+                    }}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:bg-white font-semibold"
                   >
                     <option value="GUDANG">GUDANG / PUSAT</option>
@@ -677,7 +884,7 @@ export default function KeluarMasukBarang({ items, onRefreshMaster }) {
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Pilih Barang (Master) *
+                  Barang * <span className="font-normal text-indigo-600">(terisi otomatis saat stiker di-scan)</span>
                 </label>
                 <select
                   value={modalData.kode_barang}
@@ -690,6 +897,20 @@ export default function KeluarMasukBarang({ items, onRefreshMaster }) {
                     </option>
                   ))}
                 </select>
+                {selectedItem && (
+                  <p className="text-[11px] mt-1 text-slate-500">
+                    Stok gudang tersedia:{' '}
+                    <strong
+                      className={
+                        modalData.jenis === 'KELUAR' && Number(modalData.jumlah) > Number(selectedItem.stok)
+                          ? 'text-rose-600'
+                          : 'text-slate-800'
+                      }
+                    >
+                      {formatNumber(selectedItem.stok)} {selectedItem.satuan}
+                    </strong>
+                  </p>
+                )}
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -698,6 +919,7 @@ export default function KeluarMasukBarang({ items, onRefreshMaster }) {
                     Jumlah (Qty) *
                   </label>
                   <input
+                    ref={qtyInputRef}
                     type="number"
                     step="any"
                     min="0.01"
@@ -708,20 +930,87 @@ export default function KeluarMasukBarang({ items, onRefreshMaster }) {
                   />
                 </div>
 
+                {isLinkedMode ? (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      {modalData.divisi === 'PELANGGAN' && 'Pelanggan Tujuan *'}
+                      {modalData.divisi === 'DIVISI FO' && 'Site FO Tujuan *'}
+                      {modalData.divisi === 'DIVISI TOWER' && 'Site Tower Tujuan *'}
+                    </label>
+                    <select
+                      value={modalData.tujuan_id}
+                      onChange={(e) => setModalData({ ...modalData, tujuan_id: e.target.value })}
+                      disabled={tujuanLoading}
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold focus:bg-white"
+                    >
+                      <option value="">
+                        {tujuanLoading
+                          ? 'Memuat data...'
+                          : tujuanList.length === 0
+                            ? 'Belum ada data — tambah dulu di halaman divisi'
+                            : `-- Pilih ${DIVISI_LINK_LABEL[modalData.divisi]} tujuan --`}
+                      </option>
+                      {tujuanList.map((row) => (
+                        <option key={row.id} value={row.id}>
+                          {labelTujuan(row)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      {modalData.jenis === 'MASUK' ? 'Suplayer / Asal Barang *' : 'Lokasi / Penerima *'}
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={modalData.lokasi_penerima}
+                      onChange={(e) => setModalData({ ...modalData, lokasi_penerima: e.target.value })}
+                      placeholder="Nama suplayer, site, atau teknisi"
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:bg-white"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Penjelasan akibat mode tertaut */}
+              {isLinkedMode && (
+                <div className={`p-3 rounded-xl text-[11px] leading-relaxed border ${
+                  modalData.jenis === 'KELUAR'
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                    : 'bg-amber-50 border-amber-200 text-amber-800'
+                }`}>
+                  {modalData.jenis === 'KELUAR' ? (
+                    <>
+                      <strong>Mode pemasangan:</strong> barang akan otomatis tercatat <strong>TERPASANG</strong> pada data{' '}
+                      {DIVISI_LINK_LABEL[modalData.divisi]} tujuan — sama hasilnya seperti input dari halaman divisi
+                      (muncul di laporan "Terpasang Dimananya", bisa dilacak scan). Stok gudang berkurang.
+                    </>
+                  ) : (
+                    <>
+                      <strong>Mode pengembalian:</strong> jumlah barang akan <strong>dikurangi dari daftar terpasang</strong>{' '}
+                      tujuan dan kembali menambah stok gudang.
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* Nomor Seri opsional — hanya saat pemasangan tertaut */}
+              {isLinkedMode && modalData.jenis === 'KELUAR' && (
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    {modalData.jenis === 'MASUK' ? 'Suplayer / Asal Barang *' : 'Lokasi / Penerima *'}
+                    Serial Number / SN (opsional)
                   </label>
                   <input
                     type="text"
-                    required
-                    value={modalData.lokasi_penerima}
-                    onChange={(e) => setModalData({ ...modalData, lokasi_penerima: e.target.value })}
-                    placeholder="Nama suplayer, site, atau teknisi"
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:bg-white"
+                    value={modalData.serial_number}
+                    onChange={(e) => setModalData({ ...modalData, serial_number: e.target.value })}
+                    placeholder="SN unit untuk pelacakan — kosongkan bila tidak ada"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono focus:bg-white"
                   />
                 </div>
-              </div>
+              )}
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
