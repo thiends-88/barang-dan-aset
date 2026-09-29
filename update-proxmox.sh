@@ -108,7 +108,9 @@ run() {
     printf '    %s[dry-run]%s' "$Y" "$N"; printf ' %q' "$@"; echo
   else
     printf '    %s$%s' "$C" "$N"; printf ' %q' "$@"; echo
+    LAST_CMD="$*"
     "$@"
+    LAST_CMD=""
   fi
 }
 
@@ -123,6 +125,7 @@ STAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP_FILE="$BACKUP_DIR/inventory-$STAMP.db"
 
 OLD_COMMIT=""
+LAST_CMD=""
 RESTORE_NEEDED_HINT=""
 SERVICE_STOPPED=0
 RESET_DONE=0
@@ -130,9 +133,10 @@ SUMMARY_BEFORE=""
 
 # Petunjuk pemulihan bila ada langkah yang gagal di tengah jalan
 on_error() {
-  local code=$?
+  local code=$? cmd="${LAST_CMD:-$BASH_COMMAND}"
   echo
-  echo "${R}${B}✗ Update GAGAL (kode $code) pada baris ${BASH_LINENO[0]}.${N}" >&2
+  echo "${R}${B}✗ Update GAGAL (kode $code) saat menjalankan: ${cmd}${N}" >&2
+  [[ $SERVICE_STOPPED -eq 1 ]] && echo "  ${Y}Layanan $SERVICE masih BERHENTI.${N}" >&2
   if [[ $DRY_RUN -eq 0 && -n "$OLD_COMMIT" ]]; then
     echo "  Cara kembali ke kondisi sebelum update:" >&2
     echo "    cd $APP_DIR" >&2

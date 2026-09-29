@@ -102,6 +102,7 @@ Aplikasi enterprise untuk manajemen inventaris barang dan pelacakan aset jaringa
    node server/index.js
    ```
    Aplikasi akan berjalan di port `3000` (http://0.0.0.0:3000).
+   Bila `data/inventory.db` belum ada (mis. clone baru), server otomatis membuat database dan mengisi data contoh serta akun demo (`admin` / `admin123`, dst.).
 
 2. **Membangun Frontend (Build)**:
    ```bash
@@ -145,36 +146,53 @@ Buka `http://IP-PROXMOX:3000`.
 
 ### 2. Update versi terbaru (setiap kali ada PR di-merge)
 
-> ⚠️ **PENTING:** file database `data/inventory.db` ikut tersimpan di repository. Menjalankan `git pull` akan **menimpa database di server dengan data contoh**, sehingga data asli bisa hilang. Selalu cadangkan dulu:
+Database `data/inventory.db` **tidak lagi disimpan di repository** (diabaikan lewat `.gitignore`), jadi pembaruan kode tidak menimpa data produksi. Bila berkas DB belum ada, server otomatis membuatnya dan mengisi data contoh + akun demo.
+
+Pakai skrip **`update-proxmox.sh`**. Skrip ini mencadangkan database, menerapkan versi terbaru, memulihkan database bila perlu, memasang dependensi, lalu menjalankan ulang layanan:
 
 ```bash
 cd /opt/barang-dan-aset
-
-# 1) WAJIB: cadangkan database sebelum menarik pembaruan
-cp data/inventory.db "data/inventory.backup-$(date +%Y%m%d-%H%M).db"
-
-# 2) Tarik versi terbaru
-git pull origin main
-
-# 3) Pasang dependensi bila ada perubahan
-npm install --omit=dev
-
-# 4) Jalankan ulang aplikasi
-npm start
+./update-proxmox.sh --dry-run     # 1) lihat rencananya dulu — TIDAK mengubah apa pun
+sudo ./update-proxmox.sh          # 2) jalankan update sungguhan
 ```
 
-Untuk mengembalikan data setelah `git pull`, salin kembali berkas cadangannya:
+Langkah yang dilakukan skrip:
+
+1. cek prasyarat (git, Node.js 22+, npm, unit systemd `barang-dan-aset`)
+2. `git fetch` & tampilkan daftar commit yang akan masuk
+3. hentikan layanan
+4. **cadangkan database** ke `data/backups/inventory-YYYYMMDD-HHMMSS.db` (salinan konsisten via SQLite `VACUUM INTO`, wajib lolos `integrity_check`). Perubahan lokal pada berkas kode, bila ada, disimpan sebagai `.patch`.
+5. `git reset --hard origin/main`, lalu **pulihkan database dari cadangan** bila hilang/tertimpa, dan bandingkan jumlah data sebelum vs sesudah
+6. `npm install --omit=dev`
+7. jalankan ulang layanan dan cek `/api/version` (commit yang berjalan harus sama dengan target)
+8. hapus cadangan lama (default menyimpan 20 terbaru, ubah dengan `--keep N`)
+
+Bila ada langkah yang gagal, skrip berhenti dan mencetak perintah untuk kembali ke kondisi sebelum update. Opsi lain: `--branch`, `--service`, `--port`, `--no-restart`, `--force`, `--yes`, `--help`.
+
+> ⚠️ **Update PERTAMA setelah perubahan ini** (server masih di versi lama yang melacak database):
+> commit baru menghapus `data/inventory.db` dari git, sehingga `git reset --hard` / `git pull` **akan menghapus berkas database**. Jangan pakai `git pull` biasa. Server lama juga belum punya skripnya, jadi ambil dari `origin/main` dan jalankan dari `/tmp`:
+> ```bash
+> cd /opt/barang-dan-aset
+> git fetch origin main
+> git show origin/main:update-proxmox.sh > /tmp/update-proxmox.sh
+> bash /tmp/update-proxmox.sh --dir /opt/barang-dan-aset --dry-run   # harus muncul: "update ini MELEPAS data/inventory.db"
+> sudo bash /tmp/update-proxmox.sh --dir /opt/barang-dan-aset
+> ```
+> Skrip mencadangkan database dulu, lalu memulihkannya otomatis setelah reset. Update berikutnya cukup `./update-proxmox.sh`.
+
+Memulihkan database dari cadangan secara manual:
 
 ```bash
-cp data/inventory.backup-YYYYMMDD-HHMM.db data/inventory.db
+sudo systemctl stop barang-dan-aset
+rm -f data/inventory.db-wal data/inventory.db-shm
+cp data/backups/inventory-YYYYMMDD-HHMMSS.db data/inventory.db
+sudo systemctl start barang-dan-aset
 ```
 
-> 💡 **Saran:** agar `git pull` tidak lagi menyentuh database produksi, hapus pelacakan berkas database dari repository (sekali saja, dari komputer pengembangan):
-> ```bash
-> git rm --cached data/inventory.db
-> printf 'data/*.db\n' >> .gitignore
-> git commit -m "Berhenti melacak database agar tidak menimpa data produksi"
-> ```
+### Cek versi yang terpasang
+
+- Di aplikasi: lencana versi di **footer** (mis. `v1.0.0 · a1b2c3d`). Klik untuk melihat commit build, waktu build, commit yang berjalan di server, dan versi Node.js. Bila server sudah diperbarui tetapi browser masih memuat versi lama, muncul tombol **"Versi baru — muat ulang"**.
+- Dari terminal: `curl -s http://127.0.0.1:3000/api/version` (tanpa login).
 
 ### 3. Jalankan otomatis saat server menyala (systemd)
 
@@ -190,6 +208,8 @@ Type=simple
 WorkingDirectory=/opt/barang-dan-aset
 Environment=PORT=3000
 Environment=NODE_ENV=production
+# WAJIB diganti: kunci penandatangan token login (buat dengan: openssl rand -hex 32)
+Environment=AUTH_SECRET=ganti-dengan-string-acak-panjang
 ExecStart=/usr/bin/node server/index.js
 Restart=always
 RestartSec=5
@@ -213,10 +233,12 @@ journalctl -u barang-dan-aset -f      # lihat log
 - **Port**: ubah lewat environment `PORT`, mis. `PORT=8080 npm start`.
 - **Firewall**: pastikan port tersebut dibuka di Proxmox/LXC (`ufw allow 3000` atau aturan di router).
 - **Reverse proxy**: bila memakai Nginx/PM2/Caddy, arahkan ke `127.0.0.1:3000`. Server sudah mendukung semua host, jadi tidak perlu konfigurasi tambahan.
-- **Backup berkala**: cukup salin folder `data/` (berisi `inventory.db`) atau jadwalkan cron harian:
+- **Backup berkala**: jadwalkan cron harian yang membuat salinan konsisten (aman walau aplikasi sedang berjalan dalam mode WAL):
   ```bash
-  0 2 * * * cd /opt/barang-dan-aset && cp data/inventory.db "data/backup-$(date +\%Y\%m\%d).db"
+  0 2 * * * cd /opt/barang-dan-aset && mkdir -p data/backups && node --no-warnings -e 'const {DatabaseSync}=require("node:sqlite");new DatabaseSync("data/inventory.db").exec("VACUUM INTO \x27data/backups/harian-"+new Date().toISOString().slice(0,10)+".db\x27")' && find data/backups -name 'harian-*.db' -mtime +30 -delete
   ```
+  Menyalin `inventory.db` dengan `cp` saja **tidak cukup** saat aplikasi berjalan: data terbaru bisa masih berada di `inventory.db-wal`.
+- **Keamanan**: setelah instalasi pertama, **ganti password semua akun demo** (menu *Manajemen User*) dan set `AUTH_SECRET` di unit systemd.
 
 ---
 

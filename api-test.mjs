@@ -288,9 +288,9 @@ r = await req('PUT', `/api/tower/${idTower}`, { items: [{ kode_barang: KODE, jum
 if (r.status >= 400) ok('Tower: edit melebihi stok ditolak', `HTTP ${r.status}`);
 else bad('Tower: edit melebihi stok ditolak', `HTTP ${r.status}`);
 
-await req('DELETE', `/api/tower/${idTower}`);
+r = await req('DELETE', `/api/tower/${idTower}`);
 if (stockOf(KODE) === STOK_AWAL) ok('Tower: hapus mengembalikan stok', `stok=${stockOf(KODE)}`);
-else bad('Tower: hapus mengembalikan stok', `stok=${stockOf(KODE)}, harap ${STOK_AWAL} — stok hilang!`);
+else bad('Tower: hapus mengembalikan stok', `stok=${stockOf(KODE)}, harap ${STOK_AWAL} — stok hilang! (id=${idTower}, HTTP ${r.status}: ${r.json?.error || r.json?.message || '-'})`);
 
 console.log('\n=== 6. MUTASI STOK MANUAL & LAIN-LAIN ===');
 const itemUji = db.prepare('SELECT * FROM items WHERE kode_barang = ?').get(KODE);

@@ -5,8 +5,9 @@
 > pernah kena, dan hal-hal yang belum selesai — supaya sesi baru tidak mengulang debat yang
 > sama atau merusak hal yang sudah disepakati.
 >
-> Terakhir diperbarui: **29 September 2026** · basis commit: `984e2c3` (merge PR #3)
-> Repo: <https://github.com/thiends-88/barang-dan-aset> · Branch kerja sesi ini: `arena/01a0ec98-barang-dan-aset`
+> Terakhir diperbarui: **29 September 2026** · basis commit: `69546c1` (merge PR #4)
+> Repo: <https://github.com/thiends-88/barang-dan-aset> · Branch kerja sesi terakhir: `arena/01a0ecad-barang-dan-aset`
+> Sesi baru cukup diminta: *"Baca docs/HANDOFF-ARENA.md lalu lanjutkan dari §12."*
 
 ---
 
@@ -17,7 +18,7 @@
    Banyak "aturan aneh" di aplikasi ini adalah keputusan sadar, bukan bug.
 3. Sebelum menutup sesi, jalankan **§10 (checklist penutup sesi)**.
 4. Kalau ada pertanyaan "kenapa dulu dibuat begini?", lihat **§11 (jebakan & pelajaran)**
-   dan riwayat PR #1–#3 di GitHub — deskripsinya sangat rinci dan berbahasa Indonesia.
+   dan riwayat PR #1–#5 di GitHub — deskripsinya sangat rinci dan berbahasa Indonesia.
 
 ---
 
@@ -31,7 +32,7 @@
 | Ukuran kode | ± 14.200 baris (± 10.000 frontend, ± 3.500 server, ± 700 test) |
 | Backend | Node.js 22+ · Express 5 · `node:sqlite` (DatabaseSync, modul bawaan Node) — **tanpa ORM** |
 | Frontend | React 19 · Vite 8 (rolldown) · Tailwind v4 (`@tailwindcss/vite`) · lucide-react · xlsx · jsbarcode · html5-qrcode |
-| Database | Satu file: `data/inventory.db` (SQLite, WAL) |
+| Database | Satu file: `data/inventory.db` (SQLite, WAL) — **tidak dilacak git**, dibuat + diisi data contoh otomatis bila belum ada |
 | Bahasa | **Seluruh UI, komentar, pesan error, test, dan PR memakai Bahasa Indonesia** |
 | Deploy | Proxmox / LXC: `node server/index.js` menyajikan API **dan** `dist/` di satu port (`PORT`, default 3000) |
 
@@ -44,13 +45,16 @@ site Tower (stok berkurang, tercatat sebagai barang terpasang) → di-dismantle/
 ## 2. Aturan main sesi Arena
 
 - **Satu sesi = satu branch** bernama `arena/<id-sesi>-barang-dan-aset`, dibuat dari `main`,
-  lalu di-merge lewat Pull Request ke `main`. PR #1, #2, #3 sudah di-merge dengan pola ini.
+  lalu di-merge lewat Pull Request ke `main`. PR #1–#4 sudah di-merge dengan pola ini.
   Contoh branch yang sudah ada: `arena/01a0e613-...`, `arena/01a0e75a-...`, `arena/01a0eadc-...`.
 - **Jangan pernah** force-push / commit langsung ke `main`. Semua perubahan lewat PR.
 - Author PR adalah akun otomasi `app/arena-ai-coding-agent`; **yang me-merge adalah pemilik repo
   (thiends-88)** — jangan merge PR sendiri.
-- Branch sesi ini **tidak boleh dipindah**: seluruh pekerjaan tetap di
-  `arena/01a0ec98-barang-dan-aset` (Arena melacak sesi lewat nama branch ini).
+- Branch sesi **tidak boleh dipindah**: seluruh pekerjaan tetap di branch `arena/...` yang
+  diberikan sesi itu (Arena melacak sesi lewat nama branch tersebut).
+- **Push lebih awal & sering.** Workspace bisa dipulihkan dari snapshot yang hanya membawa isi
+  repo; commit lokal yang belum di-push dan berkas di luar repo **bisa hilang** (pernah terjadi
+  di sesi 4 — seluruh hasilnya harus dikerjakan ulang di PR #5).
 - Riwayat `main` di checkout Arena bisa tampak hanya 1 commit (hasil penyederhanaan saat clone).
   **Konteks lengkap ada di halaman PR GitHub**, bukan di `git log` lokal.
 - Perubahan besar/berisiko (mis. menyentuh integritas stok atau menghapus data) **selalu**
@@ -85,12 +89,18 @@ src/
     auth.js       → sesi localStorage, peta MENU_ACCESS, penambal window.fetch
     formatters.js → todayLocal(), formatRupiah(), formatNumber(), formatDate(), exportToCSV()
     notify.js     → pub/sub notifikasi in-app (pengganti alert())
+    buildInfo.js  → CLIENT_BUILD (konstanta __APP_BUILD__ dari Vite), versionLabel(), isClientOutdated()
+  components/VersionBadge.jsx → lencana versi di footer + tombol "Versi baru — muat ulang"
 
-api-test.mjs       → 73 tes integrasi API (integritas stok, auth, peran, waktu, scan tertaut)
-ssr-test.mjs       → 17 smoke test render komponen dengan data asli API
+scripts/build-info.mjs → getBuildInfo()/getGitInfo(): dipakai vite.config.js (build) & server (runtime)
+update-proxmox.sh      → skrip update server: cadangkan DB → reset --hard → pulihkan DB → install → restart
+
+api-test.mjs       → 75 tes integrasi API (integritas stok, auth, peran, waktu, scan tertaut, versi)
+ssr-test.mjs       → 18 smoke test render komponen dengan data asli API
 contoh-import/     → barang.csv, pelanggan.csv (contoh file import)
-data/inventory.db  → database (IKUT ter-commit di git — lihat §7 & §11)
-dist/              → hasil build frontend (IKUT ter-commit — lihat §8)
+data/inventory.db  → database (TIDAK dilacak git sejak PR #5 — lihat §7)
+data/backups/      → cadangan otomatis dari update-proxmox.sh (diabaikan git)
+dist/              → hasil build frontend + build-info.json (IKUT ter-commit — lihat §8)
 ```
 
 ---
@@ -131,12 +141,12 @@ reverse proxy) ada di `README.md` bagian **Deploy ke Proxmox**.
 ```bash
 PORT=3001 node server/index.js &     # siapkan server untuk pengujian
 npm test                             # = api-test.mjs && ssr-test.mjs
-npm run test:api                     # 73 tes integrasi API
-npm run test:render                  # 17 smoke test render (SSR)
+npm run test:api                     # 75 tes integrasi API
+npm run test:render                  # 18 smoke test render (SSR)
 ```
 
-> Hasil terakhir (commit `984e2c3`, diverifikasi ulang 29 Sep 2026): **API 73/73 lolos,
-> SSR 17/17 lolos, `npm run build` sukses.**
+> Hasil terakhir (PR #5, 29 Sep 2026, dimulai dari DB kosong → seed otomatis): **API 75/75 lolos,
+> SSR 18/18 lolos, `npm run build` sukses.**
 >
 > ⚠️ `api-test.mjs` **menulis ke database asli** dan di akhir menjalankan ulang data contoh.
 > Kalau DB sedang berisi data penting, **cadangkan dulu** (`cp data/inventory.db /tmp/…`)
@@ -145,8 +155,14 @@ npm run test:render                  # 17 smoke test render (SSR)
 ### 4.4 Build frontend
 
 ```bash
-npm run build        # keluaran ke dist/ (hash nama file berubah)
+npm run build        # keluaran ke dist/ (hash nama file berubah) + dist/build-info.json
 ```
+
+`vite.config.js` memanggil `getBuildInfo()` (versi `package.json`, commit git, waktu build WIB)
+satu kali per build, lalu (1) menanamnya ke bundle sebagai `__APP_BUILD__` dan (2) menulis
+`dist/build-info.json`. Karena build dibuat **sebelum** commit, `commit` di build-info adalah
+commit *induk* dari commit yang memuat build tsb. — ini wajar. Commit yang benar-benar berjalan
+di server dilaporkan terpisah (`runtime.commit` di `/api/version`).
 
 `dist/` **ikut di-commit** karena server Proxmox tidak melakukan build. Jadi setiap
 perubahan frontend wajib disertai hasil build terbaru di PR yang sama.
@@ -320,6 +336,19 @@ itu wajar karena perbedaan versi toolchain, bukan bug.
   operasional (bukan user) dan mengisi ulang dataset demo ISP.
 - `PRAGMA wal_checkpoint(TRUNCATE)` dijalankan saat start supaya data benar-benar tertulis ke
   berkas `.db` utama (bukan hanya WAL) — penting agar snapshot workspace tidak kehilangan data.
+- DB **tidak dilacak git**. Clone baru / workspace yang kehilangan DB cukup menjalankan server:
+  `initDb()` membuat skema, `seedData()` + `seedUsers()` mengisi data contoh & 4 akun demo.
+
+### 6.9 Info versi (PR #5)
+- `GET /api/version` **publik** (tanpa login, `Cache-Control: no-store`):
+  `{ version, build: <isi dist/build-info.json | null>, runtime: { commit, commitShort, branch,
+  commitDate, node, startedAt, uptimeSeconds } }`. `/api/health` ikut memuat `version`, `commit`,
+  `buildCommit`.
+- `VersionBadge` (footer) menampilkan `v<versi> · <commit build>`, panel detail saat diklik, dan
+  tombol **"Versi baru — muat ulang"** bila `build.builtAt` di server ≠ yang tertanam di bundle
+  browser (hanya di build produksi; di `npm run dev` selalu beda, jadi dimatikan).
+- `index.html` & `build-info.json` disajikan `Cache-Control: no-cache`; `dist/assets/*` (ber-hash)
+  `max-age=1 tahun, immutable`.
 
 ---
 
@@ -334,12 +363,15 @@ itu wajar karena perbedaan versi toolchain, bukan bug.
   barang/kunci relasi) — tambahkan indeks bila muncul query lambat baru.
 - Kolom uang disimpan sebagai `REAL`, tanggal `YYYY-MM-DD` teks, waktu `HH:MM:SS` teks
   (kompatibel `datetime('now','localtime')`).
-- **`data/inventory.db` ikut di-commit.** Ini keputusan lama yang masih berlaku (server Proxmox
-  tarik data contoh lewat `git pull`), tetapi berisiko: `git pull` di server **menimpa** database
-  produksi. Prosedur wajib: cadangkan dulu (`cp data/inventory.db data/inventory.backup-$(date +%Y%m%d-%H%M).db`)
-  sebelum pull. README sudah memuat peringatan + saran melepas pelacakan file DB
-  (`git rm --cached data/inventory.db`, tambahkan `data/*.db` ke `.gitignore`) — saran ini
-  **belum dieksekusi**, lihat §12.
+- **`data/inventory.db` TIDAK dilacak git (sejak PR #5).** `.gitignore` memuat `data/*.db`,
+  berkas WAL/SHM/journal, dan `data/backups/`. Alasannya: dulu `git pull` di server **menimpa**
+  database produksi dengan data contoh.
+- Server membuat & mengisi DB contoh otomatis bila berkas belum ada (lihat §6.8), jadi clone
+  baru tetap langsung bisa dipakai.
+- **Update server wajib lewat `./update-proxmox.sh`** (dry-run dulu). Pada update PERTAMA setelah
+  PR #5, `git reset --hard` akan *menghapus* `data/inventory.db` (karena berkas itu keluar dari
+  index); skrip mencadangkannya dulu (`VACUUM INTO`, lolos `integrity_check`) lalu memulihkannya
+  otomatis, dan membandingkan jumlah baris sebelum/sesudah. Jangan pernah melewati langkah cadangan.
 
 ---
 
@@ -347,6 +379,17 @@ itu wajar karena perbedaan versi toolchain, bukan bug.
 
 - Prasyarat: **Node.js 22+** (modul `node:sqlite` masih eksperimental — warning di log itu normal).
 - `dist/` ikut repository → di server cukup `npm install --omit=dev` lalu `npm start`.
+- **Update = `./update-proxmox.sh --dry-run` lalu `sudo ./update-proxmox.sh`.** Urutan skrip:
+  cek prasyarat → fetch & tampilkan commit masuk → stop layanan → cadangkan DB (+ patch perubahan
+  lokal) → `reset --hard` → pulihkan DB bila hilang/tertimpa → `npm install --omit=dev` → start →
+  cek `/api/version` (commit berjalan = target) → pangkas cadangan (default simpan 20).
+  Bila gagal di tengah, skrip mencetak perintah rollback lengkap. Opsi: `--dir`, `--branch`,
+  `--service`, `--port`, `--keep`, `--no-restart`, `--force`, `--yes`.
+- Server yang **belum** punya skrip (masih di versi sebelum PR #5) menjalankannya dari `/tmp`:
+  `git fetch origin main && git show origin/main:update-proxmox.sh > /tmp/update-proxmox.sh &&
+  bash /tmp/update-proxmox.sh --dir /opt/barang-dan-aset --dry-run`.
+- Skrip menjalankan dirinya dari salinan sementara (aman walau `reset --hard` mengganti berkasnya)
+  dan mengingatkan bila `AUTH_SECRET` belum di-set di unit systemd.
 - Layanan systemd contoh (`/etc/systemd/system/barang-dan-aset.service`) ada di README;
   `Restart=always`, `Environment=PORT=3000`, `Environment=NODE_ENV=production`.
 - Port diubah lewat env `PORT`; server listen di `0.0.0.0`, aman di balik Nginx/Caddy
@@ -363,12 +406,12 @@ itu wajar karena perbedaan versi toolchain, bukan bug.
   tabel hasil pengujian → catatan deploy/langkah update di server.
 - Satu PR = satu rangkaian perubahan yang koheren (mis. "Login & user management, import massal,
   scan barcode tertaut divisi, sinkron WIB, PDF laporan"). Hindari PR "campur semua".
-- Sertakan **angka hasil tes** (`73/73`, `17/17`) dan, bila relevan, **angka sebelum/sesudah**
+- Sertakan **angka hasil tes** (`75/75`, `18/18`) dan, bila relevan, **angka sebelum/sesudah**
   (mis. ukuran bundle 906 kB → 517 kB).
 - `dist/` hasil build ikut di-commit di PR yang sama dengan perubahan frontend.
 - Yang **tidak** boleh masuk repo: `node_modules/`, berkas `*.db-wal` / `*.db-shm` / `*.db-journal`
-  (sudah ada di `.gitignore`), sampah eksperimen. `data/inventory.db` sendiri **tetap dilacak**
-  sampai keputusan §12 diambil.
+  (sudah ada di `.gitignore`), sampah eksperimen, dan **`data/*.db` / `data/backups/`**
+  (tidak dilacak sejak PR #5 — jangan `git add -f`).
 
 ---
 
@@ -377,13 +420,13 @@ itu wajar karena perbedaan versi toolchain, bukan bug.
 1. `npm install` (bila `package.json` berubah) —
    dependensi baru wajib tercermin di `package-lock.json`.
 2. Jalankan server di 3001, lalu:
-   - `npm run test:api` → harapan **73/73 lolos**
-   - `npm run test:render` → harapan **17/17 lolos**
+   - `npm run test:api` → harapan **75/75 lolos**
+   - `npm run test:render` → harapan **18/18 lolos**
    - bila menambah fitur, **tambahkan seksi tesnya** di `api-test.mjs` / `ssr-test.mjs`
      mengikuti gaya yang ada (fungsi `ok()` / `bad()`, judul seksi `=== N. ... ===`).
 3. `npm run build` bila menyentuh frontend; pastikan `dist/` ter-commit.
-4. Kembalikan `data/inventory.db` ke kondisi semula bila pengujian mengubahnya dan perubahan itu
-   bukan maksud sesi ini (`git checkout -- data/inventory.db`).
+4. `data/inventory.db` tidak dilacak git, jadi pengujian tidak mengotori diff. Bila DB rusak/
+   hilang, cukup hapus lalu jalankan ulang server (seed otomatis).
 5. Pastikan `git status` bersih dari berkas tak sengaja (`-shm`, `-wal`, hasil eksperimen).
 6. Perbarui `README.md` bila perilaku yang dijelaskan di sana berubah, dan perbarui dokumen ini
    bila ada keputusan baru.
@@ -405,7 +448,10 @@ itu wajar karena perbedaan versi toolchain, bukan bug.
 | Kelas Tailwind dipakai tapi tak pernah didefinisikan (`scrollbar-none`, `animate-slideUp`) | Fitur tampak "tidak jalan" tanpa error | Setiap kelas kustom wajib ada di `src/index.css` |
 | 401 HTML dari gateway/proxy preview | Sesi ter-logout sendiri / data gagal dimuat | Token multi-saluran + konfirmasi 401 lewat probe `/api/auth/me` |
 | Port bentrok 3000 (Vite vs API) | Proxy /api mati / `ECONNREFUSED` | Dev: Vite 3000 + API 3001. Test: API 3001 |
-| `git pull` di server menimpa `data/inventory.db` | Data produksi hilang tertimpa data contoh | Selalu backup DB sebelum pull (§7) |
+| `git pull` di server menimpa `data/inventory.db` | Data produksi hilang tertimpa data contoh | DB tidak dilacak lagi (PR #5); update hanya lewat `update-proxmox.sh` (§8) |
+| Workspace Arena kehilangan metadata git / commit lokal antar-snapshot (sesi 4) | Commit lokal & berkas di luar repo (`/home/user/*.patch`) lenyap | **Push ke branch sesi sesering mungkin**; jangan menyimpan cadangan di luar repo |
+| Salinan DB mentah saat server jalan (mode WAL) | Data terbaru hanya ada di `-wal`, salinan `.db` saja tidak lengkap | Cadangan pakai `VACUUM INTO` (lihat `update-proxmox.sh`) |
+| Skrip bash diganti `git reset --hard` saat sedang berjalan | Bash membaca sisa skrip versi baru → perilaku acak | `update-proxmox.sh` re-exec dari salinan di `/tmp` |
 | Build menghasilkan hash nama berkas berbeda | Diff `dist/` terlihat besar padahal ukuran sama | Wajar (beda toolchain); commit hasil build terbaru, jangan panik |
 | Body JSON default Express | Import massal ditolak 413 | Limit dinaikkan ke 5 MB + batas 5000 baris |
 
@@ -419,18 +465,26 @@ mutasi + transaksi tertaut divisi, laporan (mutasi/sebaran/valuasi) + cetak A4 l
 login & manajemen user berperan, import massal CSV/xlsx, sinkron waktu WIB, optimasi mobile,
 `dist/` siap deploy.
 
+**Selesai di PR #5:** DB dilepas dari git (seed otomatis), skrip `update-proxmox.sh` (teruji
+di simulasi server: update pertama yang menghapus DB dari index, update biasa, tanpa commit baru,
+gagal di tengah + petunjuk rollback, pemangkasan cadangan), cron cadangan harian `VACUUM INTO`
+di README, info versi build (`/api/version`,
+`dist/build-info.json`, `VersionBadge`), header cache `index.html`.
+
 **Belum dikerjakan / kandidat sesi berikutnya:**
 
-1. **Lepas pelacakan `data/inventory.db` dari git** (saran README, belum dieksekusi) —
-   butuh langkah hati-hati karena server produksi masih mengambil data contoh lewat `git pull`.
+1. **Tindakan pemilik di server (bukan kode):** update pertama setelah PR #5 wajib
+   `./update-proxmox.sh --dry-run` dulu (lihat §8); **ganti password akun demo** dan set
+   **`AUTH_SECRET`** (+ `APP_TZ` bila bukan WIB) di unit systemd.
 2. **Koreksi stempel waktu historis** yang masih UTC (pergeseran +7 jam) bila pemilik menghendaki.
-3. **Ganti password akun demo & set `AUTH_SECRET` produksi** — sudah diimbau di README/PR, tapi
-   harus dilakukan pemilik di server.
-4. **Belum ada CI GitHub Actions**; semua tes dijalankan manual sebelum PR.
-5. **Bundle `index-*.js` masih ± 942 kB** (peringatan Vite >500 kB); masih bisa dipecah lagi
-   (mis. `xlsx` sudah terpisah, sisanya bisa di-split per halaman).
-6. Utang kecil: `README.md` menyebut pada §1 "saran" melepas DB, dan deskripsi PR #3 menyebut
-   akun `kantor` yang tidak ada — rapikan bila sedang menyentuh berkas terkait.
+3. **Belum ada CI GitHub Actions**; semua tes dijalankan manual sebelum PR.
+4. **Bundle `index-*.js` masih ± 947 kB** (peringatan Vite >500 kB); bisa di-split per halaman
+   dengan `lazy()` seperti `BarcodeScannerModal`.
+5. Utang kecil: deskripsi PR #3 menyebut akun `kantor` yang tidak ada.
+6. **Flake tes belum terjelaskan:** sekali (dari ±20 putaran) `api-test.mjs` gagal di
+   "Tower: hapus mengembalikan stok" (stok 15, harap 20), dan 4 kegagalan berikutnya hanya efek
+   lanjutan. Tidak bisa direproduksi dalam 15 putaran berikutnya dari DB baru. Detail kegagalan
+   kini mencetak `id`, status HTTP, dan pesan error DELETE. Kalau muncul lagi, mulai dari sana.
 
 ---
 
@@ -443,7 +497,7 @@ npm run dev                              # Vite di :3000, proxy /api → :3001
 
 # Uji
 PORT=3001 node server/index.js &         # server untuk pengujian
-npm test                                 # 73 tes API + 17 tes render
+npm test                                 # 75 tes API + 18 tes render
 npm run test:api ; npm run test:render   # terpisah
 
 # Produksi
@@ -451,12 +505,13 @@ npm run build && PORT=3000 npm start     # satu port untuk API + dist/
 
 # Diagnostik & data
 curl -s localhost:3000/api/health        # cek jam/zona waktu server
-cp data/inventory.db data/inventory.backup-$(date +%Y%m%d-%H%M).db   # sebelum pull/uji
+curl -s localhost:3000/api/version       # versi, commit berjalan, waktu build
+./update-proxmox.sh --dry-run            # rencana update server (tidak mengubah apa pun)
+sudo ./update-proxmox.sh                 # update server + cadangan DB otomatis
 node -e "console.log(process.version)"   # pastikan Node ≥ 22 (node:sqlite)
 
 # Git (pola sesi Arena)
-git checkout arena/01a0ec98-barang-dan-aset
-git push origin arena/01a0ec98-barang-dan-aset
+git push origin <branch-sesi>            # branch arena/... yang diberikan sesi — push sesering mungkin
 gh pr create --fill --base main          # jangan merge sendiri
 ```
 
