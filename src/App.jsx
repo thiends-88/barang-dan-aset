@@ -10,6 +10,7 @@ import Laporan from './components/Laporan';
 import BarcodeLabelModal from './components/BarcodeLabelModal';
 import LoginPage from './components/LoginPage';
 import UserManagement from './components/UserManagement';
+import VersionBadge from './components/VersionBadge';
 import { subscribe, notify } from './utils/notify';
 import {
   getSession,
@@ -308,8 +309,9 @@ export default function App() {
             <span>•</span>
             <span>Sistem Terintegrasi Pelanggan, Divisi FO, Divisi Tower & Barcode Scanner</span>
           </div>
-          <div className="text-slate-400">
-            Database SQLite Terpusat • Realtime Stock Mutation Tracking
+          <div className="flex flex-col sm:flex-row items-center gap-2 sm:gap-3 text-slate-400">
+            <span>Database SQLite Terpusat • Realtime Stock Mutation Tracking</span>
+            <VersionBadge />
           </div>
         </div>
       </footer>

@@ -12,6 +12,7 @@
  */
 import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
 
 const API = 'http://127.0.0.1:3001';
 const DB_PATH = path.join(process.cwd(), 'data', 'inventory.db');
@@ -124,6 +125,29 @@ console.log('\n=== PERSIAPAN & OTENTIKASI ===');
   const off = j?.data?.offsetMinutes;
   if (r.status === 200 && off === 420) ok(`Zona waktu server sinkron WIB (${tz}, UTC+${off / 60})`);
   else bad('Zona waktu server sinkron WIB', `timezone=${tz} offset=${off}`);
+}
+
+// Info versi: publik (dipakai update-proxmox.sh & VersionBadge) dan konsisten dengan /api/health
+{
+  const pkgVersion = JSON.parse(readFileSync(path.join(process.cwd(), 'package.json'), 'utf8')).version;
+  const r = await fetch(API + '/api/version'); // sengaja TANPA token
+  const j = await r.json().catch(() => null);
+  const d = j?.data;
+  const buildOk = d?.build === null || (typeof d?.build?.builtAt === 'string' && d.build.version === pkgVersion);
+  if (r.status === 200 && d?.version === pkgVersion && d?.runtime?.node === process.version && buildOk
+      && 'commit' in (d?.runtime || {}) && /no-store/.test(r.headers.get('cache-control') || '')) {
+    ok('GET /api/version publik & lengkap', `v${d.version}, commit=${d.runtime.commitShort ?? '-'}, build=${d.build?.builtAtLocal ?? 'belum ada'}`);
+  } else {
+    bad('GET /api/version publik & lengkap', `status=${r.status} body=${JSON.stringify(j)?.slice(0, 200)}`);
+  }
+
+  const h = await (await fetch(API + '/api/health')).json().catch(() => null);
+  if (h?.data?.version === d?.version && h?.data?.commit === (d?.runtime?.commitShort ?? null)
+      && h?.data?.buildCommit === (d?.build?.commitShort ?? null)) {
+    ok('/api/health memuat versi & commit yang sama dengan /api/version');
+  } else {
+    bad('/api/health memuat versi & commit', JSON.stringify(h?.data));
+  }
 }
 
 await req('POST', '/api/reset-seed');

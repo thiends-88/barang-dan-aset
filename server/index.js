@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import db, { initDb } from './db.js';
 import { seedData, seedUsers } from './seed.js';
 import { ROLES, hashPassword, verifyPassword, signToken, verifyToken } from './auth.js';
+import { getGitInfo, readPackageVersion, localStamp } from '../scripts/build-info.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -24,6 +25,40 @@ try {
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// ==========================================
+// INFO VERSI (dipakai /api/version, /api/health & VersionBadge)
+// ==========================================
+const SERVER_STARTED_AT = new Date();
+// Commit yang benar-benar ter-checkout saat server start (null bila tanpa git)
+const RUNTIME_GIT = getGitInfo();
+const BUILD_INFO_PATH = path.join(__dirname, '..', 'dist', 'build-info.json');
+
+/** Baca dist/build-info.json (dibuat `npm run build`); null bila belum ada/rusak. */
+function readBuildInfo() {
+  try {
+    return JSON.parse(fs.readFileSync(BUILD_INFO_PATH, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function getVersionInfo() {
+  const build = readBuildInfo();
+  return {
+    version: readPackageVersion(),
+    build, // frontend yang sedang disajikan dari dist/
+    runtime: {
+      commit: RUNTIME_GIT.commit,
+      commitShort: RUNTIME_GIT.commitShort,
+      branch: RUNTIME_GIT.branch,
+      commitDate: RUNTIME_GIT.commitDate,
+      node: process.version,
+      startedAt: localStamp(SERVER_STARTED_AT),
+      uptimeSeconds: Math.round(process.uptime())
+    }
+  };
+}
+
 app.use(cors());
 // Batas diperbesar agar import massal (ribuan baris JSON) tidak ditolak 413
 app.use(express.json({ limit: '5mb' }));
@@ -40,6 +75,7 @@ app.use((req, res, next) => {
 const PUBLIC_PATHS = [
   /^\/api\/auth\/login$/,
   /^\/api\/health$/, // diagnostik waktu server — berguna cek sinkron jam
+  /^\/api\/version$/, // info versi terpasang — dipakai skrip update & VersionBadge
   /^\/api\/import\/template\// // template file statis, aman diumumkan
 ];
 
@@ -51,9 +87,18 @@ app.get('/api/health', (req, res) => {
     data: {
       serverTime: `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())} ${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`,
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      offsetMinutes: -now.getTimezoneOffset()
+      offsetMinutes: -now.getTimezoneOffset(),
+      version: readPackageVersion(),
+      commit: RUNTIME_GIT.commitShort,
+      buildCommit: readBuildInfo()?.commitShort || null
     }
   });
+});
+
+// Info versi terpasang: versi paket, build frontend (dist/) & commit yang berjalan
+app.get('/api/version', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ success: true, data: getVersionInfo() });
 });
 
 // Aturan hak akses tulis (POST/PUT/DELETE) per kelompok endpoint.
@@ -2699,12 +2744,24 @@ app.post('/api/reset-seed', (req, res) => {
 
 // Serve frontend static build if available
 const distPath = path.join(__dirname, '..', 'dist');
-app.use(express.static(distPath));
+app.use(express.static(distPath, {
+  setHeaders(res, filePath) {
+    // index.html & build-info.json selalu divalidasi ulang agar browser langsung
+    // memakai versi baru setelah update; aset ber-hash boleh di-cache lama.
+    const base = path.basename(filePath);
+    if (base === 'index.html' || base === 'build-info.json') {
+      res.setHeader('Cache-Control', 'no-cache');
+    } else if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    }
+  }
+}));
 
 // Fallback to index.html for client-side routing
 app.use((req, res) => {
   const indexPath = path.join(distPath, 'index.html');
   if (fs.existsSync(indexPath)) {
+    res.setHeader('Cache-Control', 'no-cache');
     res.sendFile(indexPath);
   } else {
     res.send('API server is running. Frontend build in progress...');
