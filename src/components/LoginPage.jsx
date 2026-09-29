@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { Layers, User, Lock, Eye, EyeOff, LogIn, AlertTriangle, RefreshCw, ShieldCheck } from 'lucide-react';
+import { Layers, User, Lock, Eye, EyeOff, LogIn, AlertTriangle, RefreshCw } from 'lucide-react';
 
 /**
  * Halaman login SIM-ASET — gerbang utama sebelum masuk aplikasi.
- * Menampilkan akun demo per peran agar mudah dicoba (data dari seed).
+ * Sengaja bersih tanpa panel akun contoh: kredensial demo tidak boleh
+ * tampil di UI produksi (akun tetap ada di seed, lihat server/seed.js).
  */
 export default function LoginPage({ onLogin, notice = '' }) {
   const [username, setUsername] = useState('');
@@ -38,13 +39,6 @@ export default function LoginPage({ onLogin, notice = '' }) {
       setIsSubmitting(false);
     }
   };
-
-  const demoAccounts = [
-    { role: 'Administrator', username: 'admin', password: 'admin123', color: 'bg-indigo-500/20 text-indigo-300 border-indigo-400/30' },
-    { role: 'Staff Gudang', username: 'gudang', password: 'gudang123', color: 'bg-emerald-500/20 text-emerald-300 border-emerald-400/30' },
-    { role: 'Teknisi Lapangan', username: 'teknisi', password: 'teknisi123', color: 'bg-amber-500/20 text-amber-300 border-amber-400/30' },
-    { role: 'Viewer', username: 'viewer', password: 'viewer123', color: 'bg-slate-500/20 text-slate-300 border-slate-400/30' }
-  ];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 flex items-center justify-center p-4 font-sans antialiased">
@@ -135,29 +129,6 @@ export default function LoginPage({ onLogin, notice = '' }) {
               )}
             </button>
           </form>
-        </div>
-
-        {/* Akun demo */}
-        <div className="mt-4 bg-slate-900/70 backdrop-blur border border-slate-700/60 rounded-2xl p-4">
-          <div className="flex items-center gap-2 text-[11px] font-bold text-slate-300 mb-2.5">
-            <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
-            <span>AKUN CONTOH PER PERAN (klik untuk mengisi form)</span>
-          </div>
-          <div className="grid grid-cols-2 gap-1.5">
-            {demoAccounts.map((acc) => (
-              <button
-                key={acc.username}
-                onClick={() => { setUsername(acc.username); setPassword(acc.password); setError(''); }}
-                className={`text-left px-3 py-2 rounded-xl border text-[11px] font-semibold transition hover:brightness-125 ${acc.color}`}
-              >
-                <div className="font-bold">{acc.role}</div>
-                <div className="font-mono opacity-80">{acc.username} / {acc.password}</div>
-              </button>
-            ))}
-          </div>
-          <p className="text-[10px] text-slate-500 mt-2.5 text-center">
-            * Segera ganti password contoh lewat menu Manajemen User setelah login sebagai admin.
-          </p>
         </div>
       </div>
     </div>
