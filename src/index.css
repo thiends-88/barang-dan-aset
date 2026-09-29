@@ -1,5 +1,24 @@
 @import "tailwindcss";
 
+@theme {
+  /* ------------------------------------------------------------------
+     `--breakpoint-nav` = lebar minimum agar 8 menu utama muat dalam SATU
+     baris bersama brand + tombol alat, pada satu baris sticky.
+     Dipakai lewat varian bernama `nav:` (nav:flex, max-nav:hidden).
+
+     Kenapa breakpoint bernama, bukan `min-[1100px]:` seperti sebelumnya?
+     Tailwind v4 menulis aturan varian ARBITRER (min-[1100px]:) DILETAKKAN
+     SEBELUM breakpoint standar (sm/md/lg/2xl) di dalam CSS hasil build.
+     Spesifisitas keduanya sama (satu selektor kelas), jadi aturan yang
+     ditulis LEBIH AKHIR yang menang — artinya kelas seperti
+     `min-[1100px]:hidden sm:inline` sama sekali TIDAK menyembunyikan apa pun,
+     hanya `sm:inline` yang berlaku. Brepoint bernama ikut DIURUTKAN bersama
+     sm/md/lg/2xl, jadi urutannya dijamin benar.
+     Jangan balik lagi ke `min-[...]:` untuk menyalakan/mematikan tampilan.
+     ------------------------------------------------------------------ */
+  --breakpoint-nav: 1100px;
+}
+
 @layer base {
   body {
     font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
@@ -38,7 +57,7 @@ label {
   -webkit-overflow-scrolling: touch;
 }
 
-/* Utility: sembunyikan scrollbar (dipakai navigasi mobile di Navbar) */
+/* Utility: sembunyikan scrollbar (dipakai navigasi geser di Navbar) */
 .scrollbar-none {
   scrollbar-width: none;
   -ms-overflow-style: none;
@@ -47,6 +66,15 @@ label {
   display: none;
   width: 0;
   height: 0;
+}
+
+/* Rata-tengah yang AMAN untuk baris menu: selama isinya muat dalam wadahnya
+   menu tetap di tengah, tetapi bila someday sempit (mis. menu ke-9 ditambah)
+   isinya bergeser ke KIRI — bukan terpotong di sisi kiri yang tak bisa digeser
+   karena `justify-content: center` overflowing. Jadi menu tidak pernah
+   "hilang di balik" brand/tombol lain. */
+.justify-center-safe {
+  justify-content: safe center;
 }
 
 /* Animasi toast notifikasi (dipakai App.jsx) */

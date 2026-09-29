@@ -272,7 +272,8 @@ Seluruh perubahan stok divalidasi di sisi server:
 
 Aplikasi dirancang agar nyaman dipakai di HP, tablet, dan desktop:
 
-- **Navigasi mobile**: navbar atas ringkas, tab divisi dapat digeser horizontal (scroll), dan tab aktif otomatis digeser ke tengah. Scrollbar disembunyikan agar tampilan bersih.
+- **Navigasi desktop**: pada lebar ≥ `1100px` seluruh menu utama (8 menu) tampil utuh dalam **satu baris** sticky — brand dan tombol alat (Pindai Barcode, Reset Data, Keluar) memakai ikon saja, nama lengkap & peran pengguna baru tampil pada layar sangat lebar. Menu utama tidak pernah tertutup, terpotong, atau perlu digeser.
+- **Navigasi mobile/tablet**: di bawah `1100px` menu pindah ke baris geser sendiri di bawah baris atas yang ikut tergulung, memakai label lengkap; tab aktif otomatis digeser ke tengah. Scrollbar disembunyikan agar tampilan bersih.
 - **Tabel lebar**: semua tabel memiliki lebar minimum sehingga tetap terbaca dan bisa digeser ke samping, bukan terhimpit menjadi kolom sempit.
 - **Modal / dialog**: berubah menjadi *bottom sheet* di layar kecil (menempel di bawah, sudut atas membulat), dengan tinggi maksimal `92vh`, header dan tombol aksi tetap terlihat, serta isi yang bisa di-scroll.
 - **Form**: bidang input otomatis menjadi satu kolom di HP; ukuran huruf input minimal `16px` untuk mencegah browser HP melakukan zoom otomatis saat mengetik.
