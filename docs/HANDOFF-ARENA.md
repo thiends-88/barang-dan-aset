@@ -520,6 +520,16 @@ di README, info versi build (`/api/version`,
 - **Dokumentasi CI diselaraskan** di `README.md`, `docs/ci.yml`, dan dokumen ini (mencerminkan
   `.github/workflows/ci.yml` yang sudah aktif sejak commit `2463996`).
 
+**Selesai di sesi `arena/01a0eda3` (perbaikan menu atas menutupi halaman):**
+- Penyebab (dari tangkapan layar pemilik, lebar ±1170px): 8 label menu dua kata membungkus jadi 2 baris,
+  ditambah brand/subtitle/tombol ber-label, sehingga header sticky membengkak & menutupi konten; di layar kecil
+  header sticky memuat 2 baris (≈106px).
+- Solusi di `Navbar.jsx`: header sticky **selalu satu baris** (h-14/sm:h-16). Lebar ≥ **1100px**
+  (`min-[1100px]:`): brand + menu + alat dalam satu baris; menu memakai label ringkas (`short`, mis. "Barang",
+  "Pelanggan", "FO", "Tower", "User"; nama lengkap di tooltip), subtitle/badge/label tombol/nama user baru
+  tampil di `2xl`. Lebar < 1100px: menu pindah ke baris geser terpisah di bawah bar atas yang **tidak sticky**
+  (ikut tergulung). Menambah menu baru → isi `label` **dan** `short`.
+
 **Belum dikerjakan / kandidat sesi berikutnya:**
 
 1. **Tindakan pemilik di server Proxmox (bukan kode):**
