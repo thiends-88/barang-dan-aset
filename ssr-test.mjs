@@ -105,6 +105,7 @@ await check('LoginPage', '/src/components/LoginPage.jsx', { onLogin() {} });
 await check('UserManagement', '/src/components/UserManagement.jsx', {
   currentUser: { id: 1, username: 'admin', nama_lengkap: 'Administrator Sistem', role: 'admin' },
 });
+await check('VersionBadge', '/src/components/VersionBadge.jsx', {});
 await check('ImportDataModal (barang)', '/src/components/ImportDataModal.jsx', {
   isOpen: true, onClose() {}, type: 'items', onImported() {},
 });

@@ -1,6 +1,12 @@
 node_modules/
 .DS_Store
 *.local
+
+# Database SQLite TIDAK dilacak git: dibuat & diisi data contoh otomatis saat
+# server start bila belum ada (server/seed.js). Dengan begitu `git pull` /
+# `git reset --hard` di server tidak pernah menimpa data produksi.
+data/*.db
 data/*.db-shm
 data/*.db-wal
 data/*.db-journal
+data/backups/
