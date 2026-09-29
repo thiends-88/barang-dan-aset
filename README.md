@@ -127,7 +127,7 @@ Aplikasi enterprise untuk manajemen inventaris barang dan pelacakan aset jaringa
    Menguji alur pemasangan, pengeditan, dismantle, dan penghapusan barang untuk Pelanggan, Divisi FO, dan Divisi Tower, lalu memeriksa bahwa stok gudang tidak pernah minus dan **selalu cocok dengan riwayat mutasi**. Data contoh direset otomatis di awal dan di akhir pengujian. Menjalankan keduanya sekaligus: `npm test`.
 
 6. **CI (GitHub Actions)**:
-   Berkas workflow siap pakai tersedia di [`docs/ci.yml`](docs/ci.yml) — menjalankan `npm ci` → server uji port 3001 → `npm test` → `npm run build` pada setiap push ke `main` dan setiap Pull Request, di lingkungan yang selalu bersih (database dibuat + diisi data contoh dari nol). **Aktivasi**: pindahkan/salin ke `.github/workflows/ci.yml` (satu klik via web GitHub).
+   Workflow CI sudah **aktif otomatis** di [`.github/workflows/ci.yml`](.github/workflows/ci.yml) (salinan rujukan di [`docs/ci.yml`](docs/ci.yml)) — menjalankan `npm ci` → server uji port 3001 → `npm test` (78 tes API + 18 tes SSR) → `npm run build` pada setiap push ke `main` dan setiap Pull Request, di lingkungan yang selalu bersih (database dibuat + diisi data contoh dari nol).
 
 ---
 

@@ -614,6 +614,50 @@ console.log('\n=== 6C. SCAN BARCODE → TRANSAKSI TERTAUT DIVISI (pasang & penge
   else bad('Mode manual tanpa lokasi ditolak', `status=${r.status}`);
 }
 
+console.log('\n=== 6D. KEUNIKAN NOMOR TRANSAKSI & IMPORT MASSAL ===');
+{
+  // 1. Import massal 200 barang baru dengan stok > 0 dalam satu bulan:
+  //    Dulu rawan gagal ~89% ("UNIQUE constraint failed: transactions.no_transaksi")
+  //    karena generateTrxNumber memakai acak 4 digit (1000–9999) tanpa cek unik
+  //    (akar masalah yang sama dengan flake DELETE /api/tower/:id).
+  const JUMLAH_IMPORT = 200;
+  const rows = Array.from({ length: JUMLAH_IMPORT }, (_, i) => ({
+    kode_barang: `BRG-UJI-IMP-${String(i + 1).padStart(4, '0')}`,
+    nama_barang: `Barang Uji Import #${i + 1}`,
+    satuan: 'unit',
+    jenis_barang: 'Kabel Jaringan',
+    stok: 5,
+    min_stok: 2,
+    harga_barang: 50000,
+    referensi_suplayer: 'PT. Uji Import Massal'
+  }));
+  const markSebelumImport = maxTrxId();
+  const imp = await req('POST', '/api/items/import', { rows, mode: 'skip' });
+  const trxImport = trxSince(markSebelumImport);
+  const unikNoTrx = new Set(trxImport.map((t) => t.no_transaksi)).size;
+  if (imp.status === 200 && imp.json?.data?.inserted === JUMLAH_IMPORT && imp.json?.data?.failed === 0
+      && trxImport.length === JUMLAH_IMPORT && unikNoTrx === JUMLAH_IMPORT) {
+    ok(`Import massal ${JUMLAH_IMPORT} barang + stok awal bebas bentrok no_transaksi`, `${unikNoTrx} no_transaksi unik`);
+  } else {
+    bad('Import massal bebas bentrok no_transaksi', `status=${imp.status} body=${JSON.stringify(imp.json)?.slice(0, 180)} trx=${trxImport.length} unik=${unikNoTrx}`);
+  }
+
+  // 2. Transaksi bertanggal mundur: prefix YYYYMM pada no_transaksi wajib mengikuti tanggal transaksi
+  const rBackdate = await req('POST', '/api/transactions', {
+    jenis: 'MASUK', divisi: 'GUDANG', kategori_transaksi: 'Pembelian Supplier',
+    lokasi_penerima: 'PT Uji Tanggal Mundur', kode_barang: KODE, jumlah: 1, tanggal: '2026-01-15'
+  });
+  const trxNoMundur = rBackdate.json?.data?.trxNo || '';
+  if (rBackdate.status === 201 && /^TRX-IN-202601-\d+$/.test(trxNoMundur)) {
+    ok('Prefix YYYYMM no_transaksi mengikuti tanggal transaksi (termasuk tanggal mundur)', trxNoMundur);
+  } else {
+    bad('Prefix YYYYMM no_transaksi mengikuti tanggal transaksi', `status=${rBackdate.status} trxNo=${trxNoMundur}`);
+  }
+
+  // 3. Invariant stok vs log transaksi tetap terjaga setelah 6C & 6D
+  checkInvariant('setelah scan tertaut & import massal', GLOBAL_SNAP, GLOBAL_MARK);
+}
+
 console.log('\n=== PEMBERSIHAN: reset ke data contoh ===');
 await req('POST', '/api/reset-seed');
 const setelahReset = db.prepare('SELECT COUNT(*) AS c FROM customers').get().c;

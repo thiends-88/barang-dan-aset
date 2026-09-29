@@ -5,8 +5,8 @@
 > pernah kena, dan hal-hal yang belum selesai — supaya sesi baru tidak mengulang debat yang
 > sama atau merusak hal yang sudah disepakati.
 >
-> Terakhir diperbarui: **29 September 2026** · basis commit: `544e6a2` (merge PR #5)
-> Repo: <https://github.com/thiends-88/barang-dan-aset> · Branch kerja sesi terakhir: `arena/01a0ecc0-barang-dan-aset`
+> Terakhir diperbarui: **29 September 2026** · basis commit: `2463996` (merge PR #6 + aktivasi CI)
+> Repo: <https://github.com/thiends-88/barang-dan-aset> · Branch kerja sesi terakhir: `arena/01a0ed85-barang-dan-aset`
 > Sesi baru cukup diminta: *"Baca docs/HANDOFF-ARENA.md lalu lanjutkan dari §12."*
 
 ---
@@ -94,9 +94,10 @@ src/
 
 scripts/build-info.mjs → getBuildInfo()/getGitInfo(): dipakai vite.config.js (build) & server (runtime)
 update-proxmox.sh      → skrip update server: cadangkan DB → reset --hard → pulihkan DB → install → restart
-docs/ci.yml            → workflow CI siap pakai; PINDAHKAN ke .github/workflows/ci.yml utk mengaktifkan
+.github/workflows/ci.yml → workflow CI GitHub Actions (AKTIF — JANGAN diubah commit App Arena, lihat §11)
+docs/ci.yml              → salinan rujukan workflow CI (tempat aman bila sesi Arena perlu mengusulkan edit CI)
 
-api-test.mjs       → 75 tes integrasi API (integritas stok, auth, peran, waktu, scan tertaut, versi)
+api-test.mjs       → 78 tes integrasi API (integritas stok, auth, peran, waktu, scan tertaut, import massal, versi)
 ssr-test.mjs       → 18 smoke test render komponen dengan data asli API
 contoh-import/     → barang.csv, pelanggan.csv (contoh file import)
 data/inventory.db  → database (TIDAK dilacak git sejak PR #5 — lihat §7)
@@ -142,11 +143,11 @@ reverse proxy) ada di `README.md` bagian **Deploy ke Proxmox**.
 ```bash
 PORT=3001 node server/index.js &     # siapkan server untuk pengujian
 npm test                             # = api-test.mjs && ssr-test.mjs
-npm run test:api                     # 75 tes integrasi API
+npm run test:api                     # 78 tes integrasi API
 npm run test:render                  # 18 smoke test render (SSR)
 ```
 
-> Hasil terakhir (sesi `arena/01a0ecc0`, 29 Sep 2026): **API 75/75 lolos, SSR 18/18 lolos,
+> Hasil terakhir (sesi `arena/01a0ed85`, 29 Sep 2026): **API 78/78 lolos, SSR 18/18 lolos,
 > `npm run build` sukses** (bundle awal 273 kB). Rangkaian yang sama jalan otomatis di CI.
 >
 > ⚠️ `api-test.mjs` **menulis ke database asli**; data contoh direset di awal (diverifikasi —
@@ -156,9 +157,8 @@ npm run test:render                  # 18 smoke test render (SSR)
 > dan kembalikan setelah pengujian. **Jangan menjalankan tes di server yang sedang dipakai**
 > (interaksi pemakai ikut mengubah stok dan bisa menggagalkan tes).
 >
-> Rangkaian yang sama juga **siap dijalankan otomatis oleh CI GitHub Actions** pada setiap
-> push/PR ke `main` — workflow siap pakai ada di `docs/ci.yml`, menunggu dipindahkan pemilik
-> ke `.github/workflows/ci.yml` (lihat §12).
+> Rangkaian yang sama **berjalan otomatis di CI GitHub Actions** (`.github/workflows/ci.yml`,
+> aktif sejak commit `2463996`) pada setiap push/PR ke `main`.
 
 ### 4.4 Build frontend
 
@@ -213,7 +213,10 @@ itu wajar karena perbedaan versi toolchain, bukan bug.
 - SQL selalu **parameterized**. ⚠️ Jangan memakai kutip ganda (`"..."`) untuk literal teks di
   SQLite — dianggap nama kolom dan pernah menimbulkan error `no such column: "putus"`
   (lihat §11).
-- Nomor transaksi: `TRX-IN-YYYYMM-NNNN` / `TRX-OUT-YYYYMM-NNNN` (`generateTrxNumber`).
+- Nomor transaksi: `TRX-IN-YYYYMM-NNNN` / `TRX-OUT-YYYYMM-NNNN` (`generateTrxNumber(type, tanggal)`).
+  Prefix `YYYYMM` mengikuti `tanggal` transaksi (termasuk entri bertanggal mundur), dan kandidat
+  nomor **wajib diperiksa keunikannya** terhadap `transactions.no_transaksi` (`UNIQUE`) dengan
+  cadangan sekuensial 5+ digit bila ruang 4 digit padat (lihat §11).
 - Tanggal server **hanya** dari `todayLocal()` (di `server/index.js`) — jangan
   `toISOString()`.
 
@@ -417,7 +420,7 @@ itu wajar karena perbedaan versi toolchain, bukan bug.
   tabel hasil pengujian → catatan deploy/langkah update di server.
 - Satu PR = satu rangkaian perubahan yang koheren (mis. "Login & user management, import massal,
   scan barcode tertaut divisi, sinkron WIB, PDF laporan"). Hindari PR "campur semua".
-- Sertakan **angka hasil tes** (`75/75`, `18/18`) dan, bila relevan, **angka sebelum/sesudah**
+- Sertakan **angka hasil tes** (`78/78`, `18/18`) dan, bila relevan, **angka sebelum/sesudah**
   (mis. ukuran bundle 906 kB → 517 kB).
 - `dist/` hasil build ikut di-commit di PR yang sama dengan perubahan frontend.
 - Yang **tidak** boleh masuk repo: `node_modules/`, berkas `*.db-wal` / `*.db-shm` / `*.db-journal`
@@ -431,7 +434,7 @@ itu wajar karena perbedaan versi toolchain, bukan bug.
 1. `npm install` (bila `package.json` berubah) —
    dependensi baru wajib tercermin di `package-lock.json`.
 2. Jalankan server di 3001, lalu:
-   - `npm run test:api` → harapan **75/75 lolos**
+   - `npm run test:api` → harapan **78/78 lolos**
    - `npm run test:render` → harapan **18/18 lolos**
    - bila menambah fitur, **tambahkan seksi tesnya** di `api-test.mjs` / `ssr-test.mjs`
      mengikuti gaya yang ada (fungsi `ok()` / `bad()`, judul seksi `=== N. ... ===`).
@@ -465,8 +468,9 @@ itu wajar karena perbedaan versi toolchain, bukan bug.
 | Skrip bash diganti `git reset --hard` saat sedang berjalan | Bash membaca sisa skrip versi baru → perilaku acak | `update-proxmox.sh` re-exec dari salinan di `/tmp` |
 | Build menghasilkan hash nama berkas berbeda | Diff `dist/` terlihat besar padahal ukuran sama | Wajar (beda toolchain); commit hasil build terbaru, jangan panik |
 | Body JSON default Express | Import massal ditolak 413 | Limit dinaikkan ke 5 MB + batas 5000 baris |
-| Run uji mati di tengah / reset awal gagal diam-diam | Run berikutnya mewarisi DB kotor → kegagalan "flake" (stok 15 vs 20) | Reset awal diverifikasi; pengaman crash memulihkan data contoh; jangan uji di server yang sedang dipakai |
-| App Arena tanpa izin `workflows` | `git push` ditolak saat commit memuat `.github/workflows/*.yml`; `gh api` contents → 403 | Simpan workflow di `docs/ci.yml`; pemilik memindahkannya lewat web GitHub (akunnya berhak penuh) |
+| Run uji mati di tengah / reset awal gagal diam-diam | Run berikutnya bisa mewarisi DB kotor | Reset awal diverifikasi; pengaman crash memulihkan data contoh; jangan uji di server yang sedang dipakai |
+| `generateTrxNumber` acak 4 digit (`1000–9999`) tanpa cek `UNIQUE` | Paradoks ulang tahun: ~1% run `api-test.mjs` gagal di "Tower: hapus mengembalikan stok" (stok 15 vs 20 + 4 gagal lanjutan) karena `DELETE /api/tower/:id` kena `UNIQUE constraint failed: transactions.no_transaksi` dan ter-rollback; import ≥200 barang gagal ~89% | `generateTrxNumber(type, tanggal)` wajib cek `SELECT 1 FROM transactions WHERE no_transaksi = ?` + fallback sekuensial 5+ digit bila padat; `YYYYMM` mengikuti `tanggal` transaksi |
+| App Arena tanpa izin `workflows` | `git push` ditolak saat commit memuat `.github/workflows/*.yml`; `gh api` contents → 403 | `.github/workflows/ci.yml` sudah aktif (commit `2463996`) — **jangan pernah menyentuh berkas di `.github/workflows/`** dari commit Arena; gunakan `docs/ci.yml` bila ingin mengusulkan perubahan workflow |
 
 ---
 
@@ -484,44 +488,46 @@ gagal di tengah + petunjuk rollback, pemangkasan cadangan), cron cadangan harian
 di README, info versi build (`/api/version`,
 `dist/build-info.json`, `VersionBadge`), header cache `index.html`.
 
-**Selesai di sesi ini (branch `arena/01a0ecc0`):**
+**Selesai di PR #6 + commit `2463996`:**
+- **CI GitHub Actions aktif** di `.github/workflows/ci.yml` (dipindahkan pemilik pada commit
+  `2463996`, salinan rujukan tetap di `docs/ci.yml`): checkout → Node 22 → `npm ci` → server uji
+  port 3001 → `npm test` → `npm run build` pada setiap push/PR ke `main`.
+- **Bundle dipecah per halaman** (`React.lazy` + `Suspense` + dynamic import `html5-qrcode`/`xlsx`):
+  `index-*.js` turun **947 kB → 273 kB** (gzip ~84 kB), tanpa chunk > 500 kB.
+- **Pengerasan `api-test.mjs`**: verifikasi reset data contoh di awal + pengaman crash
+  `uncaughtException`/`unhandledRejection`.
 
-- **Workflow CI disiapkan** di `docs/ci.yml`: checkout → Node 22 → `npm ci` → hidupkan
-  server uji port 3001 (tunggu `/api/health`, maks 30 dtk) → `npm test` → `npm run build`;
-  berjalan pada setiap push/PR ke `main` dengan pembatalan run lama (concurrency).
-  Dipin ke `actions/checkout@v6` / `actions/setup-node@v6`. **Belum aktif**: akun App Arena
-  tidak punya izin `workflows`, sehingga berkas workflow tidak bisa di-push ke
-  `.github/workflows/` (ditolak remote & API — lihat §11). Pemilik cukup memindahkan
-  `docs/ci.yml` → `.github/workflows/ci.yml` lewat web GitHub untuk mengaktifkannya;
-  badge CI di README langsung hidup setelah itu.
-- **Bundle dipecah per halaman**: semua tab selain Dashboard + modal label barcode kini
-  `React.lazy` (`Suspense` fallback spinner konsisten), dan `KeluarMasukBarang` memuat
-  `html5-qrcode` secara dinamis tepat sebelum kamera dinyalakan. `jsbarcode`, `html5-qrcode`,
-  dan `xlsx` kini berada di chunk terpisah yang baru diunduh saat dipakai.
-  **`index-*.js`: 947 kB → 273 kB (gzip ~84 kB); tanpa chunk > 500 kB.** Dashboard sengaja
-  tetap eager (halaman pertama setelah login).
-- **`api-test.mjs` dikeraskan** (2 perubahan kecil, jumlah tes tetap 75/75): reset data contoh
-  di awal kini diverifikasi (gagal → berhenti seketika, bukan lanjut dengan DB kotor), dan
-  pengaman `uncaughtException`/`unhandledRejection` memulihkan data contoh sebelum proses
-  keluar — tervalidasi dengan simulasi crash (stok tetap 20, data uji bersih).
-- **Deskripsi PR #3 dikoreksi** (akun `kantor` → `viewer/viewer123`).
+**Selesai di sesi ini (branch `arena/01a0ed85-barang-dan-aset`):**
+- **Akar masalah flake "Tower: hapus mengembalikan stok (stok 15 vs 20)" ditemukan & dituntaskan:**
+  bukan warisan DB kotor, melainkan **bentrok nomor transaksi acak 4 digit** (`1000–9999`) di
+  `generateTrxNumber` terhadap kolom `transactions.no_transaksi TEXT UNIQUE NOT NULL`. Akibat
+  paradoks ulang tahun, ~1% run `api-test.mjs` mengalami bentrok acak saat `DELETE /api/tower/:id`
+  mencatat mutasi kembali → `db.transaction` me-rollback penghapusan tower → stok tertinggal 15
+  dari 20 dan memicu tepat 4 kegagalan lanjutan di Seksi 6 (sementara invarian Seksi 7 tetap
+  lolos karena stok & transaksi sama-sama ter-rollback). Masalah yang sama juga membuat import
+  massal ≥200 barang berstok awal > 0 gagal ~89% dengan `UNIQUE constraint failed`.
+  - `generateTrxNumber(type, tanggal)` kini memeriksa keunikan terhadap `transactions.no_transaksi`
+    dan memiliki cadangan sekuensial 5+ digit bila ruang 4 digit pada bulan tersebut padat.
+  - Prefix `YYYYMM` pada `no_transaksi` kini mengikuti `tanggal` transaksi (termasuk entri
+    bertanggal mundur di Pelanggan/FO/Tower/Mutasi), bukan bulan jam server saat ini.
+  - `POST /api/items`, `POST /api/items/:id/stock-adjust`, dan `POST /api/reset-seed` kini ikut
+    dibungkus `db.transaction(...)` agar seluruh perubahan stok & reset bersifat atomik.
+- **Seksi tes baru `6D` di `api-test.mjs` (+3 tes → total 78/78 lolos):**
+  1. Import massal 200 barang baru dengan stok awal > 0 sekaligus → 200 transaksi `MASUK` dengan
+     `no_transaksi` 100% unik tanpa gagal `UNIQUE constraint`.
+  2. Transaksi bertanggal mundur (`2026-01-15`) → prefix `no_transaksi` selaras `TRX-IN-202601-...`.
+  3. Invarian stok vs log transaksi pasca-6C & 6D tetap terjaga penuh.
+- **Dokumentasi CI diselaraskan** di `README.md`, `docs/ci.yml`, dan dokumen ini (mencerminkan
+  `.github/workflows/ci.yml` yang sudah aktif sejak commit `2463996`).
 
 **Belum dikerjakan / kandidat sesi berikutnya:**
 
-1. **Tindakan pemilik (bukan kode):**
-   - *Di server:* update pertama setelah PR #5 wajib `./update-proxmox.sh --dry-run` dulu
-     (lihat §8); **ganti password akun demo** dan set **`AUTH_SECRET`** (+ `APP_TZ` bila
-     bukan WIB) di unit systemd.
-   - *Di GitHub:* pindahkan **`docs/ci.yml` → `.github/workflows/ci.yml`** (web GitHub)
-     untuk mengaktifkan CI — App Arena tidak boleh meng-push berkas workflow (lihat §11).
-2. **Koreksi stempel waktu historis** yang masih UTC (pergeseran +7 jam) bila pemilik menghendaki.
-3. **Flake tes lama — dipantau, belum pernah muncul ulang:** sekali (dari ±20 putaran)
-   `api-test.mjs` gagal di "Tower: hapus mengembalikan stok" (stok 15, harap 20) dan 4 kegagalan
-   berikutnya efek lanjutan. Tidak bisa direproduksi dari DB baru; handler DELETE tower sudah
-   ditinjau ulang dan tampak benar (transaksional, memakai `restoreInstalledStock` yang sama
-   seperti divisi lain). Dugaan terkuat: run sebelumnya mati di tengah (warisan DB kotor) atau
-   server uji sedang dipakai — kedua pintu itu kini ditutup oleh pengerasan di atas. Bila masih
-   muncul lagi, mulai dari detail kegagalan yang kini tercetak (`id`, status HTTP, pesan DELETE).
+1. **Tindakan pemilik di server Proxmox (bukan kode):**
+   - Update pertama setelah PR #5 wajib `./update-proxmox.sh --dry-run` dulu (lihat §8).
+   - **Ganti password akun demo** (menu *Manajemen User*) dan set **`AUTH_SECRET`** (+ `APP_TZ`
+     bila bukan WIB) di unit systemd.
+2. **Koreksi stempel waktu historis** yang masih UTC (pergeseran +7 jam untuk data sebelum PR #3)
+   bila sewaktu-waktu dikehendaki pemilik pada database produksi.
 
 ---
 
@@ -534,7 +540,7 @@ npm run dev                              # Vite di :3000, proxy /api → :3001
 
 # Uji
 PORT=3001 node server/index.js &         # server untuk pengujian
-npm test                                 # 75 tes API + 18 tes render
+npm test                                 # 78 tes API + 18 tes render
 npm run test:api ; npm run test:render   # terpisah
 
 # Produksi
