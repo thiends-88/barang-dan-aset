@@ -1,38 +1,48 @@
 import React, { useEffect, useRef } from 'react';
-import { 
-  Package, 
-  Users, 
-  Network, 
-  Radio, 
-  ArrowLeftRight, 
-  FileText, 
-  Barcode as BarcodeIcon, 
+import {
+  Package,
+  Users,
+  Network,
+  Radio,
+  ArrowLeftRight,
+  FileText,
+  Barcode as BarcodeIcon,
   LayoutDashboard,
   RotateCcw,
   Layers,
-  Sparkles
+  ShieldCheck,
+  LogOut
 } from 'lucide-react';
+import { canAccessMenu, ROLE_LABELS } from '../utils/auth';
 
-export default function Navbar({ 
-  currentTab, 
-  onSelectTab, 
-  onOpenScanner, 
+const ALL_NAV_ITEMS = [
+  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { id: 'master', label: 'Master Barang', icon: Package },
+  { id: 'pelanggan', label: 'Divisi Pelanggan', icon: Users },
+  { id: 'fo', label: 'Divisi FO', icon: Network },
+  { id: 'tower', label: 'Divisi Tower', icon: Radio },
+  { id: 'transaksi', label: 'Keluar / Masuk', icon: ArrowLeftRight },
+  { id: 'laporan', label: 'Laporan Terpadu', icon: FileText },
+  { id: 'users', label: 'Manajemen User', icon: ShieldCheck }
+];
+
+export default function Navbar({
+  currentTab,
+  onSelectTab,
+  onOpenScanner,
   onResetSeed,
-  isResetting 
+  isResetting,
+  user,
+  onLogout
 }) {
   // Ref untuk navigasi horizontal di mobile: tab aktif otomatis digeser ke tengah
   const mobileNavRef = useRef(null);
   const activeTabRef = useRef(null);
 
-  const navItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'master', label: 'Master Barang', icon: Package },
-    { id: 'pelanggan', label: 'Divisi Pelanggan', icon: Users },
-    { id: 'fo', label: 'Divisi FO', icon: Network },
-    { id: 'tower', label: 'Divisi Tower', icon: Radio },
-    { id: 'transaksi', label: 'Keluar / Masuk', icon: ArrowLeftRight },
-    { id: 'laporan', label: 'Laporan Terpadu', icon: FileText }
-  ];
+  const role = user?.role || 'admin';
+  const isAdmin = role === 'admin';
+  // Menu disaring sesuai hirarki peran pengguna
+  const navItems = ALL_NAV_ITEMS.filter((item) => canAccessMenu(item.id, role));
 
   // Geser tab aktif agar selalu terlihat saat navigasi mobile di-scroll
   useEffect(() => {
@@ -95,7 +105,7 @@ export default function Navbar({
             })}
           </nav>
 
-          {/* Right Action Tools: Barcode Scanner & Reset Demo */}
+          {/* Right Action Tools: Scanner, Reset (admin), User Chip & Logout */}
           <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
             <button
               onClick={onOpenScanner}
@@ -107,16 +117,47 @@ export default function Navbar({
               <span className="hidden sm:inline">Pindai Barcode</span>
             </button>
 
-            <button
-              onClick={onResetSeed}
-              disabled={isResetting}
-              className="px-2.5 sm:px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-medium flex items-center gap-1.5 border border-slate-700 transition disabled:opacity-60"
-              title="Reset dan isi ulang data contoh simulasi ISP"
-              aria-label="Reset Data Contoh"
-            >
-              <RotateCcw className={`w-3.5 h-3.5 ${isResetting ? 'animate-spin' : ''}`} />
-              <span className="hidden md:inline">Reset Data Contoh</span>
-            </button>
+            {isAdmin && (
+              <button
+                onClick={onResetSeed}
+                disabled={isResetting}
+                className="px-2.5 sm:px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-medium flex items-center gap-1.5 border border-slate-700 transition disabled:opacity-60"
+                title="Reset dan isi ulang data contoh simulasi ISP"
+                aria-label="Reset Data Contoh"
+              >
+                <RotateCcw className={`w-3.5 h-3.5 ${isResetting ? 'animate-spin' : ''}`} />
+                <span className="hidden md:inline">Reset Data Contoh</span>
+              </button>
+            )}
+
+            {/* Identitas user + logout */}
+            {user && (
+              <div className="flex items-center gap-1.5 pl-1.5 sm:pl-2.5 border-l border-slate-700">
+                <div className="flex items-center gap-2">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-black shrink-0 ${
+                    isAdmin ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-200'
+                  }`}>
+                    {(user.nama_lengkap || user.username || '?').charAt(0).toUpperCase()}
+                  </div>
+                  <div className="hidden md:block min-w-0">
+                    <div className="text-xs font-bold text-white leading-tight max-w-[120px] truncate">
+                      {user.nama_lengkap || user.username}
+                    </div>
+                    <div className="text-[10px] text-indigo-300 font-semibold leading-tight">
+                      {ROLE_LABELS[user.role] || user.role}
+                    </div>
+                  </div>
+                </div>
+                <button
+                  onClick={onLogout}
+                  className="p-2 rounded-lg bg-slate-800 hover:bg-rose-600/80 text-slate-400 hover:text-white border border-slate-700 transition"
+                  title="Keluar dari sistem"
+                  aria-label="Logout"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
           </div>
         </div>
 

@@ -15,10 +15,12 @@ import {
   DollarSign,
   TrendingUp,
   RefreshCw,
-  Tag
+  Tag,
+  Upload
 } from 'lucide-react';
 import BarcodeRenderer from './BarcodeRenderer';
 import CategoryManagerModal from './CategoryManagerModal';
+import ImportDataModal from './ImportDataModal';
 import { formatRupiah, formatNumber } from '../utils/formatters';
 import { notify } from '../utils/notify';
 
@@ -36,13 +38,14 @@ const DEFAULT_CATEGORIES = [
 
 const DEFAULT_UNITS = ['unit', 'roll', 'meter', 'bks', 'pcs', 'pack', 'set'];
 
-export default function MasterBarang({ 
-  items, 
-  onRefresh, 
-  onOpenBarcodeModal, 
+export default function MasterBarang({
+  items,
+  onRefresh,
+  onOpenBarcodeModal,
   onOpenScanner,
   itemToAdjust,
-  onItemToAdjustHandled
+  onItemToAdjustHandled,
+  canEdit = true
 }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
@@ -50,6 +53,7 @@ export default function MasterBarang({
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
   const [isAdjustModalOpen, setIsAdjustModalOpen] = useState(false);
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [adjustingItem, setAdjustingItem] = useState(null);
 
@@ -378,14 +382,27 @@ export default function MasterBarang({
 
           {/* Action Buttons */}
           <div className="flex items-center gap-2 flex-wrap">
-            <button
-              onClick={() => setIsCategoryModalOpen(true)}
-              className="px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold text-xs rounded-xl flex items-center gap-1.5 border border-indigo-200 transition"
-              title="Kelola & Tambah Kategori / Jenis Barang"
-            >
-              <Tag className="w-3.5 h-3.5 text-indigo-600" />
-              <span>Kelola Kategori</span>
-            </button>
+            {canEdit && (
+              <>
+                <button
+                  onClick={() => setIsImportModalOpen(true)}
+                  className="px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-semibold text-xs rounded-xl flex items-center gap-1.5 border border-emerald-200 transition"
+                  title="Import data barang massal dari file CSV / Excel"
+                >
+                  <Upload className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Import</span>
+                </button>
+
+                <button
+                  onClick={() => setIsCategoryModalOpen(true)}
+                  className="px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold text-xs rounded-xl flex items-center gap-1.5 border border-indigo-200 transition"
+                  title="Kelola & Tambah Kategori / Jenis Barang"
+                >
+                  <Tag className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>Kelola Kategori</span>
+                </button>
+              </>
+            )}
 
             <button
               onClick={onOpenScanner}
@@ -395,13 +412,15 @@ export default function MasterBarang({
               <span>Scan Barcode</span>
             </button>
 
-            <button
-              onClick={handleOpenAdd}
-              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-xs rounded-xl flex items-center gap-2 shadow-sm shadow-indigo-200 transition"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Tambah Master Barang</span>
-            </button>
+            {canEdit && (
+              <button
+                onClick={handleOpenAdd}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-xs rounded-xl flex items-center gap-2 shadow-sm shadow-indigo-200 transition"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Tambah Master Barang</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -507,23 +526,27 @@ export default function MasterBarang({
                       {/* Actions */}
                       <td className="py-3 px-4 text-center whitespace-nowrap">
                         <div className="flex items-center justify-center gap-1">
-                          {/* Stock In Quick */}
-                          <button
-                            onClick={() => handleOpenAdjust(item, 'MASUK')}
-                            title="Tambah Stok Masuk"
-                            className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700 transition"
-                          >
-                            <ArrowDownLeft className="w-4 h-4" />
-                          </button>
+                          {canEdit && (
+                            <>
+                              {/* Stock In Quick */}
+                              <button
+                                onClick={() => handleOpenAdjust(item, 'MASUK')}
+                                title="Tambah Stok Masuk"
+                                className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700 transition"
+                              >
+                                <ArrowDownLeft className="w-4 h-4" />
+                              </button>
 
-                          {/* Stock Out Quick */}
-                          <button
-                            onClick={() => handleOpenAdjust(item, 'KELUAR')}
-                            title="Pengeluaran Stok"
-                            className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-50 hover:text-rose-700 transition"
-                          >
-                            <ArrowUpRight className="w-4 h-4" />
-                          </button>
+                              {/* Stock Out Quick */}
+                              <button
+                                onClick={() => handleOpenAdjust(item, 'KELUAR')}
+                                title="Pengeluaran Stok"
+                                className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-50 hover:text-rose-700 transition"
+                              >
+                                <ArrowUpRight className="w-4 h-4" />
+                              </button>
+                            </>
+                          )}
 
                           {/* Print Label */}
                           <button
@@ -534,23 +557,27 @@ export default function MasterBarang({
                             <Printer className="w-4 h-4" />
                           </button>
 
-                          {/* Edit Item */}
-                          <button
-                            onClick={() => handleOpenEdit(item)}
-                            title="Edit Master"
-                            className="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50 hover:text-blue-700 transition"
-                          >
-                            <Edit3 className="w-4 h-4" />
-                          </button>
+                          {canEdit && (
+                            <>
+                              {/* Edit Item */}
+                              <button
+                                onClick={() => handleOpenEdit(item)}
+                                title="Edit Master"
+                                className="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50 hover:text-blue-700 transition"
+                              >
+                                <Edit3 className="w-4 h-4" />
+                              </button>
 
-                          {/* Delete Item */}
-                          <button
-                            onClick={() => handleDeleteItem(item)}
-                            title="Hapus Master"
-                            className="p-1.5 rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                              {/* Delete Item */}
+                              <button
+                                onClick={() => handleDeleteItem(item)}
+                                title="Hapus Master"
+                                className="p-1.5 rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -990,6 +1017,14 @@ export default function MasterBarang({
         items={items}
         onRefreshCategories={fetchCategories}
         onRefreshItems={onRefresh}
+      />
+
+      {/* Modal Import Massal */}
+      <ImportDataModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        type="items"
+        onImported={onRefresh}
       />
     </div>
   );

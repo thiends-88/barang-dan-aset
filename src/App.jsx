@@ -8,7 +8,18 @@ import DivisiTower from './components/DivisiTower';
 import KeluarMasukBarang from './components/KeluarMasukBarang';
 import Laporan from './components/Laporan';
 import BarcodeLabelModal from './components/BarcodeLabelModal';
-import { subscribe } from './utils/notify';
+import LoginPage from './components/LoginPage';
+import UserManagement from './components/UserManagement';
+import { subscribe, notify } from './utils/notify';
+import {
+  getSession,
+  saveSession,
+  clearSession,
+  installAuthFetch,
+  canAccessMenu,
+  canManageInventory,
+  canManageDivisions
+} from './utils/auth';
 import { RefreshCw, CheckCircle2, AlertTriangle } from 'lucide-react';
 
 // Pemindai barcode memuat library kamera yang besar (html5-qrcode),
@@ -16,7 +27,8 @@ import { RefreshCw, CheckCircle2, AlertTriangle } from 'lucide-react';
 const BarcodeScannerModal = lazy(() => import('./components/BarcodeScannerModal'));
 
 export default function App() {
-  const [currentTab, setCurrentTab] = useState('dashboard');
+  const [session, setSession] = useState(() => getSession());
+  const [currentTab, setCurrentTabRaw] = useState('dashboard');
   const [items, setItems] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [foSites, setFoSites] = useState([]);
@@ -29,6 +41,55 @@ export default function App() {
   const [itemForLabel, setItemForLabel] = useState(null);
   const [itemToAdjust, setItemToAdjust] = useState(null);
   const [isResetting, setIsResetting] = useState(false);
+  const [loginNotice, setLoginNotice] = useState('');
+
+  const userRole = session?.user?.role;
+
+  // Ganti tab dengan penjagaan sesuai peran (mencegah akses lewat state lama)
+  const setCurrentTab = useCallback((tab) => {
+    setCurrentTabRaw((prev) => (canAccessMenu(tab, userRole) ? tab : prev));
+  }, [userRole]);
+
+  // Pasang penambal fetch sekali: otomatis sertakan token & re-login bila 401
+  useEffect(() => {
+    installAuthFetch(
+      () => {
+        setSession(null);
+        setCurrentTabRaw('dashboard');
+        setLoginNotice('Sesi Anda berakhir (server dimulai ulang atau token kedaluwarsa). Silakan login kembali.');
+      },
+      () => {
+        // 401 palsu dari gateway (sandbox bangun tidur) — sesi aman, beri tahu saja
+        notify('Koneksi ke server tersendat sesaat. Bila data belum muncul, muat ulang halaman.', 'error');
+      }
+    );
+  }, []);
+
+  // Bila peran dibatasi, kembalikan ke dashboard saat tab aktif tidak diizinkan
+  useEffect(() => {
+    if (session && !canAccessMenu(currentTab, userRole)) {
+      setCurrentTabRaw('dashboard');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userRole]);
+
+  const handleLogin = useCallback((token, user) => {
+    saveSession(token, user);
+    setSession({ token, user });
+    setCurrentTabRaw('dashboard');
+    setLoginNotice('');
+    notify(`Selamat datang, ${user.nama_lengkap}!`);
+  }, []);
+
+  const handleLogout = useCallback(async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch { /* abaikan — logout lokal tetap jalan */ }
+    clearSession();
+    setSession(null);
+    setCurrentTabRaw('dashboard');
+    setLoginNotice('');
+  }, []);
 
   // Toast / notification
   const [toast, setToast] = useState(null);
@@ -72,8 +133,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    loadAllData();
-  }, [loadAllData]);
+    if (session) {
+      loadAllData();
+    } else {
+      setLoading(false);
+    }
+  }, [loadAllData, session]);
 
   // Open Barcode Label Modal
   const handleOpenBarcodeLabel = (item) => {
@@ -102,6 +167,30 @@ export default function App() {
     }
   };
 
+  // Belum login → tampilkan halaman login (toast tetap aktif di atasnya)
+  if (!session) {
+    return (
+      <div className="min-h-screen bg-slate-950 font-sans antialiased">
+        {toast && (
+          <div
+            role="status"
+            className={`fixed bottom-4 left-4 right-4 sm:left-auto sm:right-5 sm:bottom-5 z-[60] flex items-start gap-2 px-4 py-3 bg-slate-900 text-white rounded-xl shadow-2xl border text-xs font-medium sm:max-w-md ${
+              toast.type === 'success' ? 'border-emerald-500/40' : 'border-rose-500/50'
+            }`}
+          >
+            {toast.type === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            ) : (
+              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+            )}
+            <span className="leading-snug">{toast.message}</span>
+          </div>
+        )}
+        <LoginPage onLogin={handleLogin} notice={loginNotice} />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans text-slate-800 antialiased selection:bg-indigo-500 selection:text-white">
       {/* Toast Alert Notification */}
@@ -129,6 +218,8 @@ export default function App() {
         onOpenScanner={() => setIsScannerOpen(true)}
         onResetSeed={handleResetSeed}
         isResetting={isResetting}
+        user={session.user}
+        onLogout={handleLogout}
       />
 
       {/* Main Content Area */}
@@ -157,6 +248,7 @@ export default function App() {
                 onOpenScanner={() => setIsScannerOpen(true)}
                 itemToAdjust={itemToAdjust}
                 onItemToAdjustHandled={() => setItemToAdjust(null)}
+                canEdit={canManageInventory(userRole)}
               />
             )}
 
@@ -166,6 +258,7 @@ export default function App() {
                 items={items}
                 onRefresh={loadAllData}
                 onOpenBarcodeModal={handleOpenBarcodeLabel}
+                canEdit={canManageDivisions(userRole)}
               />
             )}
 
@@ -174,6 +267,7 @@ export default function App() {
                 foSites={foSites}
                 items={items}
                 onRefresh={loadAllData}
+                canEdit={canManageDivisions(userRole)}
               />
             )}
 
@@ -182,6 +276,7 @@ export default function App() {
                 towerSites={towerSites}
                 items={items}
                 onRefresh={loadAllData}
+                canEdit={canManageDivisions(userRole)}
               />
             )}
 
@@ -196,6 +291,10 @@ export default function App() {
               <Laporan
                 onRefreshData={loadAllData}
               />
+            )}
+
+            {currentTab === 'users' && userRole === 'admin' && (
+              <UserManagement currentUser={session.user} />
             )}
           </>
         )}

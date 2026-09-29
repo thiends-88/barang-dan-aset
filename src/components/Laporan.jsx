@@ -195,7 +195,7 @@ export default function Laporan({ onRefreshData }) {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 print-page-laporan">
       {/* Tab Navigation Header (No print) */}
       <div className="no-print bg-white p-2 rounded-2xl border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-1.5">
@@ -267,13 +267,16 @@ export default function Laporan({ onRefreshData }) {
         </div>
       </div>
 
-      {/* Printable Report Header */}
+      {/* Printable Report Header (kop laporan) */}
       <div className="print-only mb-6 text-center border-b-2 border-slate-800 pb-4">
         <h1 className="text-xl font-black uppercase tracking-wider text-slate-900">
-          SISTEM INFORMASI MANAJEMEN BARANG DAN ASET TERINTEGRASI
+          PT. CINOXMEDIA NETWORK INDONESIA
         </h1>
         <p className="text-xs text-slate-600 mt-1">
           Divisi Pelanggan • Divisi Fiber Optic (FO) • Divisi Tower & BTS Wireless • Gudang Logistik
+        </p>
+        <p className="text-[11px] text-slate-500">
+          JL. Adityawarman No. 366, Kampung Jawa, Kota Solok
         </p>
         <p className="text-xs text-slate-500 mt-0.5">
           Dicetak pada: {new Date().toLocaleString('id-ID')}
@@ -704,7 +707,7 @@ export default function Laporan({ onRefreshData }) {
                     installedAssets.map((item) => (
                       <tr key={item.id} className="hover:bg-slate-50 transition">
                         {/* Kode & Nama */}
-                        <td className="py-3 px-3 min-w-[200px]">
+                        <td className="py-3 px-3 min-w-[200px] print:min-w-0">
                           <div className="font-bold text-slate-900">{item.nama_barang}</div>
                           <div className="flex items-center gap-1.5 mt-0.5">
                             <span className="font-mono text-indigo-700 font-semibold">{item.kode_barang}</span>
@@ -721,7 +724,7 @@ export default function Laporan({ onRefreshData }) {
                         </td>
 
                         {/* Pelanggan Breakdown */}
-                        <td className="py-3 px-3 min-w-[220px]">
+                        <td className="py-3 px-3 min-w-[220px] print:min-w-0">
                           <div className="font-bold text-blue-900 mb-1">
                             {formatNumber(item.qty_pelanggan)} {item.satuan} ({item.detail_pelanggan.length} Klien)
                           </div>
@@ -744,7 +747,7 @@ export default function Laporan({ onRefreshData }) {
                         </td>
 
                         {/* FO Breakdown */}
-                        <td className="py-3 px-3 min-w-[220px]">
+                        <td className="py-3 px-3 min-w-[220px] print:min-w-0">
                           <div className="font-bold text-emerald-900 mb-1">
                             {formatNumber(item.qty_fo)} {item.satuan} ({item.detail_fo.length} Titik)
                           </div>
@@ -767,7 +770,7 @@ export default function Laporan({ onRefreshData }) {
                         </td>
 
                         {/* Tower Breakdown */}
-                        <td className="py-3 px-3 min-w-[220px]">
+                        <td className="py-3 px-3 min-w-[220px] print:min-w-0">
                           <div className="font-bold text-purple-900 mb-1">
                             {formatNumber(item.qty_tower)} {item.satuan} ({item.detail_tower.length} Site)
                           </div>
@@ -836,7 +839,7 @@ export default function Laporan({ onRefreshData }) {
             <div className="flex items-center gap-3">
               <button
                 onClick={handlePrint}
-                className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow transition"
+                className="no-print px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow transition"
               >
                 Cetak Lembar Valuasi
               </button>

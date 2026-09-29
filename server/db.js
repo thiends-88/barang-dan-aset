@@ -3,6 +3,11 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 
+// Zona waktu aplikasi — HARUS di-set sebelum pemakaian Date/SQLite mana pun
+// agar 'localtime' SQLite dan new Date() sama-sama menghasilkan WIB.
+// Bisa diganti lewat env APP_TZ saat deploy ke zona lain (WITA/WIT).
+process.env.TZ = process.env.APP_TZ || process.env.TZ || 'Asia/Jakarta';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -172,6 +177,19 @@ export function initDb() {
       total_harga REAL NOT NULL DEFAULT 0,
       keterangan TEXT DEFAULT '',
       created_at TEXT DEFAULT (datetime('now', 'localtime'))
+    );
+
+    -- Pengguna Aplikasi (login & hirarki peran)
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      nama_lengkap TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'viewer', -- 'admin' | 'staff_gudang' | 'teknisi' | 'viewer'
+      status TEXT NOT NULL DEFAULT 'aktif', -- 'aktif' | 'nonaktif'
+      last_login TEXT,
+      created_at TEXT DEFAULT (datetime('now', 'localtime')),
+      updated_at TEXT DEFAULT (datetime('now', 'localtime'))
     );
   `);
 

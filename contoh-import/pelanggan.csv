@@ -1,0 +1,6 @@
+id_pelanggan;nama_pelanggan;infrastruktur;paket;keterangan_paket;kategori;status;alamat;telepon;tanggal_pasang;catatan
+PLG-2026-0001;Budi Santoso;optic;home;20 Mbps;bandwidth;aktif;Jl. Merdeka No. 10, Solok;081234567890;2026-09-01;Pemasangan baru
+PLG-2026-0002;Toko Kelontong Barokah;optic;soho;50 Mbps;bandwidth;aktif;Pasar Raya Solok Blok C-2;081298765432;2026-09-03;
+PLG-2026-0003;Ibu Ratna Wijaya;wireless;personal;10 Mbps;bandwidth;aktif;Koto Baru, Solok;082144556677;2026-09-10;
+PLG-2026-0004;Warnet Gamer Zone;optic;dedicated;100 Mbps;rent;aktif;Jl. Ahmad Yani No. 45, Solok;081377889900;2026-09-12;Kontrak tahunan
+PLG-2026-0005;Kantor Camat Tanjung Harapan;optic;middle;30 Mbps;service;aktif;Jl. Raya Tanjung Harapan;0755881234;2026-09-18;
