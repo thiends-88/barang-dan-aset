@@ -1,6 +1,8 @@
 # Sistem Manajemen Data Barang & Aset Terintegrasi
 ### Pelanggan • Divisi FO • Divisi Tower • Barcode Scanner • Laporan Berkala
 
+[![CI](https://github.com/thiends-88/barang-dan-aset/actions/workflows/ci.yml/badge.svg)](https://github.com/thiends-88/barang-dan-aset/actions/workflows/ci.yml)
+
 Aplikasi enterprise untuk manajemen inventaris barang dan pelacakan aset jaringan telekomunikasi/ISP yang terintegrasi penuh ke semua lini divisi operasional.
 
 ---
@@ -122,7 +124,10 @@ Aplikasi enterprise untuk manajemen inventaris barang dan pelacakan aset jaringa
    ```bash
    npm run test:api
    ```
-   Menguji alur pemasangan, pengeditan, dismantle, dan penghapusan barang untuk Pelanggan, Divisi FO, dan Divisi Tower, lalu memeriksa bahwa stok gudang tidak pernah minus dan **selalu cocok dengan riwayat mutasi**. Data contoh akan direset otomatis di akhir pengujian. Menjalankan keduanya sekaligus: `npm test`.
+   Menguji alur pemasangan, pengeditan, dismantle, dan penghapusan barang untuk Pelanggan, Divisi FO, dan Divisi Tower, lalu memeriksa bahwa stok gudang tidak pernah minus dan **selalu cocok dengan riwayat mutasi**. Data contoh direset otomatis di awal dan di akhir pengujian. Menjalankan keduanya sekaligus: `npm test`.
+
+6. **CI (GitHub Actions)**:
+   Berkas workflow siap pakai tersedia di [`docs/ci.yml`](docs/ci.yml) — menjalankan `npm ci` → server uji port 3001 → `npm test` → `npm run build` pada setiap push ke `main` dan setiap Pull Request, di lingkungan yang selalu bersih (database dibuat + diisi data contoh dari nol). **Aktivasi**: pindahkan/salin ke `.github/workflows/ci.yml` (satu klik via web GitHub).
 
 ---
 
@@ -257,7 +262,7 @@ Seluruh perubahan stok divalidasi di sisi server:
 
 ## ⚡ Optimasi
 
-- **Pemindai barcode dimuat terpisah (lazy load)** — library kamera `html5-qrcode` hanya diunduh ketika pemindai dibuka, sehingga bundle awal turun dari ~906 kB menjadi ~517 kB (gzip 230 kB → 119 kB).
+- **Pemuatan malas per halaman (code splitting)** — setiap tab utama (Master Barang, Pelanggan, FO, Tower, Transaksi, Laporan, Pengguna) menjadi chunk JS tersendiri yang baru diunduh saat tabnya dibuka. Library berat ikut tertunda: `html5-qrcode` (kamera) hanya diunduh saat pemindai dibuka, `jsbarcode` saat barcode/label pertama kali tampil, dan `xlsx` saat pratinjau import. Hasilnya **bundle awal turun dari ~947 kB menjadi ~273 kB** (gzip ~84 kB).
 - **Indeks database** pada kolom yang sering difilter (`transactions.tanggal/jenis/divisi/kode_barang`, kolom kode barang, dan kolom relasi antar tabel) mempercepat laporan, pencarian, dan penghapusan berantai.
 - **Notifikasi in-app** menggantikan `alert()` bawaan browser: pesan error panjang (mis. stok tidak mencukupi) tampil rapi, tidak memblokir, dan bertahan lebih lama.
 
