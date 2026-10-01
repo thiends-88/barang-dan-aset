@@ -20,6 +20,7 @@ import {
   AlertTriangle
 } from 'lucide-react';
 import { formatRupiah, formatNumber, formatDate, exportToCSV, todayLocal } from '../utils/formatters';
+import { notify } from '../utils/notify';
 
 const YEARS = [2026, 2025, 2024];
 const MONTHS = [
@@ -49,7 +50,7 @@ export default function Laporan({ onRefreshData }) {
   // Filters for Mutasi & Gudang Logistik Report
   const [filterType, setFilterType] = useState('bulanan'); // 'mingguan' | 'bulanan' | 'tahunan' | 'kustom'
   const [year, setYear] = useState('2026');
-  const [month, setMonth] = useState('9');
+  const [month, setMonth] = useState('');
   const [week, setWeek] = useState('');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
@@ -225,7 +226,10 @@ export default function Laporan({ onRefreshData }) {
   // Export Mutasi atau Stok Gudang ke CSV
   const handleExportMutasi = () => {
     if (isWarehouseStockMode) {
-      if (!stockData.length) return;
+      if (!stockData.length) {
+        notify('Tidak ada data stok gudang untuk diekspor ke CSV pada filter yang dipilih.', 'error');
+        return;
+      }
       const rows = stockData.map((item, idx) => ({
         No: idx + 1,
         'Kode Barang': item.kode_barang,
@@ -246,7 +250,10 @@ export default function Laporan({ onRefreshData }) {
       return;
     }
 
-    if (!txData.length) return;
+    if (!txData.length) {
+      notify('Tidak ada transaksi mutasi untuk diekspor ke CSV pada periode yang dipilih.', 'error');
+      return;
+    }
     const rows = txData.map((t, idx) => ({
       No: idx + 1,
       Tanggal: t.tanggal,
@@ -269,7 +276,10 @@ export default function Laporan({ onRefreshData }) {
 
   // Export Installed Assets to CSV
   const handleExportInstalled = () => {
-    if (!installedAssets.length) return;
+    if (!installedAssets.length) {
+      notify('Tidak ada data sebaran barang untuk diekspor ke CSV pada filter yang dipilih.', 'error');
+      return;
+    }
     const rows = installedAssets.map((a, idx) => ({
       No: idx + 1,
       'Kode Barang': a.kode_barang,
@@ -296,6 +306,25 @@ export default function Laporan({ onRefreshData }) {
 
   const displayedStokQty = stockData.reduce((acc, it) => acc + (Number(it.stok) || 0), 0);
   const displayedStokNilai = stockData.reduce((acc, it) => acc + (Number(it.nilai_stok) || 0), 0);
+
+  const getPeriodeSubtitle = () => {
+    if (filterType === 'tahunan') {
+      return `TAHUNAN (${year})`;
+    }
+    if (filterType === 'bulanan') {
+      const mLabel = MONTHS.find((m) => m.val === String(month))?.label || 'Semua Bulan';
+      return `BULANAN (${mLabel} ${year})`;
+    }
+    if (filterType === 'mingguan') {
+      const mVal = month || '9';
+      const mLabel = MONTHS.find((m) => m.val === String(mVal))?.label || `Bulan ${mVal}`;
+      return `MINGGUAN (${mLabel} ${year}${week ? `, Minggu ke-${week}` : ', Semua Minggu'})`;
+    }
+    if (filterType === 'kustom') {
+      return `RENTANG BEBAS (${customStart || 'Awal'} s/d ${customEnd || 'Akhir'})`;
+    }
+    return filterType.toUpperCase();
+  };
 
   return (
     <div className="space-y-6 print-page-laporan">
@@ -399,7 +428,10 @@ export default function Laporan({ onRefreshData }) {
                   <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">Pilih Periode:</span>
                   <div className="bg-slate-100 p-1 rounded-xl flex items-center text-xs">
                     <button
-                      onClick={() => setFilterType('mingguan')}
+                      onClick={() => {
+                        setFilterType('mingguan');
+                        if (!month) setMonth('9');
+                      }}
                       className={`px-3 py-1.5 rounded-lg font-semibold transition ${
                         filterType === 'mingguan' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600'
                       }`}
@@ -581,7 +613,7 @@ export default function Laporan({ onRefreshData }) {
                     <div className="flex items-center gap-1.5">
                       <span className="font-semibold text-slate-600">Bulan:</span>
                       <select
-                        value={month}
+                        value={month || '9'}
                         onChange={(e) => setMonth(e.target.value)}
                         className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs"
                       >
@@ -838,7 +870,26 @@ export default function Laporan({ onRefreshData }) {
                       ) : stockData.length === 0 ? (
                         <tr>
                           <td colSpan="10" className="py-10 text-center text-slate-500">
-                            {jenisFilter === 'STOK_MENIPIS' ? (
+                            {stockSearch || stockCategoryFilter ? (
+                              <div className="space-y-2">
+                                <div className="font-bold text-slate-700 text-sm">
+                                  Tidak ada barang yang cocok dengan filter pencarian / kategori
+                                </div>
+                                <p className="text-xs text-slate-500">
+                                  Coba ubah kata kunci pencarian atau pilih Semua Kategori.
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setStockSearch('');
+                                    setStockCategoryFilter('');
+                                  }}
+                                  className="no-print mt-1 inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold transition"
+                                >
+                                  <span>Reset Filter Pencarian</span>
+                                </button>
+                              </div>
+                            ) : jenisFilter === 'STOK_MENIPIS' ? (
                               <div className="space-y-2">
                                 <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto" />
                                 <div className="font-bold text-slate-800 text-sm">
@@ -883,13 +934,27 @@ export default function Laporan({ onRefreshData }) {
                             </td>
                             <td className="py-2.5 px-3 text-center whitespace-nowrap">
                               {item.status_stok === 'HABIS' ? (
-                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-800">
-                                  STOK HABIS
-                                </span>
+                                <div className="inline-flex flex-col items-center">
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-800">
+                                    STOK HABIS
+                                  </span>
+                                  {item.kekurangan_stok > 0 && (
+                                    <span className="text-[10px] text-rose-600 font-medium mt-0.5">
+                                      Kurang {formatNumber(item.kekurangan_stok)} {item.satuan}
+                                    </span>
+                                  )}
+                                </div>
                               ) : item.status_stok === 'MENIPIS' ? (
-                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800">
-                                  STOK MENIPIS
-                                </span>
+                                <div className="inline-flex flex-col items-center">
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800">
+                                    STOK MENIPIS
+                                  </span>
+                                  <span className="text-[10px] text-amber-700 font-medium mt-0.5">
+                                    {item.kekurangan_stok > 0
+                                      ? `Kurang ${formatNumber(item.kekurangan_stok)} ${item.satuan}`
+                                      : 'Batas minimum'}
+                                  </span>
+                                </div>
                               ) : (
                                 <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
                                   TERSEDIA
@@ -1013,7 +1078,7 @@ export default function Laporan({ onRefreshData }) {
                       Laporan Rincian Keluar Masuk Barang
                     </h3>
                     <p className="text-xs text-slate-500">
-                      Periode: {filterType.toUpperCase()} ({year} {month ? `Bulan ${month}` : ''} {week ? `Minggu ${week}` : ''}) • Divisi: {divisiFilter}
+                      Periode: {getPeriodeSubtitle()} • Divisi: {divisiFilter}
                     </p>
                   </div>
                   <span className="text-xs font-semibold text-slate-500">

@@ -70,18 +70,18 @@ export function seedData() {
     ['BRG-FO-SFP-1G-20KM', 'SFP Transceiver 1.25G BiDi 20KM 1310/1550', 'pcs', 'Aksesoris & Pasif FO', 34, 8, 125000, 'PT. Solusi Optik Digital', 'Kompatibel MikroTik, Cisco, ZTE'],
     ['BRG-FO-ODP-8C', 'ODP Box 8 Core Solid + Adapter SC/UPC', 'unit', 'Aksesoris & Pasif FO', 22, 5, 140000, 'PT. Optik Solusindo', 'Lengkap pigtail dan splitter 1:8'],
     ['BRG-FO-ODP-16C', 'ODP Box 16 Core Pole Mounted Outdoor', 'unit', 'Aksesoris & Pasif FO', 14, 4, 210000, 'PT. Optik Solusindo', 'Include splitter cassette 1:16'],
-    ['BRG-FO-ODC-48C', 'ODC Outdoor 48 Core Lengkap Adapter SC', 'unit', 'Aksesoris & Pasif FO', 4, 2, 1950000, 'PT. Fiberindo Utama', 'Bahan SMC anti korosi dan kunci pengaman'],
+    ['BRG-FO-ODC-48C', 'ODC Outdoor 48 Core Lengkap Adapter SC', 'unit', 'Aksesoris & Pasif FO', 4, 5, 1950000, 'PT. Fiberindo Utama', 'Bahan SMC anti korosi dan kunci pengaman'],
     ['BRG-FO-CLOSURE-24C', 'Optical Joint Closure 24 Core Dome/Inline', 'unit', 'Aksesoris & Pasif FO', 16, 5, 165000, 'PT. Fiberindo Utama', 'Include heat shrink & tray splice'],
     ['BRG-FO-CLAMP-SPAN', 'Clamp Span Hook Penjepit Kabel Dropcore', 'pcs', 'Aksesoris & Pasif FO', 450, 50, 4500, 'CV. Logam Logika Mandiri', 'Material stainless & alumunium'],
     ['BRG-FO-SLEEVE-60', 'Protection Sleeve Sambungan FO 60mm', 'bks', 'Aksesoris & Pasif FO', 40, 10, 25000, 'CV. Telekomindo Sentosa', 'Isi 100 pcs per bks'],
     ['BRG-RAD-LBE-5AC', 'Ubiquiti LiteBeam 5AC Gen2 23dBi Wireless', 'unit', 'Perangkat Wireless Tower', 15, 4, 980000, 'PT. Citraweb Solusi Mandiri', 'Radio client airMAX ac 5GHz'],
     ['BRG-RAD-PBEAM-M5', 'Ubiquiti PowerBeam PBE-M5-400 25dBi', 'unit', 'Perangkat Wireless Tower', 8, 2, 1450000, 'PT. Citraweb Solusi Mandiri', 'Point-to-Point long range link'],
-    ['BRG-RAD-RB922', 'MikroTik NetMetal 5 RB922UAGS-5HPacD', 'unit', 'Perangkat Wireless Tower', 6, 2, 2100000, 'PT. Citraweb Solusi Mandiri', 'Outdoor high power AP/Backhaul'],
+    ['BRG-RAD-RB922', 'MikroTik NetMetal 5 RB922UAGS-5HPacD', 'unit', 'Perangkat Wireless Tower', 6, 8, 2100000, 'PT. Citraweb Solusi Mandiri', 'Outdoor high power AP/Backhaul'],
     ['BRG-TWR-TRI-30', 'Tower Triangle Galvanis Lebar 30cm Panjang 5m', 'unit', 'Struktur & Aksesoris Tower', 12, 3, 750000, 'Bengkel Las Mandiri Tower', 'Pipa medium SNI galvanis celup panas'],
     ['BRG-TWR-SPANSCREW', 'Spanscrew Jarum Keras M12 Galvanis', 'pcs', 'Struktur & Aksesoris Tower', 60, 15, 35000, 'Toko Besi Sentosa Abadi', 'Tensioner tarikan kawat sling'],
     ['BRG-TWR-SLING-4MM', 'Kawat Sling Baja Galvanis 4mm', 'meter', 'Struktur & Aksesoris Tower', 650, 100, 8500, 'Toko Besi Sentosa Abadi', 'Kawat kencang pengikat tower'],
     ['BRG-KBL-UTP-CAT6', 'Kabel UTP Cat6 Outdoor Shielded FTP 305M', 'roll', 'Kabel Jaringan', 9, 2, 1750000, 'PT. Belden Pratama', 'FTP Outdoor dengan kawat grounding'],
-    ['BRG-UPS-1200VA', 'UPS ICA CN1200 1200VA / 600W Backup Tower', 'unit', 'Perangkat Power & Kelistrikan', 7, 2, 1250000, 'PT. Daya Mandiri Sejahtera', 'Backup battery untuk router & switch BTS'],
+    ['BRG-UPS-1200VA', 'UPS ICA CN1200 1200VA / 600W Backup Tower', 'unit', 'Perangkat Power & Kelistrikan', 7, 10, 1250000, 'PT. Daya Mandiri Sejahtera', 'Backup battery untuk router & switch BTS'],
     ['BRG-SW-GIGABIT-8P', 'Switch Gigabit 8 Port Metal Case Smart Managed', 'unit', 'Perangkat Jaringan Core', 20, 5, 420000, 'CV. Data Network Solusi', 'VLAN tagging & PoE Passthrough']
   ];
 
