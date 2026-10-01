@@ -658,6 +658,70 @@ console.log('\n=== 6D. KEUNIKAN NOMOR TRANSAKSI & IMPORT MASSAL ===');
   checkInvariant('setelah scan tertaut & import massal', GLOBAL_SNAP, GLOBAL_MARK);
 }
 
+console.log('\n=== 6E. LAPORAN STOK GUDANG LOGISTIK (STOK TERSEDIA & BARANG STOK MENIPIS) ===');
+{
+  // 1. Laporan Stok Gudang Keseluruhan yang Tersedia (filter=tersedia)
+  const rTersedia = await req('GET', '/api/reports/warehouse-stock?filter=tersedia');
+  const dTersedia = rTersedia.json?.data || [];
+  const sumTersedia = rTersedia.json?.summary;
+  if (
+    rTersedia.status === 200 &&
+    rTersedia.json?.success &&
+    dTersedia.length > 0 &&
+    dTersedia.every((it) => Number(it.stok) > 0) &&
+    sumTersedia?.sku_tersedia === dTersedia.length &&
+    Array.isArray(rTersedia.json?.categories)
+  ) {
+    ok('Laporan Stok Gudang Keseluruhan yang Tersedia mengembalikan seluruh barang berstok > 0', `${dTersedia.length} SKU tersedia`);
+  } else {
+    bad('Laporan Stok Gudang Keseluruhan yang Tersedia', `status=${rTersedia.status} len=${dTersedia.length}`);
+  }
+
+  // 2. Buat 1 barang uji dengan stok menipis (stok 2 <= min_stok 10), verifikasi muncul di filter=menipis
+  const kodeMenipis = 'BRG-UJI-MENIPIS-01';
+  const createLow = await req('POST', '/api/items', {
+    kode_barang: kodeMenipis,
+    nama_barang: 'Patchcord Uji Stok Menipis',
+    satuan: 'pcs',
+    jenis_barang: 'Aksesoris & Pasif FO',
+    stok: 2,
+    min_stok: 10,
+    harga_barang: 15000,
+    referensi_suplayer: 'PT. Uji Logistik'
+  });
+
+  const rMenipis = await req('GET', '/api/reports/warehouse-stock?filter=menipis');
+  const dMenipis = rMenipis.json?.data || [];
+  const itemMenipis = dMenipis.find((it) => it.kode_barang === kodeMenipis);
+  if (
+    createLow.status === 201 &&
+    rMenipis.status === 200 &&
+    itemMenipis &&
+    itemMenipis.status_stok === 'MENIPIS' &&
+    itemMenipis.kekurangan_stok === 8 &&
+    dMenipis.every((it) => Number(it.stok) <= Number(it.min_stok))
+  ) {
+    ok('Laporan Barang Stok Menipis mengembalikan barang dengan stok <= min_stok beserta status & kekurangan', `${dMenipis.length} SKU menipis`);
+  } else {
+    bad('Laporan Barang Stok Menipis', `status=${rMenipis.status} found=${Boolean(itemMenipis)}`);
+  }
+
+  // 3. Filter pencarian & kategori pada laporan stok gudang + dukungan divisi=STOK_MENIPIS di installed-assets
+  const rSearch = await req('GET', `/api/reports/warehouse-stock?filter=menipis&search=${encodeURIComponent(kodeMenipis)}&kategori=${encodeURIComponent('Aksesoris & Pasif FO')}`);
+  const rSebaranMenipis = await req('GET', '/api/reports/installed-assets?divisi=STOK_MENIPIS');
+  if (
+    rSearch.status === 200 &&
+    rSearch.json?.data?.length === 1 &&
+    rSearch.json.data[0].kode_barang === kodeMenipis &&
+    rSebaranMenipis.status === 200 &&
+    (rSebaranMenipis.json?.data || []).some((it) => it.kode_barang === kodeMenipis)
+  ) {
+    ok('Filter pencarian/kategori stok gudang & filter STOK_MENIPIS pada sebaran berfungsi akurat');
+  } else {
+    bad('Filter pencarian/kategori stok gudang', `searchLen=${rSearch.json?.data?.length}`);
+  }
+}
+
 console.log('\n=== PEMBERSIHAN: reset ke data contoh ===');
 await req('POST', '/api/reset-seed');
 const setelahReset = db.prepare('SELECT COUNT(*) AS c FROM customers').get().c;

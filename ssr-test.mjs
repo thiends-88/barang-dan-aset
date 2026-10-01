@@ -218,6 +218,27 @@ if ((adminHtml.match(/aria-label="Menu utama"/g) || []).length !== 2) shortProbl
 if (shortProblems.length === 0) sectionOk('19.6 menu utama memakai `short`, baris geser memakai `label` penuh, peran terbatas benar');
 else sectionBad(`19.6 ${shortProblems.join('; ')}`);
 
+// ============================================================
+// 20. PILIHAN STOK GUDANG DI LAPORAN BARANG MASUK & KELUAR
+// ============================================================
+console.log('\n=== 20. Pilihan Stok Gudang Logistik di Laporan Barang Masuk & Keluar ===');
+{
+  const LaporanMod = await vite.ssrLoadModule('/src/components/Laporan.jsx');
+  const LaporanComp = LaporanMod.default;
+  const laporanHtml = renderToString(React.createElement(LaporanComp, { onRefreshData() {} }));
+
+  if (
+    laporanHtml.includes('Stok Gudang Keseluruhan yang Tersedia') &&
+    laporanHtml.includes('Barang Stok Menipis') &&
+    laporanHtml.includes('GUDANG_STOK_TERSEDIA') &&
+    laporanHtml.includes('GUDANG_STOK_MENIPIS')
+  ) {
+    sectionOk('20.1 Opsi Stok Gudang Keseluruhan yang Tersedia & Barang Stok Menipis tersedia di filter Laporan');
+  } else {
+    sectionBad('20.1 Opsi Stok Gudang Keseluruhan yang Tersedia / Barang Stok Menipis tidak ditemukan di render Laporan');
+  }
+}
+
 await vite.close();
 console.log(`\nHasil: ${pass} lolos, ${fail} gagal`);
 process.exit(fail ? 1 : 0);

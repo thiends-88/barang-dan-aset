@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   FileText, 
   Calendar, 
@@ -16,9 +16,10 @@ import {
   RefreshCw,
   FileSpreadsheet,
   Building,
-  CheckCircle2
+  CheckCircle2,
+  AlertTriangle
 } from 'lucide-react';
-import { formatRupiah, formatNumber, formatDate, exportToCSV } from '../utils/formatters';
+import { formatRupiah, formatNumber, formatDate, exportToCSV, todayLocal } from '../utils/formatters';
 
 const YEARS = [2026, 2025, 2024];
 const MONTHS = [
@@ -45,7 +46,7 @@ export default function Laporan({ onRefreshData }) {
   const [txSummary, setTxSummary] = useState(null);
   const [txLoading, setTxLoading] = useState(false);
 
-  // Filters for Mutasi Report
+  // Filters for Mutasi & Gudang Logistik Report
   const [filterType, setFilterType] = useState('bulanan'); // 'mingguan' | 'bulanan' | 'tahunan' | 'kustom'
   const [year, setYear] = useState('2026');
   const [month, setMonth] = useState('9');
@@ -53,7 +54,18 @@ export default function Laporan({ onRefreshData }) {
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
   const [divisiFilter, setDivisiFilter] = useState('SEMUA');
+  // jenisFilter: '' | 'MASUK' | 'KELUAR' | 'STOK_TERSEDIA' | 'STOK_MENIPIS'
   const [jenisFilter, setJenisFilter] = useState('');
+
+  // Warehouse Stock Report State (Stok Gudang Keseluruhan yang Tersedia & Barang Stok Menipis)
+  const [stockData, setStockData] = useState([]);
+  const [stockSummary, setStockSummary] = useState(null);
+  const [stockCategories, setStockCategories] = useState([]);
+  const [stockLoading, setStockLoading] = useState(false);
+  const [stockSearch, setStockSearch] = useState('');
+  const [stockCategoryFilter, setStockCategoryFilter] = useState('');
+
+  const isWarehouseStockMode = jenisFilter === 'STOK_TERSEDIA' || jenisFilter === 'STOK_MENIPIS';
 
   // Installed Assets Report State
   const [installedAssets, setInstalledAssets] = useState([]);
@@ -65,12 +77,14 @@ export default function Laporan({ onRefreshData }) {
   const [valuationData, setValuationData] = useState(null);
 
   // Fetch Mutasi Transactions
-  const fetchMutasiReport = async () => {
+  const fetchMutasiReport = useCallback(async () => {
     setTxLoading(true);
     try {
       const params = new URLSearchParams();
       if (divisiFilter && divisiFilter !== 'SEMUA') params.append('divisi', divisiFilter);
-      if (jenisFilter) params.append('jenis', jenisFilter);
+      if (jenisFilter === 'MASUK' || jenisFilter === 'KELUAR') {
+        params.append('jenis', jenisFilter);
+      }
 
       if (filterType === 'tahunan') {
         params.append('year', year);
@@ -97,10 +111,35 @@ export default function Laporan({ onRefreshData }) {
     } finally {
       setTxLoading(false);
     }
-  };
+  }, [filterType, year, month, week, customStart, customEnd, divisiFilter, jenisFilter]);
+
+  // Fetch Warehouse Stock Report (Stok Gudang Keseluruhan yang Tersedia / Barang Stok Menipis)
+  const fetchWarehouseStockReport = useCallback(async () => {
+    setStockLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.append('filter', jenisFilter === 'STOK_MENIPIS' ? 'menipis' : 'tersedia');
+      if (stockCategoryFilter) params.append('kategori', stockCategoryFilter);
+      if (stockSearch) params.append('search', stockSearch);
+
+      const res = await fetch(`/api/reports/warehouse-stock?${params.toString()}`);
+      const data = await res.json();
+      if (data.success) {
+        setStockData(data.data || []);
+        setStockSummary(data.summary || null);
+        if (Array.isArray(data.categories)) {
+          setStockCategories(data.categories);
+        }
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setStockLoading(false);
+    }
+  }, [jenisFilter, stockCategoryFilter, stockSearch]);
 
   // Fetch Installed Assets Report
-  const fetchInstalledAssets = async () => {
+  const fetchInstalledAssets = useCallback(async () => {
     setInstalledLoading(true);
     try {
       const params = new URLSearchParams();
@@ -117,10 +156,10 @@ export default function Laporan({ onRefreshData }) {
     } finally {
       setInstalledLoading(false);
     }
-  };
+  }, [installedSearch, installedDivFilter]);
 
   // Fetch Valuation
-  const fetchValuation = async () => {
+  const fetchValuation = useCallback(async () => {
     try {
       const res = await fetch('/api/reports/dashboard-summary');
       const data = await res.json();
@@ -130,11 +169,19 @@ export default function Laporan({ onRefreshData }) {
     } catch (err) {
       console.error(err);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchMutasiReport();
-  }, [filterType, year, month, week, customStart, customEnd, divisiFilter, jenisFilter]);
+    if (!isWarehouseStockMode) {
+      fetchMutasiReport();
+    }
+  }, [isWarehouseStockMode, fetchMutasiReport]);
+
+  useEffect(() => {
+    if (isWarehouseStockMode || divisiFilter === 'GUDANG') {
+      fetchWarehouseStockReport();
+    }
+  }, [isWarehouseStockMode, divisiFilter, fetchWarehouseStockReport]);
 
   useEffect(() => {
     if (activeTab === 'sebaran') {
@@ -142,10 +189,63 @@ export default function Laporan({ onRefreshData }) {
     } else if (activeTab === 'valuasi') {
       fetchValuation();
     }
-  }, [activeTab, installedSearch, installedDivFilter]);
+  }, [activeTab, fetchInstalledAssets, fetchValuation]);
 
-  // Export Mutasi to CSV
+  // Handler pilihan dropdown Divisi
+  const handleDivisiSelectChange = (val) => {
+    if (val === 'GUDANG_STOK_TERSEDIA') {
+      setDivisiFilter('GUDANG');
+      setJenisFilter('STOK_TERSEDIA');
+    } else if (val === 'GUDANG_STOK_MENIPIS') {
+      setDivisiFilter('GUDANG');
+      setJenisFilter('STOK_MENIPIS');
+    } else {
+      setDivisiFilter(val);
+      if (jenisFilter === 'STOK_TERSEDIA' || jenisFilter === 'STOK_MENIPIS') {
+        setJenisFilter('');
+      }
+    }
+  };
+
+  // Handler pilihan dropdown Jenis / Stok Gudang
+  const handleJenisSelectChange = (val) => {
+    setJenisFilter(val);
+    if (val === 'STOK_TERSEDIA' || val === 'STOK_MENIPIS') {
+      setDivisiFilter('GUDANG');
+    }
+  };
+
+  const divisiSelectValue =
+    divisiFilter === 'GUDANG' && jenisFilter === 'STOK_TERSEDIA'
+      ? 'GUDANG_STOK_TERSEDIA'
+      : divisiFilter === 'GUDANG' && jenisFilter === 'STOK_MENIPIS'
+      ? 'GUDANG_STOK_MENIPIS'
+      : divisiFilter;
+
+  // Export Mutasi atau Stok Gudang ke CSV
   const handleExportMutasi = () => {
+    if (isWarehouseStockMode) {
+      if (!stockData.length) return;
+      const rows = stockData.map((item, idx) => ({
+        No: idx + 1,
+        'Kode Barang': item.kode_barang,
+        'Nama Barang': item.nama_barang,
+        Kategori: item.jenis_barang,
+        'Stok Tersedia': item.stok,
+        Satuan: item.satuan,
+        'Batas Min Stok': item.min_stok,
+        'Status Stok': item.status_stok === 'HABIS' ? 'Stok Habis' : item.status_stok === 'MENIPIS' ? 'Stok Menipis' : 'Tersedia / Aman',
+        'Terpasang di Divisi': item.qty_terpasang || 0,
+        'Harga Satuan (Rp)': item.harga_barang,
+        'Total Nilai Stok (Rp)': item.nilai_stok,
+        'Referensi Suplayer': item.referensi_suplayer || '-',
+        Catatan: item.catatan || '-'
+      }));
+      const prefix = jenisFilter === 'STOK_MENIPIS' ? 'Laporan_Barang_Stok_Menipis' : 'Laporan_Stok_Gudang_Tersedia';
+      exportToCSV(`${prefix}_${todayLocal()}.csv`, rows);
+      return;
+    }
+
     if (!txData.length) return;
     const rows = txData.map((t, idx) => ({
       No: idx + 1,
@@ -193,6 +293,9 @@ export default function Laporan({ onRefreshData }) {
   const handlePrint = () => {
     window.print();
   };
+
+  const displayedStokQty = stockData.reduce((acc, it) => acc + (Number(it.stok) || 0), 0);
+  const displayedStokNilai = stockData.reduce((acc, it) => acc + (Number(it.nilai_stok) || 0), 0);
 
   return (
     <div className="space-y-6 print-page-laporan">
@@ -291,49 +394,71 @@ export default function Laporan({ onRefreshData }) {
           {/* Filter Bar (No print) */}
           <div className="no-print bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">Pilih Periode:</span>
-                <div className="bg-slate-100 p-1 rounded-xl flex items-center text-xs">
-                  <button
-                    onClick={() => setFilterType('mingguan')}
-                    className={`px-3 py-1.5 rounded-lg font-semibold transition ${
-                      filterType === 'mingguan' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600'
-                    }`}
-                  >
-                    Per Minggu
-                  </button>
-                  <button
-                    onClick={() => setFilterType('bulanan')}
-                    className={`px-3 py-1.5 rounded-lg font-semibold transition ${
-                      filterType === 'bulanan' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600'
-                    }`}
-                  >
-                    Per Bulan
-                  </button>
-                  <button
-                    onClick={() => setFilterType('tahunan')}
-                    className={`px-3 py-1.5 rounded-lg font-semibold transition ${
-                      filterType === 'tahunan' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600'
-                    }`}
-                  >
-                    Per Tahun
-                  </button>
-                  <button
-                    onClick={() => setFilterType('kustom')}
-                    className={`px-3 py-1.5 rounded-lg font-semibold transition ${
-                      filterType === 'kustom' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600'
-                    }`}
-                  >
-                    Rentang Bebas
-                  </button>
+              {!isWarehouseStockMode ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">Pilih Periode:</span>
+                  <div className="bg-slate-100 p-1 rounded-xl flex items-center text-xs">
+                    <button
+                      onClick={() => setFilterType('mingguan')}
+                      className={`px-3 py-1.5 rounded-lg font-semibold transition ${
+                        filterType === 'mingguan' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600'
+                      }`}
+                    >
+                      Per Minggu
+                    </button>
+                    <button
+                      onClick={() => setFilterType('bulanan')}
+                      className={`px-3 py-1.5 rounded-lg font-semibold transition ${
+                        filterType === 'bulanan' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600'
+                      }`}
+                    >
+                      Per Bulan
+                    </button>
+                    <button
+                      onClick={() => setFilterType('tahunan')}
+                      className={`px-3 py-1.5 rounded-lg font-semibold transition ${
+                        filterType === 'tahunan' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600'
+                      }`}
+                    >
+                      Per Tahun
+                    </button>
+                    <button
+                      onClick={() => setFilterType('kustom')}
+                      className={`px-3 py-1.5 rounded-lg font-semibold transition ${
+                        filterType === 'kustom' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600'
+                      }`}
+                    >
+                      Rentang Bebas
+                    </button>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border ${
+                    jenisFilter === 'STOK_MENIPIS'
+                      ? 'bg-amber-50 text-amber-800 border-amber-200'
+                      : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                  }`}>
+                    {jenisFilter === 'STOK_MENIPIS' ? (
+                      <AlertTriangle className="w-4 h-4 text-amber-600" />
+                    ) : (
+                      <Package className="w-4 h-4 text-emerald-600" />
+                    )}
+                    <span>
+                      {jenisFilter === 'STOK_MENIPIS'
+                        ? 'Gudang Logistik — Daftar Barang Stok Menipis'
+                        : 'Gudang Logistik — Stok Gudang Keseluruhan yang Tersedia'}
+                    </span>
+                  </span>
+                </div>
+              )}
 
-              {/* Divisi & Jenis Filter */}
+              {/* Divisi & Jenis / Stok Gudang Filter */}
               <div className="flex flex-wrap items-center gap-2">
                 <select
-                  value={divisiFilter}
-                  onChange={(e) => setDivisiFilter(e.target.value)}
+                  aria-label="Filter Divisi Laporan"
+                  value={divisiSelectValue}
+                  onChange={(e) => handleDivisiSelectChange(e.target.value)}
                   className="px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-medium text-slate-700"
                 >
                   <option value="SEMUA">Semua Divisi Terkait</option>
@@ -341,292 +466,627 @@ export default function Laporan({ onRefreshData }) {
                   <option value="DIVISI FO">Divisi FO</option>
                   <option value="DIVISI TOWER">Divisi Tower</option>
                   <option value="GUDANG">Gudang Logistik</option>
+                  <option value="GUDANG_STOK_TERSEDIA">Gudang Logistik — Stok Gudang Keseluruhan yang Tersedia</option>
+                  <option value="GUDANG_STOK_MENIPIS">Gudang Logistik — Barang Stok Menipis</option>
                 </select>
 
                 <select
+                  aria-label="Filter Jenis Laporan & Stok Gudang"
                   value={jenisFilter}
-                  onChange={(e) => setJenisFilter(e.target.value)}
+                  onChange={(e) => handleJenisSelectChange(e.target.value)}
                   className="px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-medium text-slate-700"
                 >
                   <option value="">Semua (Masuk & Keluar)</option>
                   <option value="MASUK">Hanya Barang Masuk</option>
                   <option value="KELUAR">Hanya Barang Keluar</option>
+                  <option value="STOK_TERSEDIA">Stok Gudang Keseluruhan yang Tersedia</option>
+                  <option value="STOK_MENIPIS">Barang Stok Menipis</option>
                 </select>
               </div>
             </div>
 
-            {/* Dynamic Period Dropdowns */}
-            <div className="flex flex-wrap items-center gap-3 pt-3 border-t border-slate-100 text-xs">
-              {filterType === 'mingguan' && (
-                <>
+            {/* Pilihan Cepat Gudang Logistik (Tampil saat Gudang Logistik dipilih) */}
+            {(divisiFilter === 'GUDANG' || isWarehouseStockMode) && (
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-100">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                    <Package className="w-4 h-4 text-indigo-600" />
+                    <span>Pilihan Gudang Logistik:</span>
+                  </span>
+                  <div className="bg-slate-100 p-1 rounded-xl flex flex-wrap items-center gap-1 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setJenisFilter('')}
+                      className={`px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition ${
+                        !isWarehouseStockMode
+                          ? 'bg-indigo-600 text-white shadow-sm'
+                          : 'text-slate-600 hover:bg-slate-200/70'
+                      }`}
+                    >
+                      <FileText className="w-3.5 h-3.5" />
+                      <span>Mutasi Masuk & Keluar</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDivisiFilter('GUDANG');
+                        setJenisFilter('STOK_TERSEDIA');
+                      }}
+                      className={`px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition ${
+                        jenisFilter === 'STOK_TERSEDIA'
+                          ? 'bg-emerald-600 text-white shadow-sm'
+                          : 'text-slate-600 hover:bg-slate-200/70'
+                      }`}
+                    >
+                      <Package className="w-3.5 h-3.5" />
+                      <span>Stok Gudang Keseluruhan yang Tersedia</span>
+                      {stockSummary && (
+                        <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+                          jenisFilter === 'STOK_TERSEDIA'
+                            ? 'bg-emerald-800/60 text-white'
+                            : 'bg-emerald-100 text-emerald-800'
+                        }`}>
+                          {stockSummary.sku_tersedia}
+                        </span>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDivisiFilter('GUDANG');
+                        setJenisFilter('STOK_MENIPIS');
+                      }}
+                      className={`px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition ${
+                        jenisFilter === 'STOK_MENIPIS'
+                          ? 'bg-amber-600 text-white shadow-sm'
+                          : 'text-slate-600 hover:bg-slate-200/70'
+                      }`}
+                    >
+                      <AlertTriangle className="w-3.5 h-3.5" />
+                      <span>Barang Stok Menipis</span>
+                      {stockSummary && (
+                        <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+                          jenisFilter === 'STOK_MENIPIS'
+                            ? 'bg-amber-800/60 text-white'
+                            : stockSummary.low_stock_count > 0
+                            ? 'bg-rose-100 text-rose-800'
+                            : 'bg-slate-200 text-slate-600'
+                        }`}>
+                          {stockSummary.low_stock_count}
+                        </span>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Dynamic Period Dropdowns (Mutasi Mode) OR Search & Category Filter (Warehouse Stock Mode) */}
+            {!isWarehouseStockMode ? (
+              <div className="flex flex-wrap items-center gap-3 pt-3 border-t border-slate-100 text-xs">
+                {filterType === 'mingguan' && (
+                  <>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-semibold text-slate-600">Tahun:</span>
+                      <select
+                        value={year}
+                        onChange={(e) => setYear(e.target.value)}
+                        className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs"
+                      >
+                        {YEARS.map((y) => (
+                          <option key={y} value={y}>{y}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-semibold text-slate-600">Bulan:</span>
+                      <select
+                        value={month}
+                        onChange={(e) => setMonth(e.target.value)}
+                        className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs"
+                      >
+                        {MONTHS.filter(m => m.val).map((m) => (
+                          <option key={m.val} value={m.val}>{m.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-semibold text-slate-600">Minggu Ke:</span>
+                      <select
+                        value={week}
+                        onChange={(e) => setWeek(e.target.value)}
+                        className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs font-bold text-indigo-700"
+                      >
+                        <option value="">Semua Minggu di Bulan Ini</option>
+                        <option value="1">Minggu 1 (Tanggal 1 - 7)</option>
+                        <option value="2">Minggu 2 (Tanggal 8 - 14)</option>
+                        <option value="3">Minggu 3 (Tanggal 15 - 21)</option>
+                        <option value="4">Minggu 4 (Tanggal 22 - 28)</option>
+                        <option value="5">Minggu 5 (Tanggal 29 - Akhir)</option>
+                      </select>
+                    </div>
+                  </>
+                )}
+
+                {filterType === 'bulanan' && (
+                  <>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-semibold text-slate-600">Tahun:</span>
+                      <select
+                        value={year}
+                        onChange={(e) => setYear(e.target.value)}
+                        className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs"
+                      >
+                        {YEARS.map((y) => (
+                          <option key={y} value={y}>{y}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-semibold text-slate-600">Bulan:</span>
+                      <select
+                        value={month}
+                        onChange={(e) => setMonth(e.target.value)}
+                        className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs font-bold text-indigo-700"
+                      >
+                        {MONTHS.map((m) => (
+                          <option key={m.val} value={m.val}>{m.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </>
+                )}
+
+                {filterType === 'tahunan' && (
                   <div className="flex items-center gap-1.5">
-                    <span className="font-semibold text-slate-600">Tahun:</span>
+                    <span className="font-semibold text-slate-600">Pilih Tahun:</span>
                     <select
                       value={year}
                       onChange={(e) => setYear(e.target.value)}
-                      className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs"
+                      className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs font-bold text-indigo-700"
                     >
                       {YEARS.map((y) => (
                         <option key={y} value={y}>{y}</option>
                       ))}
                     </select>
                   </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-semibold text-slate-600">Bulan:</span>
-                    <select
-                      value={month}
-                      onChange={(e) => setMonth(e.target.value)}
-                      className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs"
-                    >
-                      {MONTHS.filter(m => m.val).map((m) => (
-                        <option key={m.val} value={m.val}>{m.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-semibold text-slate-600">Minggu Ke:</span>
-                    <select
-                      value={week}
-                      onChange={(e) => setWeek(e.target.value)}
-                      className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs font-bold text-indigo-700"
-                    >
-                      <option value="">Semua Minggu di Bulan Ini</option>
-                      <option value="1">Minggu 1 (Tanggal 1 - 7)</option>
-                      <option value="2">Minggu 2 (Tanggal 8 - 14)</option>
-                      <option value="3">Minggu 3 (Tanggal 15 - 21)</option>
-                      <option value="4">Minggu 4 (Tanggal 22 - 28)</option>
-                      <option value="5">Minggu 5 (Tanggal 29 - Akhir)</option>
-                    </select>
-                  </div>
-                </>
-              )}
+                )}
 
-              {filterType === 'bulanan' && (
-                <>
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-semibold text-slate-600">Tahun:</span>
-                    <select
-                      value={year}
-                      onChange={(e) => setYear(e.target.value)}
+                {filterType === 'kustom' && (
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-slate-600">Dari:</span>
+                    <input
+                      type="date"
+                      value={customStart}
+                      onChange={(e) => setCustomStart(e.target.value)}
                       className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs"
-                    >
-                      {YEARS.map((y) => (
-                        <option key={y} value={y}>{y}</option>
-                      ))}
-                    </select>
+                    />
+                    <span className="font-semibold text-slate-600">Sampai:</span>
+                    <input
+                      type="date"
+                      value={customEnd}
+                      onChange={(e) => setCustomEnd(e.target.value)}
+                      className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs"
+                    />
                   </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-semibold text-slate-600">Bulan:</span>
-                    <select
-                      value={month}
-                      onChange={(e) => setMonth(e.target.value)}
-                      className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs font-bold text-indigo-700"
-                    >
-                      {MONTHS.map((m) => (
-                        <option key={m.val} value={m.val}>{m.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                </>
-              )}
+                )}
+              </div>
+            ) : (
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-3 border-t border-slate-100 text-xs">
+                <div className="relative flex-1 max-w-md">
+                  <input
+                    type="text"
+                    placeholder="Cari kode barang, nama barang, kategori, atau suplayer..."
+                    value={stockSearch}
+                    onChange={(e) => setStockSearch(e.target.value)}
+                    className="w-full pl-9 pr-4 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:bg-white"
+                  />
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2" />
+                </div>
 
-              {filterType === 'tahunan' && (
-                <div className="flex items-center gap-1.5">
-                  <span className="font-semibold text-slate-600">Pilih Tahun:</span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-semibold text-slate-600">Kategori:</span>
                   <select
-                    value={year}
-                    onChange={(e) => setYear(e.target.value)}
-                    className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs font-bold text-indigo-700"
+                    value={stockCategoryFilter}
+                    onChange={(e) => setStockCategoryFilter(e.target.value)}
+                    className="px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-medium text-slate-700"
                   >
-                    {YEARS.map((y) => (
-                      <option key={y} value={y}>{y}</option>
+                    <option value="">Semua Kategori ({stockCategories.length})</option>
+                    {stockCategories.map((cat) => (
+                      <option key={cat} value={cat}>{cat}</option>
                     ))}
                   </select>
-                </div>
-              )}
-
-              {filterType === 'kustom' && (
-                <div className="flex items-center gap-2">
-                  <span className="font-semibold text-slate-600">Dari:</span>
-                  <input
-                    type="date"
-                    value={customStart}
-                    onChange={(e) => setCustomStart(e.target.value)}
-                    className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs"
-                  />
-                  <span className="font-semibold text-slate-600">Sampai:</span>
-                  <input
-                    type="date"
-                    value={customEnd}
-                    onChange={(e) => setCustomEnd(e.target.value)}
-                    className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs"
-                  />
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* KPI Summary Cards */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-              <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">Total Transaksi</span>
-              <div className="text-xl font-bold text-slate-900 mt-1">
-                {formatNumber(txSummary?.total_transaksi || 0)} <span className="text-xs font-normal text-slate-500">Mutasi</span>
-              </div>
-            </div>
-
-            <div className="bg-emerald-50/70 p-4 rounded-xl border border-emerald-200 shadow-sm">
-              <span className="text-[11px] font-semibold text-emerald-800 uppercase tracking-wider block">Barang Masuk</span>
-              <div className="text-xl font-bold text-emerald-950 mt-1">
-                {formatNumber(txSummary?.total_masuk_qty || 0)} <span className="text-xs font-normal text-emerald-700">Unit</span>
-              </div>
-              <span className="text-[11px] font-bold text-emerald-700 block mt-0.5">
-                {formatRupiah(txSummary?.total_masuk_nilai || 0)}
-              </span>
-            </div>
-
-            <div className="bg-rose-50/70 p-4 rounded-xl border border-rose-200 shadow-sm">
-              <span className="text-[11px] font-semibold text-rose-800 uppercase tracking-wider block">Barang Keluar</span>
-              <div className="text-xl font-bold text-rose-950 mt-1">
-                {formatNumber(txSummary?.total_keluar_qty || 0)} <span className="text-xs font-normal text-rose-700">Unit</span>
-              </div>
-              <span className="text-[11px] font-bold text-rose-700 block mt-0.5">
-                {formatRupiah(txSummary?.total_keluar_nilai || 0)}
-              </span>
-            </div>
-
-            <div className="bg-indigo-50/70 p-4 rounded-xl border border-indigo-200 shadow-sm">
-              <span className="text-[11px] font-semibold text-indigo-800 uppercase tracking-wider block">Net Saldo Mutasi</span>
-              <div className={`text-xl font-bold mt-1 ${(txSummary?.net_qty || 0) >= 0 ? 'text-indigo-950' : 'text-rose-900'}`}>
-                {formatNumber(txSummary?.net_qty || 0)} <span className="text-xs font-normal text-indigo-700">Unit</span>
-              </div>
-              <span className="text-[11px] font-bold text-indigo-800 block mt-0.5">
-                {formatRupiah(txSummary?.net_nilai || 0)}
-              </span>
-            </div>
-          </div>
-
-          {/* Visual Ratio & Division Breakdown Bar */}
-          {txSummary && (txSummary.total_masuk_qty > 0 || txSummary.total_keluar_qty > 0) && (
-            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-3">
-              <div className="flex items-center justify-between text-xs">
-                <span className="font-bold text-slate-800">Rasio Pergerakan Barang Periode Ini:</span>
-                <span className="text-slate-500">
-                  Total Volume Mutasi: {formatNumber(txSummary.total_masuk_qty + txSummary.total_keluar_qty)} Unit
-                </span>
-              </div>
-
-              {/* Progress Bar */}
-              <div className="w-full h-4 bg-slate-100 rounded-full overflow-hidden flex shadow-inner">
-                <div
-                  style={{
-                    width: `${Math.round((txSummary.total_masuk_qty / ((txSummary.total_masuk_qty + txSummary.total_keluar_qty) || 1)) * 100)}%`
-                  }}
-                  className="bg-emerald-500 h-full transition-all"
-                  title={`Barang Masuk: ${txSummary.total_masuk_qty} unit`}
-                />
-                <div
-                  style={{
-                    width: `${Math.round((txSummary.total_keluar_qty / ((txSummary.total_masuk_qty + txSummary.total_keluar_qty) || 1)) * 100)}%`
-                  }}
-                  className="bg-rose-500 h-full transition-all"
-                  title={`Barang Keluar: ${txSummary.total_keluar_qty} unit`}
-                />
-              </div>
-
-              <div className="flex items-center justify-between text-xs pt-1">
-                <span className="text-emerald-700 font-bold flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-                  Barang Masuk: {Math.round((txSummary.total_masuk_qty / ((txSummary.total_masuk_qty + txSummary.total_keluar_qty) || 1)) * 100)}% ({formatNumber(txSummary.total_masuk_qty)} unit)
-                </span>
-                <span className="text-rose-700 font-bold flex items-center gap-1.5">
-                  Barang Keluar: {Math.round((txSummary.total_keluar_qty / ((txSummary.total_masuk_qty + txSummary.total_keluar_qty) || 1)) * 100)}% ({formatNumber(txSummary.total_keluar_qty)} unit)
-                  <span className="w-2.5 h-2.5 rounded-full bg-rose-500" />
-                </span>
-              </div>
-            </div>
-          )}
-
-          {/* Table */}
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="p-4 border-b border-slate-200 flex items-center justify-between">
-              <div>
-                <h3 className="font-bold text-slate-800 text-sm">
-                  Laporan Rincian Keluar Masuk Barang
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Periode: {filterType.toUpperCase()} ({year} {month ? `Bulan ${month}` : ''} {week ? `Minggu ${week}` : ''}) • Divisi: {divisiFilter}
-                </p>
-              </div>
-              <span className="text-xs font-semibold text-slate-500">
-                {txData.length} Catatan Ditemukan
-              </span>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[1000px] print:min-w-0 text-left text-xs">
-                <thead className="bg-slate-50 text-slate-600 border-b border-slate-200 font-semibold uppercase">
-                  <tr>
-                    <th className="py-2.5 px-3">Tanggal</th>
-                    <th className="py-2.5 px-3">No Transaksi</th>
-                    <th className="py-2.5 px-3">Tipe</th>
-                    <th className="py-2.5 px-3">Divisi</th>
-                    <th className="py-2.5 px-3">Penerima / Lokasi Terkait</th>
-                    <th className="py-2.5 px-3">Kode & Nama Barang</th>
-                    <th className="py-2.5 px-3 text-right">Qty</th>
-                    <th className="py-2.5 px-3 text-right">Harga Satuan</th>
-                    <th className="py-2.5 px-3 text-right">Total Nilai (Rp)</th>
-                    <th className="py-2.5 px-3">Keterangan</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {txLoading ? (
-                    <tr>
-                      <td colSpan="10" className="py-8 text-center text-slate-400">
-                        Memuat data laporan...
-                      </td>
-                    </tr>
-                  ) : txData.length === 0 ? (
-                    <tr>
-                      <td colSpan="10" className="py-8 text-center text-slate-400">
-                        Tidak ada transaksi mutasi pada periode yang dipilih.
-                      </td>
-                    </tr>
-                  ) : (
-                    txData.map((t) => (
-                      <tr key={t.id} className="hover:bg-slate-50">
-                        <td className="py-2.5 px-3 whitespace-nowrap text-slate-700">{formatDate(t.tanggal)}</td>
-                        <td className="py-2.5 px-3 font-mono text-[11px] text-slate-700 whitespace-nowrap">{t.no_transaksi}</td>
-                        <td className="py-2.5 px-3 whitespace-nowrap">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            t.jenis === 'MASUK' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
-                          }`}>
-                            {t.jenis}
-                          </span>
-                        </td>
-                        <td className="py-2.5 px-3 whitespace-nowrap font-medium text-slate-700">{t.divisi}</td>
-                        <td className="py-2.5 px-3 font-medium text-slate-900 truncate max-w-xs">{t.lokasi_penerima}</td>
-                        <td className="py-2.5 px-3">
-                          <div className="font-semibold text-slate-900 truncate max-w-xs">{t.nama_barang}</div>
-                          <div className="text-[10px] font-mono text-indigo-700">{t.kode_barang}</div>
-                        </td>
-                        <td className="py-2.5 px-3 text-right font-bold text-slate-900 whitespace-nowrap">
-                          {formatNumber(t.jumlah)} {t.satuan}
-                        </td>
-                        <td className="py-2.5 px-3 text-right text-slate-600 whitespace-nowrap">
-                          {formatRupiah(t.harga_satuan)}
-                        </td>
-                        <td className="py-2.5 px-3 text-right font-bold text-indigo-700 whitespace-nowrap">
-                          {formatRupiah(t.total_harga)}
-                        </td>
-                        <td className="py-2.5 px-3 text-slate-500 max-w-xs truncate">{t.keterangan || '-'}</td>
-                      </tr>
-                    ))
+                  {(stockSearch || stockCategoryFilter) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setStockSearch('');
+                        setStockCategoryFilter('');
+                      }}
+                      className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition"
+                    >
+                      Reset Filter
+                    </button>
                   )}
-                </tbody>
-              </table>
-            </div>
+                </div>
+              </div>
+            )}
           </div>
+
+          {/* ============================================================== */}
+          {/* TAMPILAN STOK GUDANG KESELURUHAN TERSEDIA / BARANG STOK MENIPIS */}
+          {/* ============================================================== */}
+          {isWarehouseStockMode ? (
+            <>
+              {/* KPI Summary Cards - Gudang Logistik */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+                  <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">
+                    Total Katalog Gudang
+                  </span>
+                  <div className="text-xl font-bold text-slate-900 mt-1">
+                    {formatNumber(stockSummary?.total_sku || 0)} <span className="text-xs font-normal text-slate-500">SKU</span>
+                  </div>
+                  <span className="text-[11px] text-slate-500 block mt-0.5">
+                    {formatNumber(stockSummary?.sku_tersedia || 0)} SKU memiliki stok tersedia
+                  </span>
+                </div>
+
+                <div
+                  onClick={() => {
+                    setDivisiFilter('GUDANG');
+                    setJenisFilter('STOK_TERSEDIA');
+                  }}
+                  className={`p-4 rounded-xl border shadow-sm cursor-pointer transition ${
+                    jenisFilter === 'STOK_TERSEDIA'
+                      ? 'bg-emerald-50 border-emerald-400 ring-2 ring-emerald-500/20'
+                      : 'bg-emerald-50/70 border-emerald-200 hover:bg-emerald-50'
+                  }`}
+                >
+                  <span className="text-[11px] font-semibold text-emerald-800 uppercase tracking-wider block">
+                    Stok Gudang Tersedia
+                  </span>
+                  <div className="text-xl font-bold text-emerald-950 mt-1">
+                    {formatNumber(stockSummary?.total_stok_tersedia || 0)} <span className="text-xs font-normal text-emerald-700">Unit/Qty</span>
+                  </div>
+                  <span className="text-[11px] font-bold text-emerald-700 block mt-0.5">
+                    {formatRupiah(stockSummary?.total_nilai_gudang || 0)}
+                  </span>
+                </div>
+
+                <div
+                  onClick={() => {
+                    setDivisiFilter('GUDANG');
+                    setJenisFilter('STOK_MENIPIS');
+                  }}
+                  className={`p-4 rounded-xl border shadow-sm cursor-pointer transition ${
+                    jenisFilter === 'STOK_MENIPIS'
+                      ? 'bg-amber-50 border-amber-400 ring-2 ring-amber-500/20'
+                      : 'bg-amber-50/70 border-amber-200 hover:bg-amber-50'
+                  }`}
+                >
+                  <span className="text-[11px] font-semibold text-amber-800 uppercase tracking-wider block">
+                    Barang Stok Menipis
+                  </span>
+                  <div className="text-xl font-bold text-amber-950 mt-1">
+                    {formatNumber(stockSummary?.low_stock_count || 0)} <span className="text-xs font-normal text-amber-700">Item SKU</span>
+                  </div>
+                  <span className="text-[11px] font-bold text-amber-700 block mt-0.5">
+                    {stockSummary?.out_of_stock_count > 0
+                      ? `${stockSummary.out_of_stock_count} SKU stok habis (0)`
+                      : 'Stok ≤ batas minimum'}
+                  </span>
+                </div>
+
+                <div className="bg-indigo-50/70 p-4 rounded-xl border border-indigo-200 shadow-sm">
+                  <span className="text-[11px] font-semibold text-indigo-800 uppercase tracking-wider block">
+                    Total Nilai Ditampilkan
+                  </span>
+                  <div className="text-xl font-bold text-indigo-950 mt-1">
+                    {formatNumber(displayedStokQty)} <span className="text-xs font-normal text-indigo-700">Unit</span>
+                  </div>
+                  <span className="text-[11px] font-bold text-indigo-800 block mt-0.5">
+                    {formatRupiah(displayedStokNilai)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Tabel Laporan Stok Gudang / Stok Menipis */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="p-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="font-bold text-slate-800 text-sm">
+                      {jenisFilter === 'STOK_MENIPIS'
+                        ? 'Laporan Peringatan Barang Stok Menipis — Gudang Logistik'
+                        : 'Laporan Stok Gudang Keseluruhan yang Tersedia — Gudang Logistik'}
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      {jenisFilter === 'STOK_MENIPIS'
+                        ? 'Daftar barang di Gudang Logistik dengan sisa stok di bawah atau sama dengan batas minimum (Stok ≤ Min. Stok)'
+                        : 'Daftar seluruh barang yang tersedia di Gudang Logistik beserta rincian stok fisik, batas minimum, dan valuasi'}
+                      {stockCategoryFilter ? ` • Kategori: ${stockCategoryFilter}` : ''}
+                    </p>
+                  </div>
+                  <span className="text-xs font-semibold text-slate-500">
+                    {stockData.length} Barang Ditampilkan
+                  </span>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[1000px] print:min-w-0 text-left text-xs">
+                    <thead className="bg-slate-50 text-slate-600 border-b border-slate-200 font-semibold uppercase">
+                      <tr>
+                        <th className="py-2.5 px-3">No</th>
+                        <th className="py-2.5 px-3">Kode Barang</th>
+                        <th className="py-2.5 px-3">Nama Barang & Kategori</th>
+                        <th className="py-2.5 px-3">Suplayer / Referensi</th>
+                        <th className="py-2.5 px-3 text-right">Stok Tersedia</th>
+                        <th className="py-2.5 px-3 text-right">Batas Min.</th>
+                        <th className="py-2.5 px-3 text-center">Status Stok</th>
+                        <th className="py-2.5 px-3 text-right">Terpasang</th>
+                        <th className="py-2.5 px-3 text-right">Harga Satuan</th>
+                        <th className="py-2.5 px-3 text-right">Total Nilai Stok (Rp)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {stockLoading ? (
+                        <tr>
+                          <td colSpan="10" className="py-8 text-center text-slate-400">
+                            Memuat data stok gudang logistik...
+                          </td>
+                        </tr>
+                      ) : stockData.length === 0 ? (
+                        <tr>
+                          <td colSpan="10" className="py-10 text-center text-slate-500">
+                            {jenisFilter === 'STOK_MENIPIS' ? (
+                              <div className="space-y-2">
+                                <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto" />
+                                <div className="font-bold text-slate-800 text-sm">
+                                  Semua Stok Gudang Aman
+                                </div>
+                                <p className="text-xs text-slate-500">
+                                  Tidak ada barang yang berada di bawah atau sama dengan batas minimum stok saat ini.
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={() => setJenisFilter('STOK_TERSEDIA')}
+                                  className="no-print mt-1 inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold transition"
+                                >
+                                  <Package className="w-3.5 h-3.5" />
+                                  <span>Lihat Stok Gudang Keseluruhan yang Tersedia</span>
+                                </button>
+                              </div>
+                            ) : (
+                              <span>Tidak ada data stok barang di gudang yang cocok dengan filter.</span>
+                            )}
+                          </td>
+                        </tr>
+                      ) : (
+                        stockData.map((item, idx) => (
+                          <tr key={item.id} className="hover:bg-slate-50">
+                            <td className="py-2.5 px-3 text-slate-500 font-medium">{idx + 1}</td>
+                            <td className="py-2.5 px-3 font-mono text-[11px] font-bold text-indigo-700 whitespace-nowrap">
+                              {item.kode_barang}
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <div className="font-semibold text-slate-900">{item.nama_barang}</div>
+                              <div className="text-[11px] text-slate-500">{item.jenis_barang}</div>
+                            </td>
+                            <td className="py-2.5 px-3 text-slate-700 max-w-xs truncate">
+                              {item.referensi_suplayer || '-'}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-bold text-slate-900 whitespace-nowrap">
+                              {formatNumber(item.stok)} {item.satuan}
+                            </td>
+                            <td className="py-2.5 px-3 text-right text-slate-600 whitespace-nowrap">
+                              {formatNumber(item.min_stok)} {item.satuan}
+                            </td>
+                            <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                              {item.status_stok === 'HABIS' ? (
+                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-800">
+                                  STOK HABIS
+                                </span>
+                              ) : item.status_stok === 'MENIPIS' ? (
+                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800">
+                                  STOK MENIPIS
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                                  TERSEDIA
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3 text-right text-slate-600 whitespace-nowrap">
+                              {formatNumber(item.qty_terpasang || 0)} {item.satuan}
+                            </td>
+                            <td className="py-2.5 px-3 text-right text-slate-600 whitespace-nowrap">
+                              {formatRupiah(item.harga_barang)}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-bold text-indigo-700 whitespace-nowrap">
+                              {formatRupiah(item.nilai_stok)}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="p-4 bg-slate-50 border-t border-slate-200 text-xs text-slate-600 flex flex-wrap items-center justify-between gap-2">
+                  <span>
+                    Total: <strong>{stockData.length} SKU</strong> ({formatNumber(displayedStokQty)} Unit Fisik di Gudang)
+                  </span>
+                  <span className="font-bold text-slate-800">
+                    Total Valuasi Stok Gudang: {formatRupiah(displayedStokNilai)}
+                  </span>
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              {/* KPI Summary Cards - Mutasi Mode */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+                  <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">Total Transaksi</span>
+                  <div className="text-xl font-bold text-slate-900 mt-1">
+                    {formatNumber(txSummary?.total_transaksi || 0)} <span className="text-xs font-normal text-slate-500">Mutasi</span>
+                  </div>
+                </div>
+
+                <div className="bg-emerald-50/70 p-4 rounded-xl border border-emerald-200 shadow-sm">
+                  <span className="text-[11px] font-semibold text-emerald-800 uppercase tracking-wider block">Barang Masuk</span>
+                  <div className="text-xl font-bold text-emerald-950 mt-1">
+                    {formatNumber(txSummary?.total_masuk_qty || 0)} <span className="text-xs font-normal text-emerald-700">Unit</span>
+                  </div>
+                  <span className="text-[11px] font-bold text-emerald-700 block mt-0.5">
+                    {formatRupiah(txSummary?.total_masuk_nilai || 0)}
+                  </span>
+                </div>
+
+                <div className="bg-rose-50/70 p-4 rounded-xl border border-rose-200 shadow-sm">
+                  <span className="text-[11px] font-semibold text-rose-800 uppercase tracking-wider block">Barang Keluar</span>
+                  <div className="text-xl font-bold text-rose-950 mt-1">
+                    {formatNumber(txSummary?.total_keluar_qty || 0)} <span className="text-xs font-normal text-rose-700">Unit</span>
+                  </div>
+                  <span className="text-[11px] font-bold text-rose-700 block mt-0.5">
+                    {formatRupiah(txSummary?.total_keluar_nilai || 0)}
+                  </span>
+                </div>
+
+                <div className="bg-indigo-50/70 p-4 rounded-xl border border-indigo-200 shadow-sm">
+                  <span className="text-[11px] font-semibold text-indigo-800 uppercase tracking-wider block">Net Saldo Mutasi</span>
+                  <div className={`text-xl font-bold mt-1 ${(txSummary?.net_qty || 0) >= 0 ? 'text-indigo-950' : 'text-rose-900'}`}>
+                    {formatNumber(txSummary?.net_qty || 0)} <span className="text-xs font-normal text-indigo-700">Unit</span>
+                  </div>
+                  <span className="text-[11px] font-bold text-indigo-800 block mt-0.5">
+                    {formatRupiah(txSummary?.net_nilai || 0)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Visual Ratio & Division Breakdown Bar */}
+              {txSummary && (txSummary.total_masuk_qty > 0 || txSummary.total_keluar_qty > 0) && (
+                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-bold text-slate-800">Rasio Pergerakan Barang Periode Ini:</span>
+                    <span className="text-slate-500">
+                      Total Volume Mutasi: {formatNumber(txSummary.total_masuk_qty + txSummary.total_keluar_qty)} Unit
+                    </span>
+                  </div>
+
+                  {/* Progress Bar */}
+                  <div className="w-full h-4 bg-slate-100 rounded-full overflow-hidden flex shadow-inner">
+                    <div
+                      style={{
+                        width: `${Math.round((txSummary.total_masuk_qty / ((txSummary.total_masuk_qty + txSummary.total_keluar_qty) || 1)) * 100)}%`
+                      }}
+                      className="bg-emerald-500 h-full transition-all"
+                      title={`Barang Masuk: ${txSummary.total_masuk_qty} unit`}
+                    />
+                    <div
+                      style={{
+                        width: `${Math.round((txSummary.total_keluar_qty / ((txSummary.total_masuk_qty + txSummary.total_keluar_qty) || 1)) * 100)}%`
+                      }}
+                      className="bg-rose-500 h-full transition-all"
+                      title={`Barang Keluar: ${txSummary.total_keluar_qty} unit`}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs pt-1">
+                    <span className="text-emerald-700 font-bold flex items-center gap-1.5">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                      Barang Masuk: {Math.round((txSummary.total_masuk_qty / ((txSummary.total_masuk_qty + txSummary.total_keluar_qty) || 1)) * 100)}% ({formatNumber(txSummary.total_masuk_qty)} unit)
+                    </span>
+                    <span className="text-rose-700 font-bold flex items-center gap-1.5">
+                      Barang Keluar: {Math.round((txSummary.total_keluar_qty / ((txSummary.total_masuk_qty + txSummary.total_keluar_qty) || 1)) * 100)}% ({formatNumber(txSummary.total_keluar_qty)} unit)
+                      <span className="w-2.5 h-2.5 rounded-full bg-rose-500" />
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Table - Mutasi Mode */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="p-4 border-b border-slate-200 flex items-center justify-between">
+                  <div>
+                    <h3 className="font-bold text-slate-800 text-sm">
+                      Laporan Rincian Keluar Masuk Barang
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Periode: {filterType.toUpperCase()} ({year} {month ? `Bulan ${month}` : ''} {week ? `Minggu ${week}` : ''}) • Divisi: {divisiFilter}
+                    </p>
+                  </div>
+                  <span className="text-xs font-semibold text-slate-500">
+                    {txData.length} Catatan Ditemukan
+                  </span>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[1000px] print:min-w-0 text-left text-xs">
+                    <thead className="bg-slate-50 text-slate-600 border-b border-slate-200 font-semibold uppercase">
+                      <tr>
+                        <th className="py-2.5 px-3">Tanggal</th>
+                        <th className="py-2.5 px-3">No Transaksi</th>
+                        <th className="py-2.5 px-3">Tipe</th>
+                        <th className="py-2.5 px-3">Divisi</th>
+                        <th className="py-2.5 px-3">Penerima / Lokasi Terkait</th>
+                        <th className="py-2.5 px-3">Kode & Nama Barang</th>
+                        <th className="py-2.5 px-3 text-right">Qty</th>
+                        <th className="py-2.5 px-3 text-right">Harga Satuan</th>
+                        <th className="py-2.5 px-3 text-right">Total Nilai (Rp)</th>
+                        <th className="py-2.5 px-3">Keterangan</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {txLoading ? (
+                        <tr>
+                          <td colSpan="10" className="py-8 text-center text-slate-400">
+                            Memuat data laporan...
+                          </td>
+                        </tr>
+                      ) : txData.length === 0 ? (
+                        <tr>
+                          <td colSpan="10" className="py-8 text-center text-slate-400">
+                            Tidak ada transaksi mutasi pada periode yang dipilih.
+                          </td>
+                        </tr>
+                      ) : (
+                        txData.map((t) => (
+                          <tr key={t.id} className="hover:bg-slate-50">
+                            <td className="py-2.5 px-3 whitespace-nowrap text-slate-700">{formatDate(t.tanggal)}</td>
+                            <td className="py-2.5 px-3 font-mono text-[11px] text-slate-700 whitespace-nowrap">{t.no_transaksi}</td>
+                            <td className="py-2.5 px-3 whitespace-nowrap">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                t.jenis === 'MASUK' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                              }`}>
+                                {t.jenis}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3 whitespace-nowrap font-medium text-slate-700">{t.divisi}</td>
+                            <td className="py-2.5 px-3 font-medium text-slate-900 truncate max-w-xs">{t.lokasi_penerima}</td>
+                            <td className="py-2.5 px-3">
+                              <div className="font-semibold text-slate-900 truncate max-w-xs">{t.nama_barang}</div>
+                              <div className="text-[10px] font-mono text-indigo-700">{t.kode_barang}</div>
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-bold text-slate-900 whitespace-nowrap">
+                              {formatNumber(t.jumlah)} {t.satuan}
+                            </td>
+                            <td className="py-2.5 px-3 text-right text-slate-600 whitespace-nowrap">
+                              {formatRupiah(t.harga_satuan)}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-bold text-indigo-700 whitespace-nowrap">
+                              {formatRupiah(t.total_harga)}
+                            </td>
+                            <td className="py-2.5 px-3 text-slate-500 max-w-xs truncate">{t.keterangan || '-'}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -671,6 +1131,7 @@ export default function Laporan({ onRefreshData }) {
                 <option value="DIVISI FO">Hanya yang Terpasang di FO</option>
                 <option value="DIVISI TOWER">Hanya yang Terpasang di Tower</option>
                 <option value="GUDANG">Hanya yang Ada Stok di Gudang</option>
+                <option value="STOK_MENIPIS">Hanya Barang Stok Menipis di Gudang</option>
               </select>
             </div>
           </div>
@@ -718,7 +1179,11 @@ export default function Laporan({ onRefreshData }) {
 
                         {/* Stok Gudang */}
                         <td className="py-3 px-3 text-right whitespace-nowrap">
-                          <span className="px-2 py-1 rounded bg-slate-100 font-bold text-slate-800">
+                          <span className={`px-2 py-1 rounded font-bold ${
+                            item.stok_gudang <= (item.min_stok ?? 0)
+                              ? 'bg-amber-100 text-amber-800'
+                              : 'bg-slate-100 text-slate-800'
+                          }`}>
                             {formatNumber(item.stok_gudang)} {item.satuan}
                           </span>
                         </td>
@@ -908,29 +1373,29 @@ export default function Laporan({ onRefreshData }) {
               </div>
             </div>
           </div>
-
-          {/* Printable Signature Section */}
-          <div className="print-only mt-12 pt-8 border-t border-slate-300">
-            <div className="grid grid-cols-3 text-center text-xs text-slate-700">
-              <div>
-                <p className="font-semibold">Dibuat Oleh,</p>
-                <div className="h-20" />
-                <p className="font-bold underline">( Staff Logistik & Inventaris )</p>
-              </div>
-              <div>
-                <p className="font-semibold">Diperiksa Oleh,</p>
-                <div className="h-20" />
-                <p className="font-bold underline">( Manager Operasional Teknis )</p>
-              </div>
-              <div>
-                <p className="font-semibold">Disetujui Oleh,</p>
-                <div className="h-20" />
-                <p className="font-bold underline">( Direktur Operasional )</p>
-              </div>
-            </div>
-          </div>
         </div>
       )}
+
+      {/* Printable Signature Section (tampil pada semua laporan saat dicetak) */}
+      <div className="print-only mt-12 pt-8 border-t border-slate-300">
+        <div className="grid grid-cols-3 text-center text-xs text-slate-700">
+          <div>
+            <p className="font-semibold">Dibuat Oleh,</p>
+            <div className="h-20" />
+            <p className="font-bold underline">( Staff Logistik & Inventaris )</p>
+          </div>
+          <div>
+            <p className="font-semibold">Diperiksa Oleh,</p>
+            <div className="h-20" />
+            <p className="font-bold underline">( Manager Operasional Teknis )</p>
+          </div>
+          <div>
+            <p className="font-semibold">Disetujui Oleh,</p>
+            <div className="h-20" />
+            <p className="font-bold underline">( Direktur Operasional )</p>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
