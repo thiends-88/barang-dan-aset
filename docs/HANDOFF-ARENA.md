@@ -5,8 +5,8 @@
 > pernah kena, dan hal-hal yang belum selesai — supaya sesi baru tidak mengulang debat yang
 > sama atau merusak hal yang sudah disepakati.
 >
-> Terakhir diperbarui: **29 September 2026** · basis commit: `e44df08` (merge PR #8)
-> Repo: <https://github.com/thiends-88/barang-dan-aset> · Branch kerja sesi terakhir: `arena/01a0edaf-barang-dan-aset`
+> Terakhir diperbarui: **1 Oktober 2026** · basis commit: `f1e7e84` (merge PR #9)
+> Repo: <https://github.com/thiends-88/barang-dan-aset> · Branch kerja sesi terakhir: `arena/01a0f6d1-barang-dan-aset`
 > Sesi baru cukup diminta: *"Baca docs/HANDOFF-ARENA.md lalu lanjutkan dari §12."*
 
 ---
@@ -580,6 +580,14 @@ di README, info versi build (`/api/version`,
   di baris yang benar. Ketiga mutasi bug (kembali ke `max-nav:hidden`, pakai `min-[…]`+`sm:`, dan
   `short` kepanjangan) sudah diuji **benar-benar membuat test gagal**.
 - Hasil: **API 78/78 lolos, SSR 29/29 lolos, `npm run build` sukses** (bundle 273 kB → 271,92 kB).
+
+**Selesai di sesi `arena/01a0f6d1` (pilihan stok gudang keseluruhan tersedia & barang stok menipis di Laporan Gudang Logistik):**
+- Di menu **Laporan → Laporan Barang Masuk & Keluar → Gudang Logistik**, ditambahkan pilihan:
+  1. **Stok Gudang Keseluruhan yang Tersedia** (`STOK_TERSEDIA`): menampilkan seluruh barang di Gudang Logistik yang memiliki stok tersedia (`stok > 0`), lengkap dengan KPI ringkasan gudang, filter pencarian & kategori, status stok, jumlah terpasang di divisi, harga satuan, total nilai stok, Export CSV, dan Cetak / Print PDF (lengkap kop & tanda tangan).
+  2. **Barang Stok Menipis** (`STOK_MENIPIS`): menampilkan barang di Gudang Logistik dengan `stok <= min_stok` (diurutkan dari stok paling kritis), lengkap dengan status `STOK MENIPIS` / `STOK HABIS`, batas minimum, pencarian/filter kategori, Export CSV, dan Cetak / Print PDF.
+- Pilihan ini dapat diakses baik dari dropdown Divisi (`Gudang Logistik — Stok Gudang Keseluruhan yang Tersedia` / `Gudang Logistik — Barang Stok Menipis`), dropdown Jenis Laporan di sebelahnya, maupun bilah tombol cepat **Pilihan Gudang Logistik** yang tampil saat `Gudang Logistik` dipilih.
+- Endpoint baru `GET /api/reports/warehouse-stock` (`filter=tersedia|menipis|semua`, `kategori`, `search`) + dukungan `divisi=STOK_MENIPIS` pada `GET /api/reports/installed-assets`.
+- Seksi tes baru `6E` di `api-test.mjs` (+3 → **81/81 lolos**) dan Seksi `20` di `ssr-test.mjs` (+1 → **30/30 lolos**), `dist/` di-build ulang.
 
 **Belum dikerjakan / kandidat sesi berikutnya:**
 

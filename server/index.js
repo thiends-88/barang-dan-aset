@@ -2651,6 +2651,7 @@ app.get('/api/reports/installed-assets', (req, res) => {
         harga_barang: it.harga_barang,
         referensi_suplayer: it.referensi_suplayer,
         stok_gudang: it.stok,
+        min_stok: it.min_stok,
         qty_pelanggan: qtyPelanggan,
         qty_fo: qtyFO,
         qty_tower: qtyTower,
@@ -2675,9 +2676,96 @@ app.get('/api/reports/installed-assets', (req, res) => {
       filteredResult = result.filter(r => r.qty_tower > 0);
     } else if (divisi === 'GUDANG') {
       filteredResult = result.filter(r => r.stok_gudang > 0);
+    } else if (divisi === 'STOK_MENIPIS') {
+      filteredResult = result.filter(r => r.stok_gudang <= r.min_stok);
     }
 
     res.json({ success: true, data: filteredResult });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Report Stok Gudang Logistik (Stok Gudang Keseluruhan yang Tersedia & Barang Stok Menipis)
+app.get('/api/reports/warehouse-stock', (req, res) => {
+  try {
+    const { filter = 'tersedia', kategori, search } = req.query;
+
+    const allItems = db.prepare('SELECT * FROM items ORDER BY nama_barang ASC').all();
+
+    const custQtyRows = db.prepare('SELECT UPPER(kode_barang) as kode, COALESCE(SUM(jumlah), 0) as qty FROM customer_items GROUP BY UPPER(kode_barang)').all();
+    const foQtyRows = db.prepare('SELECT UPPER(kode_barang) as kode, COALESCE(SUM(jumlah), 0) as qty FROM fo_items GROUP BY UPPER(kode_barang)').all();
+    const towerQtyRows = db.prepare('SELECT UPPER(kode_barang) as kode, COALESCE(SUM(jumlah), 0) as qty FROM tower_items GROUP BY UPPER(kode_barang)').all();
+
+    const custMap = new Map(custQtyRows.map(r => [r.kode, Number(r.qty) || 0]));
+    const foMap = new Map(foQtyRows.map(r => [r.kode, Number(r.qty) || 0]));
+    const towerMap = new Map(towerQtyRows.map(r => [r.kode, Number(r.qty) || 0]));
+
+    const enriched = allItems.map(it => {
+      const stok = Number(it.stok) || 0;
+      const minStok = Number(it.min_stok) || 0;
+      const harga = Number(it.harga_barang) || 0;
+      const kodeKey = (it.kode_barang || '').toUpperCase();
+      const qtyTerpasang = (custMap.get(kodeKey) || 0) + (foMap.get(kodeKey) || 0) + (towerMap.get(kodeKey) || 0);
+      const statusStok = stok <= 0 ? 'HABIS' : (stok <= minStok ? 'MENIPIS' : 'AMAN');
+
+      return {
+        ...it,
+        stok,
+        min_stok: minStok,
+        harga_barang: harga,
+        nilai_stok: stok * harga,
+        qty_terpasang: qtyTerpasang,
+        total_aset: stok + qtyTerpasang,
+        status_stok: statusStok,
+        selisih_min: stok - minStok,
+        kekurangan_stok: Math.max(0, minStok - stok)
+      };
+    });
+
+    const summary = {
+      total_sku: enriched.length,
+      sku_tersedia: enriched.filter(i => i.stok > 0).length,
+      total_stok_tersedia: enriched.filter(i => i.stok > 0).reduce((a, b) => a + b.stok, 0),
+      total_nilai_gudang: enriched.reduce((a, b) => a + b.nilai_stok, 0),
+      low_stock_count: enriched.filter(i => i.stok <= i.min_stok).length,
+      out_of_stock_count: enriched.filter(i => i.stok <= 0).length,
+      total_nilai_menipis: enriched.filter(i => i.stok <= i.min_stok).reduce((a, b) => a + b.nilai_stok, 0)
+    };
+
+    let filtered = enriched;
+
+    if (filter === 'menipis') {
+      filtered = filtered.filter(i => i.stok <= i.min_stok);
+      filtered.sort((a, b) => a.stok - b.stok || a.nama_barang.localeCompare(b.nama_barang));
+    } else if (filter === 'tersedia') {
+      filtered = filtered.filter(i => i.stok > 0);
+    }
+
+    if (kategori) {
+      const katLower = String(kategori).toLowerCase();
+      filtered = filtered.filter(i => (i.jenis_barang || '').toLowerCase() === katLower);
+    }
+
+    if (search) {
+      const s = String(search).toLowerCase();
+      filtered = filtered.filter(i =>
+        (i.kode_barang || '').toLowerCase().includes(s) ||
+        (i.nama_barang || '').toLowerCase().includes(s) ||
+        (i.jenis_barang || '').toLowerCase().includes(s) ||
+        (i.referensi_suplayer || '').toLowerCase().includes(s) ||
+        (i.catatan || '').toLowerCase().includes(s)
+      );
+    }
+
+    const categories = [...new Set(allItems.map(i => i.jenis_barang).filter(Boolean))].sort();
+
+    res.json({
+      success: true,
+      data: filtered,
+      summary,
+      categories
+    });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
