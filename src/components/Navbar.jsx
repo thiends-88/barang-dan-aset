@@ -11,13 +11,14 @@ import {
   RotateCcw,
   Layers,
   ShieldCheck,
-  LogOut
+  LogOut,
+  Wrench
 } from 'lucide-react';
 import { canAccessMenu, ROLE_LABELS } from '../utils/auth';
 
 // `label`  = nama lengkap → dipakai di baris menu geser (layar kecil/sempit) & tooltip.
 // `short`  = nama ringkas → dipakai di baris menu utama desktop. WAJIB diisi: tanpa
-//            `short` yang cukup pendek, 8 menu tidak muat satu baris di laptop
+//            `short` yang cukup pendek, 9 menu tidak muat satu baris di laptop
 //            dan baris menu ikut tergulir/menabrak tombol di sebelahnya.
 // Menambah menu baru? Isi KEDUA kunci di bawah.
 const ALL_NAV_ITEMS = [
@@ -27,6 +28,7 @@ const ALL_NAV_ITEMS = [
   { id: 'fo', label: 'Divisi FO', short: 'FO', icon: Network },
   { id: 'tower', label: 'Divisi Tower', short: 'Tower', icon: Radio },
   { id: 'transaksi', label: 'Keluar / Masuk', short: 'Mutasi', icon: ArrowLeftRight },
+  { id: 'bonteknisi', label: 'Bon Teknisi', short: 'Bon', icon: Wrench },
   { id: 'laporan', label: 'Laporan Terpadu', short: 'Laporan', icon: FileText },
   { id: 'users', label: 'Manajemen User', short: 'User', icon: ShieldCheck }
 ];
@@ -68,8 +70,8 @@ export default function Navbar({
     }
   }, [currentTab]);
 
-  // Peringatan developer (konsol) bila 8 menu tidak lagi muat dalam satu baris:
-  // biasanya berarti ada menu ke-9 atau label `short` yang terlalu panjang.
+  // Peringatan developer (konsol) bila 9 menu tidak lagi muat dalam satu baris:
+  // biasanya berarti ada menu ke-10 atau label `short` yang terlalu panjang.
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return;
     const mq = window.matchMedia(`(min-width: ${NAV_BREAKPOINT_PX}px)`);
@@ -100,7 +102,7 @@ export default function Navbar({
 
         Aturan ruang di baris ini — JANGAN dilanggar:
         1. Menu utama yang diprioritaskan. Brand & tombol alat dibuat RINGKAS
-           (ikon saja, tanpa teks) supaya 8 menu selalu muat tanpa tergulir.
+           (ikon saja, tanpa teks) supaya 9 menu selalu muat tanpa tergulir.
            Inilah penyebab bug lama: label tombol ikut tampil pada 1100–1535px,
            memakan ~540px, sehingga menu hanya dapat 392px dari 602px yang
            dibutuhkan → item menu tergeser keluar & tertimpa tombol "Pindai
@@ -146,7 +148,7 @@ export default function Navbar({
                   onClick={() => onSelectTab(item.id)}
                   title={item.label}
                   aria-current={isActive ? 'page' : undefined}
-                  className={`px-2 xl:px-3 py-2 rounded-xl text-xs font-semibold whitespace-nowrap shrink-0 flex items-center gap-1.5 transition ${
+                  className={`px-1.5 xl:px-3 py-2 rounded-xl text-xs font-semibold whitespace-nowrap shrink-0 flex items-center gap-1.5 transition ${
                     isActive
                       ? 'bg-indigo-600 text-white shadow-sm'
                       : 'text-slate-300 hover:text-white hover:bg-slate-800'

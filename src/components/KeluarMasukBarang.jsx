@@ -23,7 +23,7 @@ import {
 import { formatRupiah, formatNumber, formatDate, exportToCSV, todayLocal } from '../utils/formatters';
 import { notify } from '../utils/notify';
 
-const DIVISI_OPTIONS = ['SEMUA', 'PELANGGAN', 'DIVISI FO', 'DIVISI TOWER', 'GUDANG'];
+const DIVISI_OPTIONS = ['SEMUA', 'PELANGGAN', 'DIVISI FO', 'DIVISI TOWER', 'GUDANG', 'TEKNISI']; // TEKNISI = mutasi Bon Teknisi (dibawa / dikembalikan)
 const CURRENT_YEAR = 2026;
 const YEARS = [2026, 2025, 2024];
 const MONTHS = [

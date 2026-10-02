@@ -11,7 +11,9 @@ import {
   installAuthFetch,
   canAccessMenu,
   canManageInventory,
-  canManageDivisions
+  canManageDivisions,
+  canManageBon,
+  canInstallFromBon
 } from './utils/auth';
 import { RefreshCw, CheckCircle2, AlertTriangle } from 'lucide-react';
 
@@ -25,6 +27,7 @@ const DivisiFO = lazy(() => import('./components/DivisiFO'));
 const DivisiTower = lazy(() => import('./components/DivisiTower'));
 const KeluarMasukBarang = lazy(() => import('./components/KeluarMasukBarang'));
 const Laporan = lazy(() => import('./components/Laporan'));
+const BonTeknisi = lazy(() => import('./components/BonTeknisi'));
 const UserManagement = lazy(() => import('./components/UserManagement'));
 
 // Modal label barcode menarik jsbarcode (via BarcodeRenderer) — cukup besar,
@@ -303,6 +306,19 @@ export default function App() {
               <KeluarMasukBarang
                 items={items}
                 onRefreshMaster={loadAllData}
+              />
+            )}
+
+            {currentTab === 'bonteknisi' && (
+              <BonTeknisi
+                items={items}
+                customers={customers}
+                foSites={foSites}
+                towerSites={towerSites}
+                onRefresh={loadAllData}
+                canManage={canManageBon(userRole)}
+                canInstall={canInstallFromBon(userRole)}
+                currentUser={session.user}
               />
             )}
 

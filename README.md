@@ -78,7 +78,15 @@ Aplikasi enterprise untuk manajemen inventaris barang dan pelacakan aset jaringa
     5. Daftar site divisi Tower mana saja yang memakai barang tersebut.
     6. Riwayat mutasi keluar/masuk barang tersebut lengkap tanggal, bulan, dan tahunnya.
 
-### 6. Laporan Terpadu (Reporting Engine)
+### 6. Bon / Barang Bawaan Teknisi (Stok Transit Lapangan)
+Menu **Bon Teknisi** mencatat barang yang dibawa teknisi dari gudang dalam **3 tahap**:
+1. **Bawa dari gudang** — buat bon (No. Bon otomatis `BON-YYYYMM-NNNN` atau diisi manual), nama teknisi yang membawa, daftar barang + **scan barcode** (scanner USB / kamera). Stok gudang **berkurang** dan pindah ke *stok dibawa teknisi* (mutasi KELUAR, divisi `TEKNISI`). Surat jalan bisa langsung dicetak.
+2. **Realisasi pemasangan** — dari bon ke salah satu divisi (**Pelanggan / Divisi FO / Divisi Tower**) lengkap **Serial Number**, **lokasi tujuan**, dan **teknisi yang memasang** (boleh berbeda dari pembawa). Barang tercatat terpasang di divisi tujuan (beserta No. Bon & teknisi pemasang); stok gudang tidak berubah karena barang sudah keluar di tahap 1.
+3. **Pengembalian sisa** — barang yang tidak terpakai kembali ke stok gudang (mutasi MASUK). Bon otomatis berstatus *Selesai* bila sisa habis; bon yang belum ada realisasi bisa *dibatalkan* (seluruh barang kembali ke gudang).
+
+Fitur pendukung: riwayat mutasi per bon & lintas bon (cari lewat No. Bon / SN / tujuan), cetak **surat jalan** atau **rekap lengkap** bon (A4), **laporan** (per teknisi pembawa & pemasang, per barang, per divisi tujuan; filter periode/status/teknisi; CSV & cetak), kolom *dibawa teknisi* di Master Barang, dan kartu *Dibawa Teknisi* di Dashboard. Hak akses: admin & staff gudang membuat bon / mengembalikan / membatalkan; teknisi mencatat realisasi pemasangan; viewer hanya melihat.
+
+### 7. Laporan Terpadu (Reporting Engine)
 - **Laporan Barang Masuk & Keluar**:
   - Filter rentang tanggal bebas (Dari - Sampai).
   - Filter per Minggu (Minggu ke-1, 2, 3, 4, 5).
@@ -127,7 +135,7 @@ Aplikasi enterprise untuk manajemen inventaris barang dan pelacakan aset jaringa
    Menguji alur pemasangan, pengeditan, dismantle, dan penghapusan barang untuk Pelanggan, Divisi FO, dan Divisi Tower, lalu memeriksa bahwa stok gudang tidak pernah minus dan **selalu cocok dengan riwayat mutasi**. Data contoh direset otomatis di awal dan di akhir pengujian. Menjalankan keduanya sekaligus: `npm test`.
 
 6. **CI (GitHub Actions)**:
-   Workflow CI sudah **aktif otomatis** di [`.github/workflows/ci.yml`](.github/workflows/ci.yml) (salinan rujukan di [`docs/ci.yml`](docs/ci.yml)) — menjalankan `npm ci` → server uji port 3001 → `npm test` (78 tes API + 18 tes SSR) → `npm run build` pada setiap push ke `main` dan setiap Pull Request, di lingkungan yang selalu bersih (database dibuat + diisi data contoh dari nol).
+   Workflow CI sudah **aktif otomatis** di [`.github/workflows/ci.yml`](.github/workflows/ci.yml) (salinan rujukan di [`docs/ci.yml`](docs/ci.yml)) — menjalankan `npm ci` → server uji port 3001 → `npm test` (128 tes API + 41 tes render) → `npm run build` pada setiap push ke `main` dan setiap Pull Request, di lingkungan yang selalu bersih (database dibuat + diisi data contoh dari nol).
 
 ---
 
@@ -256,6 +264,7 @@ Seluruh perubahan stok divalidasi di sisi server:
 - **Kode barang wajib terdaftar** di master data.
 - **Pengeditan memakai penyesuaian selisih** — stok hanya berubah sebesar perbedaan pemasangan lama vs baru, dan setiap selisih otomatis tercatat sebagai mutasi masuk/keluar.
 - **Menghapus data Pelanggan / FO / Tower mengembalikan stok** barang yang masih terpasang beserta catatan mutasinya, sehingga tidak ada stok yang hilang.
+- **Bon Teknisi menjaga invarian stok** — hanya tahap *bawa* (KELUAR) dan *kembali* (MASUK) yang menyentuh stok gudang dan keduanya tercatat di riwayat mutasi; jumlah realisasi + pengembalian tidak bisa melebihi yang dibawa, dan SN yang sudah terpasang tidak bisa dipasang dua kali.
 - **Sebelum berubah, semua operasi dibungkus transaksi database** — bila ada satu baris gagal, seluruh perubahan dibatalkan (rollback).
 
 ---

@@ -85,6 +85,9 @@ src/
     BarcodeScannerModal.jsx (lazy-load html5-qrcode)   BarcodeLabelModal.jsx   BarcodeRenderer.jsx
     CategoryManagerModal.jsx  ImportDataModal.jsx      UserManagement.jsx
     WorkOrderPrintModal.jsx (BASTP pelanggan / berita acara FO / Tower)  Navbar.jsx
+    BonTeknisi.jsx (halaman Bon Teknisi: daftar, riwayat, laporan, detail)
+    BonTeknisiForms.jsx (bon baru + scan, realisasi pemasangan, pengembalian)
+    BonTeknisiPrint.jsx (surat jalan / rekap bon, pakai blok .print-doc)
   utils/
     auth.js       → sesi localStorage, peta MENU_ACCESS, penambal window.fetch
     formatters.js → todayLocal(), formatRupiah(), formatNumber(), formatDate(), exportToCSV()
@@ -143,8 +146,8 @@ reverse proxy) ada di `README.md` bagian **Deploy ke Proxmox**.
 ```bash
 PORT=3001 node server/index.js &     # siapkan server untuk pengujian
 npm test                             # = api-test.mjs && ssr-test.mjs
-npm run test:api                     # 78 tes integrasi API
-npm run test:render                  # 29 tes render (18 smoke + 11 regresi Navbar)
+npm run test:api                     # 128 tes integrasi API
+npm run test:render                  # 41 tes render (18 smoke + 11 regresi Navbar + 1 Seksi 20 + 11 Seksi 21 Bon Teknisi)
 ```
 
 > Hasil terakhir (sesi `arena/01a0edc1`, 29 Sep 2026): **API 78/78 lolos, SSR 29/29 lolos**
@@ -246,6 +249,7 @@ itu wajar karena perbedaan versi toolchain, bukan bug.
 ### 5.4 Hak akses (satu sumber kebenaran = server)
 - Peta izin di `server/index.js` (`WRITE_RULES`) dan di UI (`MENU_ACCESS`, `canManageInventory`,
   `canManageDivisions` di `src/utils/auth.js`) harus **selalu selaras**; server tetap penentu akhir.
+- Bon Teknisi: `POST /api/technician-loans/:id/install` boleh `admin/staff_gudang/teknisi`; semua `POST` lain di `/api/technician-loans` hanya `admin/staff_gudang` (aturan spesifik harus berada SEBELUM aturan umum di `WRITE_RULES`).
 - `GET` boleh untuk semua peran yang sudah login. `POST/PUT/DELETE` dibatasi peran;
   `viewer` tidak boleh menulis apa pun (default tolak).
 - UI menyembunyikan/menonaktifkan aksi dengan prop `canEdit` — bukan sekadar mengandalkan error server.
@@ -371,10 +375,40 @@ itu wajar karena perbedaan versi toolchain, bukan bug.
 
 ---
 
+### 6.10 Bon / Barang Bawaan Teknisi (stok transit lapangan)
+- **Alur 3 tahap** (semua di `server/index.js`, bagian *5B*): `POST /api/technician-loans` (BAWA) →
+  `POST /:id/install` (PASANG) → `POST /:id/return` (KEMBALI); `POST /:id/cancel` membatalkan bon yang
+  belum ada realisasi pemasangan. Semuanya `db.transaction`.
+- **Stok**: hanya BAWA (`KELUAR`) dan KEMBALI/BATAL (`MASUK`) yang menyentuh `items.stok` dan **wajib** tercatat di
+  `transactions` (`divisi = 'TEKNISI'`, `kategori_transaksi` = `Bon Teknisi (Dibawa)` / `Pengembalian Bon Teknisi` /
+  `Pembatalan Bon Teknisi`, `ref_id` = id bon). PASANG **tidak** mengubah stok gudang & **tidak** menulis ke
+  `transactions` (barang sudah keluar di tahap 1) — jejaknya ada di `technician_loan_movements`. Invarian
+  `stok = snapshot + Σ(transactions)` tetap berlaku (diuji di Seksi 6F `api-test.mjs`).
+- **"Stok dibawa teknisi"** bukan kolom: dihitung `jumlah_dibawa − jumlah_terpasang − jumlah_kembali` pada bon berstatus
+  `AKTIF`/`SEBAGIAN` (muncul sebagai `stok_transit` di `GET /api/items`, `distribution.transit_teknisi` di scanner,
+  `teknisi` di dashboard-summary — dan ikut `grand_total_valuation`). Barang yang masih dibawa teknisi **tidak bisa dihapus** dari master.
+- **Status bon**: `AKTIF` (belum ada realisasi/pengembalian) → `SEBAGIAN` → `SELESAI` (sisa 0); `BATAL` permanen.
+  Dihitung ulang oleh `refreshLoanStatus()`.
+- **Realisasi** memakai `LINKED_DIVISI` (pelanggan/FO/tower), menggabung baris dengan kode+SN sama, menyinkronkan
+  `total_harga`, menolak jumlah > sisa bon, SN dengan jumlah ≠ 1, dan SN yang sudah terpasang di mana pun.
+  Kolom baru `dipasang_oleh` & `no_bon` pada `customer_items`/`fo_items`/`tower_items`; `reconcileInstalledItems()`
+  (edit pelanggan/FO/tower) mempertahankannya dengan mencocokkan kode+SN.
+- **Teknisi**: nama bebas (datalist dari akun peran teknisi + nama yang pernah tercatat); `teknisi_id` terisi bila
+  cocok dengan akun. Teknisi pemasang boleh berbeda dari pembawa. Tidak ada pembatasan "hanya bon milik sendiri".
+- **No. Bon**: kosong → `BON-YYYYMM-NNNN` berurutan per bulan (unik); bisa diisi manual (huruf besar, unik, maks 40).
+- **Cetak**: dokumen dirender dua kali — di modal (layar) dan di `<div class="print-doc">` (hanya tampil saat cetak,
+  bisa pecah halaman). Jangan mencetak modal `fixed` langsung. Laporan memakai `print-only` + `print-page-laporan`.
+- **Navbar kini 9 menu** (`Bon` = `bonteknisi`): padding tombol di bawah `xl` dikurangi (`px-1.5`) agar muat di 1100px.
+  ⚠️ Belum diukur di Chromium sungguhan (sandbox tanpa browser) — **ukur ulang di lebar 1100/1170/1280** sebelum menambah menu ke-10.
+- Reset data contoh (`/api/reset-seed`) ikut menghapus bon + riwayatnya; seed demo TIDAK membuat bon.
+
+---
+
 ## 7. Database & data
 
 - Tabel: `categories`, `items`, `customers`, `customer_items`, `fo_sites`, `fo_items`,
-  `tower_sites`, `tower_items`, `transactions`, `users`.
+  `tower_sites`, `tower_items`, `transactions`, `users`, dan (Bon Teknisi) `technician_loans`,
+  `technician_loan_items`, `technician_loan_movements` (jenis `BAWA|PASANG|KEMBALI|BATAL`).
 - Skema dibuat dengan `CREATE TABLE IF NOT EXISTS`; penambahan kolom baru memakai daftar
   `migrations` (`ALTER TABLE ... ADD COLUMN`, dibungkus try/catch) di `server/db.js`.
   **Cara menambah kolom baru = tambahkan entri di array itu**, jangan menulis migrasi lain.
@@ -439,8 +473,8 @@ itu wajar karena perbedaan versi toolchain, bukan bug.
 1. `npm install` (bila `package.json` berubah) —
    dependensi baru wajib tercermin di `package-lock.json`.
 2. Jalankan server di 3001, lalu:
-   - `npm run test:api` → harapan **78/78 lolos**
-   - `npm run test:render` → harapan **29/29 lolos**
+   - `npm run test:api` → harapan **128/128 lolos**
+   - `npm run test:render` → harapan **41/41 lolos**
    - bila menambah fitur, **tambahkan seksi tesnya** di `api-test.mjs` / `ssr-test.mjs`
      mengikuti gaya yang ada (fungsi `ok()` / `bad()`, judul seksi `=== N. ... ===`).
 3. `npm run build` bila menyentuh frontend; pastikan `dist/` ter-commit.
@@ -589,7 +623,20 @@ di README, info versi build (`/api/version`,
 - Endpoint baru `GET /api/reports/warehouse-stock` (`filter=tersedia|menipis|semua`, `kategori`, `search`) + dukungan `divisi=STOK_MENIPIS` pada `GET /api/reports/installed-assets`.
 - Seksi tes baru `6E` di `api-test.mjs` (+3 → **81/81 lolos**) dan Seksi `20` di `ssr-test.mjs` (+1 → **30/30 lolos**), `dist/` di-build ulang.
 
+**Selesai di sesi `arena/01a0fa7c` (Bon / Barang Bawaan Teknisi — stok transit lapangan):**
+- Fitur 3 tahap: (1) bon + scan barcode, stok gudang → stok dibawa teknisi; (2) realisasi ke Pelanggan / Divisi FO /
+  Divisi Tower lengkap SN, lokasi tujuan & teknisi pemasang; (3) pengembalian sisa ke gudang. Detail keputusan: **§6.10**.
+- Menu baru **Bon Teknisi** (daftar bon, riwayat mutasi, laporan + CSV + cetak), surat jalan / rekap bon A4, kolom
+  `+N dibawa teknisi` di Master Barang, kartu *Dibawa Teknisi* di Dashboard, filter divisi `TEKNISI` di menu Mutasi.
+- Tes: **Seksi 6F** `api-test.mjs` (+47 → **128/128**) dan **Seksi 21** `ssr-test.mjs` (+11 → **41/41**); alur UI juga
+  diuji manual di jsdom (scan, bon, realisasi, pengembalian, riwayat, laporan, cetak) — skrip tidak disimpan karena jsdom bukan dependensi.
+- Belum terverifikasi visual di browser sungguhan (sandbox tanpa Chromium): tampilan responsif modal, hasil cetak
+  A4, dan lebar Navbar 9 menu perlu dicek pemilik.
+
 **Belum dikerjakan / kandidat sesi berikutnya:**
+
+0. Bon Teknisi: opsi **tambah barang ke bon yang sudah berjalan**, pembatasan teknisi hanya melihat/merealisasi bon sendiri,
+   dan kondisi barang saat dikembalikan (baik/rusak) — sengaja ditunda, belum diminta.
 
 1. **Tindakan pemilik di server Proxmox (bukan kode):**
    - Update pertama setelah PR #5 wajib `./update-proxmox.sh --dry-run` dulu (lihat §8).
@@ -609,7 +656,7 @@ npm run dev                              # Vite di :3000, proxy /api → :3001
 
 # Uji
 PORT=3001 node server/index.js &         # server untuk pengujian
-npm test                                 # 78 tes API + 29 tes render
+npm test                                 # 128 tes API + 41 tes render
 npm run test:api ; npm run test:render   # terpisah
 
 # Produksi
