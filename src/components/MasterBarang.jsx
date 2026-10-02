@@ -506,6 +506,14 @@ export default function MasterBarang({
                         <span className="text-[10px] text-slate-400 block mt-0.5">
                           Min: {item.min_stok}
                         </span>
+                        {Number(item.stok_transit) > 0 && (
+                          <span
+                            className="text-[10px] font-semibold text-amber-700 block mt-0.5"
+                            title="Sudah keluar dari stok gudang, sedang dibawa teknisi (Bon Teknisi aktif)"
+                          >
+                            +{formatNumber(item.stok_transit)} dibawa teknisi
+                          </span>
+                        )}
                       </td>
 
                       {/* Unit Price */}

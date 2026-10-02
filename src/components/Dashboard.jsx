@@ -16,7 +16,8 @@ import {
   Wifi, 
   Clock, 
   RefreshCw,
-  ChevronRight
+  ChevronRight,
+  Wrench
 } from 'lucide-react';
 import { formatRupiah, formatNumber, formatDate } from '../utils/formatters';
 
@@ -191,6 +192,37 @@ export default function Dashboard({
           </div>
         </div>
       </div>
+
+      {/* Stok transit lapangan: barang yang sedang dibawa teknisi (Bon Teknisi aktif) */}
+      {data.teknisi && (
+        <div
+          onClick={() => onNavigate('bonteknisi')}
+          className="bg-white px-5 py-4 rounded-2xl border border-amber-200/80 shadow-sm hover:shadow-md transition cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-50 flex items-center justify-center text-amber-600 shrink-0">
+              <Wrench className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="text-xs font-bold uppercase tracking-wider text-amber-700">Dibawa Teknisi (Stok Transit Lapangan)</div>
+              <div className="text-xs text-slate-500 mt-0.5">
+                Barang yang sudah keluar dari gudang lewat Bon Teknisi dan belum dipasang / dikembalikan
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-5 text-xs sm:text-right">
+            <div>
+              <div className="text-lg font-black text-amber-900">{formatRupiah(data.teknisi.nilai_transit)}</div>
+              <div className="text-slate-500">nilai sedang dibawa</div>
+            </div>
+            <div>
+              <div className="text-lg font-black text-slate-900">{data.teknisi.bon_berjalan}</div>
+              <div className="text-slate-500">bon berjalan</div>
+            </div>
+            <ChevronRight className="w-4 h-4 text-slate-400" />
+          </div>
+        </div>
+      )}
 
       {/* Grid: Low Stock Alert & Quick Operations */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

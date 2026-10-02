@@ -179,6 +179,72 @@ export function initDb() {
       created_at TEXT DEFAULT (datetime('now', 'localtime'))
     );
 
+    -- Data teknisi / petugas lapangan (master untuk dropdown Bon Teknisi): dipilih per divisi
+    CREATE TABLE IF NOT EXISTS technicians (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      nama TEXT NOT NULL,
+      divisi TEXT NOT NULL DEFAULT 'DIVISI FO', -- 'PELANGGAN' | 'DIVISI FO' | 'DIVISI TOWER'
+      no_hp TEXT DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'aktif', -- 'aktif' | 'nonaktif'
+      created_at TEXT DEFAULT (datetime('now', 'localtime')),
+      updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+    );
+
+    -- Bon / Barang Bawaan Teknisi (stok transit lapangan) — tahap 1: catatan awal
+    CREATE TABLE IF NOT EXISTS technician_loans (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      no_bon TEXT UNIQUE NOT NULL,
+      tanggal TEXT NOT NULL, -- YYYY-MM-DD
+      waktu TEXT NOT NULL, -- HH:MM:SS
+      teknisi_id INTEGER DEFAULT NULL, -- users.id (opsional; teknisi boleh diketik bebas)
+      teknisi_nama TEXT NOT NULL,
+      keperluan TEXT DEFAULT '',
+      catatan TEXT DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'AKTIF', -- 'AKTIF' | 'SEBAGIAN' | 'SELESAI' | 'BATAL'
+      dibuat_oleh TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now', 'localtime')),
+      updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+    );
+
+    -- Daftar barang per bon: sisa dibawa teknisi = jumlah_dibawa - jumlah_terpasang - jumlah_kembali
+    CREATE TABLE IF NOT EXISTS technician_loan_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      loan_id INTEGER NOT NULL REFERENCES technician_loans(id) ON DELETE CASCADE,
+      kode_barang TEXT NOT NULL,
+      nama_barang TEXT NOT NULL,
+      jenis_barang TEXT NOT NULL DEFAULT '',
+      satuan TEXT NOT NULL,
+      harga_barang REAL NOT NULL DEFAULT 0,
+      jumlah_dibawa REAL NOT NULL DEFAULT 0,
+      jumlah_terpasang REAL NOT NULL DEFAULT 0,
+      jumlah_kembali REAL NOT NULL DEFAULT 0
+    );
+
+    -- Riwayat mutasi bon: BAWA (gudang → teknisi), PASANG (teknisi → divisi), KEMBALI (teknisi → gudang)
+    CREATE TABLE IF NOT EXISTS technician_loan_movements (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      loan_id INTEGER NOT NULL REFERENCES technician_loans(id) ON DELETE CASCADE,
+      loan_item_id INTEGER DEFAULT NULL,
+      jenis TEXT NOT NULL, -- 'BAWA' | 'PASANG' | 'KEMBALI' | 'BATAL'
+      tanggal TEXT NOT NULL,
+      waktu TEXT NOT NULL,
+      kode_barang TEXT NOT NULL,
+      nama_barang TEXT NOT NULL,
+      satuan TEXT NOT NULL,
+      harga_barang REAL NOT NULL DEFAULT 0,
+      jumlah REAL NOT NULL,
+      serial_number TEXT DEFAULT '',
+      divisi TEXT DEFAULT '', -- hanya untuk PASANG: 'PELANGGAN' | 'DIVISI FO' | 'DIVISI TOWER'
+      tujuan_id INTEGER DEFAULT NULL,
+      tujuan_nama TEXT DEFAULT '',
+      lokasi_tujuan TEXT DEFAULT '',
+      teknisi_nama TEXT DEFAULT '', -- teknisi pelaku (membawa / memasang / mengembalikan)
+      no_transaksi TEXT DEFAULT '', -- nomor mutasi gudang (hanya BAWA / KEMBALI)
+      keterangan TEXT DEFAULT '',
+      dicatat_oleh TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now', 'localtime'))
+    );
+
     -- Pengguna Aplikasi (login & hirarki peran)
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -198,7 +264,17 @@ export function initDb() {
     "ALTER TABLE customer_items ADD COLUMN serial_number TEXT DEFAULT ''",
     "ALTER TABLE fo_items ADD COLUMN serial_number TEXT DEFAULT ''",
     "ALTER TABLE tower_items ADD COLUMN serial_number TEXT DEFAULT ''",
-    "ALTER TABLE transactions ADD COLUMN serial_number TEXT DEFAULT ''"
+    "ALTER TABLE transactions ADD COLUMN serial_number TEXT DEFAULT ''",
+    // Jejak teknisi pemasang & No. Bon asal pada barang terpasang di tiap divisi
+    "ALTER TABLE customer_items ADD COLUMN dipasang_oleh TEXT DEFAULT ''",
+    "ALTER TABLE customer_items ADD COLUMN no_bon TEXT DEFAULT ''",
+    "ALTER TABLE fo_items ADD COLUMN dipasang_oleh TEXT DEFAULT ''",
+    "ALTER TABLE fo_items ADD COLUMN no_bon TEXT DEFAULT ''",
+    "ALTER TABLE tower_items ADD COLUMN dipasang_oleh TEXT DEFAULT ''",
+    "ALTER TABLE tower_items ADD COLUMN no_bon TEXT DEFAULT ''",
+    // Bon Teknisi: divisi pembawa + rujukan ke Data Teknisi
+    "ALTER TABLE technician_loans ADD COLUMN divisi TEXT DEFAULT ''",
+    "ALTER TABLE technician_loans ADD COLUMN teknisi_ref_id INTEGER DEFAULT NULL"
   ];
 
   for (const m of migrations) {
@@ -221,7 +297,15 @@ export function initDb() {
     'CREATE INDEX IF NOT EXISTS idx_fo_items_fo ON fo_items (fo_id)',
     'CREATE INDEX IF NOT EXISTS idx_fo_items_kode ON fo_items (kode_barang)',
     'CREATE INDEX IF NOT EXISTS idx_tower_items_tower ON tower_items (tower_id)',
-    'CREATE INDEX IF NOT EXISTS idx_tower_items_kode ON tower_items (kode_barang)'
+    'CREATE INDEX IF NOT EXISTS idx_tower_items_kode ON tower_items (kode_barang)',
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_technicians_nama ON technicians (nama COLLATE NOCASE)',
+    'CREATE INDEX IF NOT EXISTS idx_tloan_divisi ON technician_loans (divisi)',
+    'CREATE INDEX IF NOT EXISTS idx_tloan_status ON technician_loans (status)',
+    'CREATE INDEX IF NOT EXISTS idx_tloan_tanggal ON technician_loans (tanggal)',
+    'CREATE INDEX IF NOT EXISTS idx_tloan_items_loan ON technician_loan_items (loan_id)',
+    'CREATE INDEX IF NOT EXISTS idx_tloan_items_kode ON technician_loan_items (kode_barang)',
+    'CREATE INDEX IF NOT EXISTS idx_tloan_mov_loan ON technician_loan_movements (loan_id)',
+    'CREATE INDEX IF NOT EXISTS idx_tloan_mov_tanggal ON technician_loan_movements (tanggal)'
   ];
 
   for (const sql of indexes) {

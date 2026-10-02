@@ -2,7 +2,7 @@
 
 @theme {
   /* ------------------------------------------------------------------
-     `--breakpoint-nav` = lebar minimum agar 8 menu utama muat dalam SATU
+     `--breakpoint-nav` = lebar minimum agar 9 menu utama muat dalam SATU
      baris bersama brand + tombol alat, pada satu baris sticky.
      Dipakai lewat varian bernama `nav:` (nav:flex, max-nav:hidden).
 
@@ -128,6 +128,11 @@ label {
   display: none !important;
 }
 
+/* Dokumen cetak khusus: hanya tampil saat cetak (lihat blok @media print di bawah) */
+.print-doc {
+  display: none;
+}
+
 /* Ukuran & margin default seluruh dokumen cetak */
 @page {
   margin: 10mm 8mm;
@@ -157,6 +162,12 @@ label {
   .print-only {
     display: block !important;
     break-inside: avoid;
+  }
+
+  /* Dokumen cetak khusus (mis. surat jalan Bon Teknisi): disembunyikan di layar,
+     tampil penuh saat cetak — menggantikan modal `fixed` yang tidak bisa dipecah halaman */
+  .print-doc {
+    display: block !important;
   }
 
   /* Kontainer halaman Laporan memakai @page "laporan" (landscape) */

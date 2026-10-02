@@ -68,6 +68,7 @@ export const MENU_ACCESS = {
   fo: ['admin', 'staff_gudang', 'teknisi', 'viewer'],
   tower: ['admin', 'staff_gudang', 'teknisi', 'viewer'],
   transaksi: ['admin', 'staff_gudang'],
+  bonteknisi: ['admin', 'staff_gudang', 'teknisi', 'viewer'],
   laporan: ['admin', 'staff_gudang', 'teknisi', 'viewer'],
   users: ['admin']
 };
@@ -76,6 +77,12 @@ export const canAccessMenu = (menuId, role) => (MENU_ACCESS[menuId] || []).inclu
 
 /** Boleh mengubah master barang / transaksi stok? (admin & staff gudang) */
 export const canManageInventory = (role) => ['admin', 'staff_gudang'].includes(role);
+
+/** Boleh membuat bon teknisi, mencatat pengembalian & membatalkan bon? (admin & staff gudang) */
+export const canManageBon = (role) => ['admin', 'staff_gudang'].includes(role);
+
+/** Boleh mencatat realisasi pemasangan dari bon? (admin, staff gudang, teknisi) */
+export const canInstallFromBon = (role) => ['admin', 'staff_gudang', 'teknisi'].includes(role);
 
 /** Boleh mengubah data pelanggan/FO/tower? (admin, staff gudang, teknisi) */
 export const canManageDivisions = (role) => ['admin', 'staff_gudang', 'teknisi'].includes(role);
