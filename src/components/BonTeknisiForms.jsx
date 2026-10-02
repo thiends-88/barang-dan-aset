@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { notify } from '../utils/notify';
 import { todayLocal, formatNumber, formatRupiah } from '../utils/formatters';
+import { TeknisiFormModal, TEKNISI_DIVISI } from './DataTeknisi';
 
 // ------------------------------------------------------------------
 // Utilitas kecil
@@ -156,10 +157,12 @@ function ScanBox({ onScan, hint, title = 'Scan Barcode Stiker Barang' }) {
 // ------------------------------------------------------------------
 // TAHAP 1 — Bon baru: teknisi membawa barang dari gudang
 // ------------------------------------------------------------------
-export function BonBaruModal({ onClose, items, technicians, onSaved }) {
+export function BonBaruModal({ onClose, items, roster = [], onRosterChange = async () => {}, onSaved }) {
   const [noBon, setNoBon] = useState('');
   const [tanggal, setTanggal] = useState(todayLocal());
-  const [teknisiNama, setTeknisiNama] = useState('');
+  const [divisi, setDivisi] = useState('');
+  const [teknisiId, setTeknisiId] = useState('');
+  const [showAddTeknisi, setShowAddTeknisi] = useState(false);
   const [keperluan, setKeperluan] = useState('');
   const [catatan, setCatatan] = useState('');
   const [rows, setRows] = useState([{ kode_barang: '', jumlah: 1 }]);
@@ -173,12 +176,16 @@ export function BonBaruModal({ onClose, items, technicians, onSaved }) {
   );
   const byCode = useMemo(() => new Map((items || []).map((it) => [it.kode_barang.toUpperCase(), it])), [items]);
 
-  const nameOptions = useMemo(() => {
-    const set = new Set();
-    (technicians?.users || []).forEach((u) => set.add(u.nama_lengkap));
-    (technicians?.nama_pernah_tercatat || []).forEach((n) => set.add(n));
-    return [...set];
-  }, [technicians]);
+  // Pilihan teknisi mengikuti divisi yang dipilih (hanya yang berstatus aktif)
+  const teknisiOptions = useMemo(
+    () => roster.filter((t) => t.status === 'aktif' && t.divisi === divisi).sort((a, b) => a.nama.localeCompare(b.nama)),
+    [roster, divisi]
+  );
+
+  const pilihDivisi = (value) => {
+    setDivisi(value);
+    setTeknisiId(''); // teknisi harus dipilih ulang dari divisi yang baru
+  };
 
   const totalPerKode = useMemo(() => {
     const m = new Map();
@@ -211,7 +218,8 @@ export function BonBaruModal({ onClose, items, technicians, onSaved }) {
   };
 
   const validate = () => {
-    if (!teknisiNama.trim()) return 'Nama teknisi yang membawa barang wajib diisi';
+    if (!divisi) return 'Pilih divisi terlebih dahulu';
+    if (!teknisiId) return 'Pilih teknisi yang membawa barang (atau tambahkan teknisi baru)';
     const terisi = rows.filter((r) => r.kode_barang && Number(r.jumlah) > 0);
     if (terisi.length === 0) return 'Tambahkan minimal satu barang dengan jumlah lebih dari 0';
     for (const [kode, qty] of totalPerKode) {
@@ -230,12 +238,11 @@ export function BonBaruModal({ onClose, items, technicians, onSaved }) {
     setSaving(true);
     setError('');
     try {
-      const user = (technicians?.users || []).find((u) => u.nama_lengkap.toLowerCase() === teknisiNama.trim().toLowerCase());
       const json = await postJson('/api/technician-loans', {
         no_bon: noBon.trim() || undefined,
         tanggal,
-        teknisi_nama: teknisiNama.trim(),
-        teknisi_id: user?.id,
+        divisi,
+        teknisi_ref_id: Number(teknisiId),
         keperluan: keperluan.trim(),
         catatan: catatan.trim(),
         items: rows.filter((r) => r.kode_barang && Number(r.jumlah) > 0).map((r) => ({ kode_barang: r.kode_barang, jumlah: Number(r.jumlah) }))
@@ -250,6 +257,7 @@ export function BonBaruModal({ onClose, items, technicians, onSaved }) {
   };
 
   return (
+    <>
     <ModalShell
       title="Bon Baru — Teknisi Membawa Barang dari Gudang"
       subtitle="Tahap 1 dari 3: stok gudang berkurang dan pindah ke stok dibawa teknisi"
@@ -279,26 +287,45 @@ export function BonBaruModal({ onClose, items, technicians, onSaved }) {
             <input type="date" value={tanggal} onChange={(e) => setTanggal(e.target.value)} className={inputCls} required />
           </div>
           <div>
-            <label className={labelCls}>Teknisi yang Membawa *</label>
-            <input
-              list="bon-teknisi-names"
-              value={teknisiNama}
-              onChange={(e) => setTeknisiNama(e.target.value)}
-              placeholder="Pilih / ketik nama teknisi"
-              className={inputCls}
-              required
-            />
-            <datalist id="bon-teknisi-names">
-              {nameOptions.map((n) => <option key={n} value={n} />)}
-            </datalist>
+            <label className={labelCls}>Divisi *</label>
+            <select value={divisi} onChange={(e) => pilihDivisi(e.target.value)} className={inputCls} aria-label="Divisi" required>
+              <option value="">Pilih divisi…</option>
+              {TEKNISI_DIVISI.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
+            </select>
           </div>
           <div className="sm:col-span-2">
-            <label className={labelCls}>Keperluan / Tujuan Pekerjaan</label>
-            <input value={keperluan} onChange={(e) => setKeperluan(e.target.value)} placeholder="mis. Instalasi pelanggan baru area Tanah Garam" className={inputCls} />
+            <div className="flex items-center justify-between gap-2">
+              <label className={labelCls}>Teknisi yang Membawa *</label>
+              <button
+                type="button"
+                onClick={() => setShowAddTeknisi(true)}
+                className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 mb-1"
+              >
+                <Plus className="w-3.5 h-3.5" /> Tambah Teknisi
+              </button>
+            </div>
+            <select
+              value={teknisiId}
+              onChange={(e) => setTeknisiId(e.target.value)}
+              disabled={!divisi}
+              className={`${inputCls} disabled:bg-slate-100 disabled:text-slate-400`}
+              aria-label="Teknisi yang membawa"
+              required
+            >
+              <option value="">{divisi ? (teknisiOptions.length ? 'Pilih nama teknisi…' : 'Belum ada teknisi di divisi ini') : 'Pilih divisi dulu…'}</option>
+              {teknisiOptions.map((t) => <option key={t.id} value={t.id}>{t.nama}{t.no_hp ? ` — ${t.no_hp}` : ''}</option>)}
+            </select>
+            {divisi && teknisiOptions.length === 0 && (
+              <p className="text-[11px] text-amber-700 mt-1">Belum ada teknisi aktif di divisi ini — klik <b>Tambah Teknisi</b> untuk menambahkannya.</p>
+            )}
           </div>
           <div>
             <label className={labelCls}>Catatan</label>
             <input value={catatan} onChange={(e) => setCatatan(e.target.value)} className={inputCls} />
+          </div>
+          <div className="sm:col-span-3">
+            <label className={labelCls}>Keperluan / Tujuan Pekerjaan</label>
+            <input value={keperluan} onChange={(e) => setKeperluan(e.target.value)} placeholder="mis. Instalasi pelanggan baru area Tanah Garam" className={inputCls} />
           </div>
         </div>
 
@@ -344,6 +371,19 @@ export function BonBaruModal({ onClose, items, technicians, onSaved }) {
         </div>
       </form>
     </ModalShell>
+    {showAddTeknisi && (
+      <TeknisiFormModal
+        defaultDivisi={divisi || 'DIVISI FO'}
+        onClose={() => setShowAddTeknisi(false)}
+        onSaved={async (t) => {
+          await onRosterChange(); // muat ulang Data Teknisi, lalu langsung pilih teknisi yang baru
+          setDivisi(t.divisi);
+          setTeknisiId(String(t.id));
+          setShowAddTeknisi(false);
+        }}
+      />
+    )}
+    </>
   );
 }
 
@@ -356,7 +396,7 @@ const DIVISI_CFG = {
   'DIVISI TOWER': { label: 'Divisi Tower', icon: Radio, on: 'bg-purple-600 text-white border-purple-600', off: 'bg-white text-purple-700 border-purple-200 hover:bg-purple-50' }
 };
 
-export function RealisasiModal({ onClose, loan, customers, foSites, towerSites, technicians, onSaved }) {
+export function RealisasiModal({ onClose, loan, customers, foSites, towerSites, roster = [], canManageRoster = false, onRosterChange = async () => {}, onSaved }) {
   const available = useMemo(() => (loan?.items || []).filter((li) => Number(li.jumlah_sisa) > 0), [loan]);
   const [divisi, setDivisi] = useState('PELANGGAN');
   const [tujuanId, setTujuanId] = useState('');
@@ -371,12 +411,19 @@ export function RealisasiModal({ onClose, loan, customers, foSites, towerSites, 
   const [saving, setSaving] = useState(false);
   const snRefs = useRef({});
 
-  const nameOptions = useMemo(() => {
-    const set = new Set([loan?.teknisi_nama].filter(Boolean));
-    (technicians?.users || []).forEach((u) => set.add(u.nama_lengkap));
-    (technicians?.nama_pernah_tercatat || []).forEach((n) => set.add(n));
-    return [...set];
-  }, [technicians, loan]);
+  const [showAddTeknisi, setShowAddTeknisi] = useState(false);
+
+  // Pilihan teknisi pemasang dikelompokkan per divisi; pembawa bon selalu tersedia (juga untuk bon lama
+  // yang namanya belum ada di Data Teknisi).
+  const pemasangGroups = useMemo(() => {
+    const aktif = roster.filter((t) => t.status === 'aktif' || t.nama === loan?.teknisi_nama);
+    const groups = TEKNISI_DIVISI
+      .map((d) => ({ ...d, list: aktif.filter((t) => t.divisi === d.value).sort((a, b) => a.nama.localeCompare(b.nama)) }))
+      .filter((g) => g.list.length > 0);
+    const dikenal = new Set(aktif.map((t) => t.nama));
+    const lain = loan?.teknisi_nama && !dikenal.has(loan.teknisi_nama) ? [{ id: `bon-${loan.id}`, nama: loan.teknisi_nama }] : [];
+    return { groups, lain };
+  }, [roster, loan]);
 
   const tujuanList = useMemo(() => {
     const src = divisi === 'PELANGGAN' ? customers : divisi === 'DIVISI FO' ? foSites : towerSites;
@@ -486,6 +533,7 @@ export function RealisasiModal({ onClose, loan, customers, foSites, towerSites, 
   };
 
   return (
+    <>
     <ModalShell
       title={`Realisasi Pemasangan — ${loan.no_bon}`}
       subtitle={`Tahap 2 dari 3: barang bawaan ${loan.teknisi_nama} dipasang ke divisi (stok gudang tidak berubah)`}
@@ -541,9 +589,22 @@ export function RealisasiModal({ onClose, loan, customers, foSites, towerSites, 
             <input value={lokasi} onChange={(e) => { setLokasi(e.target.value); setLokasiManual(true); }} placeholder="Terisi otomatis dari data tujuan — boleh dilengkapi (mis. patokan alamat / nama tiang)" className={inputCls} />
           </div>
           <div>
-            <label className={labelCls}>Teknisi yang Memasang *</label>
-            <input list="bon-pemasang-names" value={pemasang} onChange={(e) => setPemasang(e.target.value)} className={inputCls} required />
-            <datalist id="bon-pemasang-names">{nameOptions.map((n) => <option key={n} value={n} />)}</datalist>
+            <div className="flex items-center justify-between gap-2">
+              <label className={labelCls}>Teknisi yang Memasang *</label>
+              {canManageRoster && (
+                <button type="button" onClick={() => setShowAddTeknisi(true)} className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 mb-1">
+                  <Plus className="w-3.5 h-3.5" /> Tambah Teknisi
+                </button>
+              )}
+            </div>
+            <select value={pemasang} onChange={(e) => setPemasang(e.target.value)} className={inputCls} aria-label="Teknisi yang memasang" required>
+              {pemasangGroups.lain.map((t) => <option key={t.id} value={t.nama}>{t.nama}</option>)}
+              {pemasangGroups.groups.map((g) => (
+                <optgroup key={g.value} label={g.label}>
+                  {g.list.map((t) => <option key={t.id} value={t.nama}>{t.nama}</option>)}
+                </optgroup>
+              ))}
+            </select>
           </div>
           <div>
             <label className={labelCls}>Tanggal Pasang *</label>
@@ -610,6 +671,18 @@ export function RealisasiModal({ onClose, loan, customers, foSites, towerSites, 
         </div>
       </form>
     </ModalShell>
+    {showAddTeknisi && (
+      <TeknisiFormModal
+        defaultDivisi={TEKNISI_DIVISI.some((d) => d.value === loan?.divisi) ? loan.divisi : 'DIVISI FO'}
+        onClose={() => setShowAddTeknisi(false)}
+        onSaved={async (t) => {
+          await onRosterChange();
+          setPemasang(t.nama);
+          setShowAddTeknisi(false);
+        }}
+      />
+    )}
+    </>
   );
 }
 

@@ -750,7 +750,7 @@ console.log('\n=== 6F. BON / BARANG BAWAAN TEKNISI (3 tahap: bawa → pasang →
   const twr = (await req('GET', '/api/tower')).json?.data?.[0];
 
   // --- Tahap 1: validasi penolakan ---
-  let rb = await req('POST', '/api/technician-loans', { teknisi_nama: 'Budi Santoso', items: [{ kode_barang: ONT, jumlah: 9999 }] });
+  let rb = await req('POST', '/api/technician-loans', { divisi: 'DIVISI FO', teknisi_nama: 'Budi Santoso', items: [{ kode_barang: ONT, jumlah: 9999 }] });
   if (rb.status === 400 && /Stok gudang tidak mencukupi/.test(rb.json?.error || '') && stockOf(ONT) === sOnt0) ok('Bon: bawa melebihi stok gudang ditolak & stok utuh');
   else bad('Bon: bawa melebihi stok gudang ditolak', `HTTP ${rb.status} ${rb.json?.error}`);
 
@@ -758,17 +758,17 @@ console.log('\n=== 6F. BON / BARANG BAWAAN TEKNISI (3 tahap: bawa → pasang →
   if (rb.status === 400 && /teknisi/i.test(rb.json?.error || '')) ok('Bon: nama teknisi wajib diisi');
   else bad('Bon: nama teknisi wajib diisi', `HTTP ${rb.status}`);
 
-  rb = await req('POST', '/api/technician-loans', { teknisi_nama: 'Budi Santoso', items: [{ kode_barang: 'KODE-NGAWUR', jumlah: 1 }] });
+  rb = await req('POST', '/api/technician-loans', { divisi: 'DIVISI FO', teknisi_nama: 'Budi Santoso', items: [{ kode_barang: 'KODE-NGAWUR', jumlah: 1 }] });
   if (rb.status === 400) ok('Bon: kode barang tak terdaftar ditolak'); else bad('Bon: kode barang tak terdaftar ditolak', `HTTP ${rb.status}`);
 
-  rb = await req('POST', '/api/technician-loans', { teknisi_nama: 'Budi Santoso', items: [{ kode_barang: ONT, jumlah: -3 }, { kode_barang: PATCH, jumlah: 0 }] });
+  rb = await req('POST', '/api/technician-loans', { divisi: 'DIVISI FO', teknisi_nama: 'Budi Santoso', items: [{ kode_barang: ONT, jumlah: -3 }, { kode_barang: PATCH, jumlah: 0 }] });
   if (rb.status === 400) ok('Bon: jumlah negatif / tanpa barang ditolak'); else bad('Bon: jumlah negatif / tanpa barang ditolak', `HTTP ${rb.status}`);
   if (db.prepare('SELECT COUNT(*) AS c FROM technician_loans').get().c === 0) ok('Bon: penolakan tidak meninggalkan bon setengah jadi');
   else bad('Bon: penolakan tidak meninggalkan bon setengah jadi');
 
   // --- Tahap 1: bon sah (ONT 5 + PATCH 20 + SLING 100 m); kode ONT dobel digabung ---
   rb = await req('POST', '/api/technician-loans', {
-    teknisi_nama: 'Budi Santoso', keperluan: 'Instalasi baru Solok Selatan', no_bon: 'bon-uji-001',
+    divisi: 'DIVISI FO', teknisi_nama: 'Budi Santoso', keperluan: 'Instalasi baru Solok Selatan', no_bon: 'bon-uji-001',
     items: [{ kode_barang: ONT, jumlah: 3 }, { kode_barang: PATCH, jumlah: 20 }, { kode_barang: SLING, jumlah: 100 }, { kode_barang: ONT.toLowerCase(), jumlah: 2 }]
   });
   const bon = rb.json?.data;
@@ -788,10 +788,10 @@ console.log('\n=== 6F. BON / BARANG BAWAAN TEKNISI (3 tahap: bawa → pasang →
   if (lstItems.find((i) => i.kode_barang === ONT)?.stok_transit === 5 && lstItems.find((i) => i.kode_barang === SLING)?.stok_transit === 100) ok('Master barang menampilkan stok_transit (dibawa teknisi)');
   else bad('Master barang menampilkan stok_transit');
 
-  rb = await req('POST', '/api/technician-loans', { teknisi_nama: 'X', no_bon: 'BON-UJI-001', items: [{ kode_barang: PATCH, jumlah: 1 }] });
+  rb = await req('POST', '/api/technician-loans', { divisi: 'DIVISI FO', teknisi_nama: 'X', no_bon: 'BON-UJI-001', items: [{ kode_barang: PATCH, jumlah: 1 }] });
   if (rb.status === 400 && /sudah digunakan/.test(rb.json?.error || '')) ok('Bon: No. Bon dobel ditolak'); else bad('Bon: No. Bon dobel ditolak', `HTTP ${rb.status}`);
 
-  const auto = await req('POST', '/api/technician-loans', { teknisi_nama: 'Rina Wulandari', items: [{ kode_barang: PATCH, jumlah: 1 }] });
+  const auto = await req('POST', '/api/technician-loans', { divisi: 'DIVISI FO', teknisi_nama: 'Rina Wulandari', items: [{ kode_barang: PATCH, jumlah: 1 }] });
   if (auto.status === 201 && /^BON-\d{6}-0001$/.test(auto.json?.data?.no_bon || '')) ok('Bon: No. Bon otomatis BON-YYYYMM-NNNN', auto.json.data.no_bon);
   else bad('Bon: No. Bon otomatis', `${auto.status} ${auto.json?.data?.no_bon}`);
 
@@ -898,11 +898,11 @@ console.log('\n=== 6F. BON / BARANG BAWAAN TEKNISI (3 tahap: bawa → pasang →
   // --- Pembatalan bon ---
   {
     const sP = stockOf(PATCH);
-    const c = await req('POST', '/api/technician-loans', { teknisi_nama: 'Rina Wulandari', items: [{ kode_barang: PATCH, jumlah: 10 }] });
+    const c = await req('POST', '/api/technician-loans', { divisi: 'DIVISI FO', teknisi_nama: 'Rina Wulandari', items: [{ kode_barang: PATCH, jumlah: 10 }] });
     const cb = await req('POST', `/api/technician-loans/${c.json.data.id}/cancel`, { alasan: 'Tidak jadi berangkat' });
     if (cb.status === 200 && cb.json.data.status === 'BATAL' && stockOf(PATCH) === sP) ok('Pembatalan bon (belum dipasang) mengembalikan seluruh barang ke gudang'); else bad('Pembatalan bon', `HTTP ${cb.status} ${cb.json?.error} stok=${stockOf(PATCH)}/${sP}`);
 
-    const d = await req('POST', '/api/technician-loans', { teknisi_nama: 'Rina Wulandari', items: [{ kode_barang: PATCH, jumlah: 4 }] });
+    const d = await req('POST', '/api/technician-loans', { divisi: 'DIVISI FO', teknisi_nama: 'Rina Wulandari', items: [{ kode_barang: PATCH, jumlah: 4 }] });
     await req('POST', `/api/technician-loans/${d.json.data.id}/install`, { divisi: 'DIVISI FO', tujuan_id: fo.id, items: [{ kode_barang: PATCH, jumlah: 1 }] });
     const cb2 = await req('POST', `/api/technician-loans/${d.json.data.id}/cancel`, {});
     if (cb2.status === 400 && /sudah ada realisasi/.test(cb2.json?.error || '')) ok('Pembatalan bon yang sudah ada realisasi pemasangan ditolak'); else bad('Pembatalan bon dengan realisasi', `HTTP ${cb2.status}`);
@@ -947,6 +947,89 @@ console.log('\n=== 6F. BON / BARANG BAWAAN TEKNISI (3 tahap: bawa → pasang →
   const sisaBon = db.prepare('SELECT COUNT(*) AS c FROM technician_loans').get().c;
   const sisaMv = db.prepare('SELECT COUNT(*) AS c FROM technician_loan_movements').get().c;
   if (rs.status === 200 && sisaBon === 0 && sisaMv === 0) ok('Reset data contoh membersihkan bon & riwayat mutasinya'); else bad('Reset data contoh membersihkan bon', `HTTP ${rs.status} bon=${sisaBon} mutasi=${sisaMv}`);
+}
+
+console.log('\n=== 6G. DATA TEKNISI & DIVISI PADA BON (pilih divisi → nama teknisi) ===');
+{
+  const PATCH = 'BRG-FO-PATCH-SC-3M';
+  const loginRole = async (username, password) => (await req('POST', '/api/auth/login', { username, password }, { noAuth: true })).json?.data?.token;
+  const reqAs = async (token, method, url, body) => {
+    const res = await fetch(API + url, { method, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: body ? JSON.stringify(body) : undefined });
+    let json = null; try { json = await res.json(); } catch { /* null */ }
+    return { status: res.status, json };
+  };
+  const tTek = await loginRole('teknisi', 'teknisi123');
+  const tView = await loginRole('viewer', 'viewer123');
+
+  // --- CRUD Data Teknisi ---
+  let r = await req('POST', '/api/teknisi', { nama: '  Andi   Uji  ', divisi: 'divisi fo', no_hp: '0812-0000' });
+  const andi = r.json?.data;
+  if (r.status === 201 && andi?.nama === 'Andi Uji' && andi.divisi === 'DIVISI FO' && andi.status === 'aktif') ok('Teknisi: tambah (spasi dirapikan, divisi dinormalkan, default aktif)');
+  else bad('Teknisi: tambah', `HTTP ${r.status} ${r.json?.error}`);
+  r = await req('POST', '/api/teknisi', { nama: 'ANDI UJI', divisi: 'DIVISI TOWER' });
+  if (r.status === 400 && /sudah ada/.test(r.json?.error || '')) ok('Teknisi: nama dobel ditolak (tidak peka huruf besar/kecil)'); else bad('Teknisi: nama dobel', `HTTP ${r.status}`);
+  r = await req('POST', '/api/teknisi', { nama: 'Tanpa Divisi', divisi: 'GUDANG' });
+  if (r.status === 400 && /Divisi harus/.test(r.json?.error || '')) ok('Teknisi: divisi di luar Pelanggan/FO/Tower ditolak'); else bad('Teknisi: divisi tidak valid', `HTTP ${r.status}`);
+  r = await req('POST', '/api/teknisi', { nama: '   ', divisi: 'DIVISI FO' });
+  if (r.status === 400) ok('Teknisi: nama kosong ditolak'); else bad('Teknisi: nama kosong', `HTTP ${r.status}`);
+  const tower = (await req('POST', '/api/teknisi', { nama: 'Tono Uji', divisi: 'DIVISI TOWER' })).json?.data;
+  const plg = (await req('POST', '/api/teknisi', { nama: 'Pelan Uji', divisi: 'PELANGGAN' })).json?.data;
+
+  const lf = await req('GET', '/api/teknisi?divisi=DIVISI%20TOWER');
+  if (lf.status === 200 && lf.json.data.some((t) => t.id === tower.id) && lf.json.data.every((t) => t.divisi === 'DIVISI TOWER')) ok('Teknisi: daftar bisa difilter per divisi'); else bad('Teknisi: filter divisi');
+
+  r = await reqAs(tTek, 'POST', '/api/teknisi', { nama: 'Ilegal', divisi: 'DIVISI FO' });
+  const r2 = await reqAs(tView, 'DELETE', `/api/teknisi/${andi.id}`);
+  const rg = await reqAs(tView, 'GET', '/api/teknisi');
+  if (r.status === 403 && r2.status === 403 && rg.status === 200) ok('Teknisi: hanya admin/staff gudang yang boleh mengubah; viewer boleh melihat'); else bad('Teknisi: hak akses', `${r.status}/${r2.status}/${rg.status}`);
+
+  // --- Bon wajib divisi; teknisi dari Data Teknisi ---
+  r = await req('POST', '/api/technician-loans', { teknisi_nama: 'Tanpa Divisi', items: [{ kode_barang: PATCH, jumlah: 1 }] });
+  if (r.status === 400 && /Divisi wajib/.test(r.json?.error || '')) ok('Bon: divisi wajib bila teknisi diketik manual'); else bad('Bon: divisi wajib', `HTTP ${r.status} ${r.json?.error}`);
+  r = await req('POST', '/api/technician-loans', { divisi: 'GUDANG', teknisi_nama: 'X', items: [{ kode_barang: PATCH, jumlah: 1 }] });
+  if (r.status === 400 && /Divisi harus/.test(r.json?.error || '')) ok('Bon: divisi tidak valid ditolak'); else bad('Bon: divisi tidak valid', `HTTP ${r.status}`);
+  r = await req('POST', '/api/technician-loans', { teknisi_ref_id: 999999, items: [{ kode_barang: PATCH, jumlah: 1 }] });
+  if (r.status === 400 && /tidak ditemukan/.test(r.json?.error || '')) ok('Bon: teknisi_ref_id tak dikenal ditolak'); else bad('Bon: teknisi_ref_id tak dikenal', `HTTP ${r.status}`);
+
+  r = await req('POST', '/api/technician-loans', { teknisi_ref_id: andi.id, divisi: 'DIVISI FO', items: [{ kode_barang: PATCH, jumlah: 2 }] });
+  const bonA = r.json?.data;
+  if (r.status === 201 && bonA?.teknisi_nama === 'Andi Uji' && bonA.divisi === 'DIVISI FO' && bonA.teknisi_ref_id === andi.id) ok('Bon: nama & divisi dari Data Teknisi tersimpan di bon', bonA.no_bon);
+  else bad('Bon: dari Data Teknisi', `HTTP ${r.status} ${r.json?.error}`);
+  r = await req('POST', '/api/technician-loans', { teknisi_ref_id: tower.id, items: [{ kode_barang: PATCH, jumlah: 1 }] });
+  const bonT = r.json?.data;
+  if (r.status === 201 && bonT?.divisi === 'DIVISI TOWER') ok('Bon: divisi otomatis mengikuti divisi teknisi bila tidak dikirim'); else bad('Bon: divisi otomatis', `HTTP ${r.status} ${r.json?.error}`);
+
+  // --- Filter & laporan per divisi ---
+  const ld = await req('GET', '/api/technician-loans?divisi=DIVISI%20TOWER');
+  if (ld.status === 200 && ld.json.data.length === 1 && ld.json.data[0].id === bonT.id) ok('Daftar bon: filter divisi'); else bad('Daftar bon: filter divisi', `${ld.json?.data?.length}`);
+  const rep = await req('GET', '/api/technician-loans/report');
+  const pdv = rep.json?.data?.per_divisi_bon || [];
+  if (pdv.find((d) => d.divisi === 'DIVISI FO')?.jumlah_bon >= 1 && pdv.find((d) => d.divisi === 'DIVISI TOWER')?.jumlah_bon === 1 && rep.json.data.per_teknisi.find((t) => t.teknisi_nama === 'Andi Uji')?.divisi === 'DIVISI FO') ok('Laporan bon: rekap per divisi pembawa & divisi di rekap teknisi'); else bad('Laporan bon: per divisi pembawa', JSON.stringify(pdv));
+  const rf = await req('GET', '/api/technician-loans/report?divisi=PELANGGAN');
+  if (rf.json?.data?.loans.length === 0) ok('Laporan bon: filter divisi tanpa data → kosong'); else bad('Laporan bon: filter divisi');
+
+  // --- Ganti nama, nonaktif, hapus ---
+  r = await req('PUT', `/api/teknisi/${andi.id}`, { nama: 'Andi Pratama Uji' });
+  const detA = (await req('GET', `/api/technician-loans/${bonA.id}`)).json?.data;
+  const mvA = detA?.movements.filter((m) => m.jenis === 'BAWA').every((m) => m.teknisi_nama === 'Andi Pratama Uji');
+  if (r.status === 200 && detA?.teknisi_nama === 'Andi Pratama Uji' && mvA) ok('Teknisi: ganti nama ikut memperbarui bon & riwayat mutasi lama'); else bad('Teknisi: ganti nama berantai', `HTTP ${r.status} bon=${detA?.teknisi_nama}`);
+  r = await req('DELETE', `/api/teknisi/${andi.id}`);
+  if (r.status === 400 && /nonaktif/.test(r.json?.error || '')) ok('Teknisi: yang sudah tercatat di bon tidak bisa dihapus (disarankan nonaktif)'); else bad('Teknisi: hapus yang terpakai', `HTTP ${r.status}`);
+  r = await req('PUT', `/api/teknisi/${plg.id}`, { status: 'nonaktif' });
+  const rn = await req('POST', '/api/technician-loans', { teknisi_ref_id: plg.id, items: [{ kode_barang: PATCH, jumlah: 1 }] });
+  if (r.status === 200 && rn.status === 400 && /nonaktif/.test(rn.json?.error || '')) ok('Teknisi nonaktif tidak bisa dipilih di bon baru'); else bad('Teknisi nonaktif di bon', `HTTP ${rn.status}`);
+  r = await req('DELETE', `/api/teknisi/${plg.id}`);
+  if (r.status === 200) ok('Teknisi: yang belum pernah dipakai bisa dihapus'); else bad('Teknisi: hapus yang belum dipakai', `HTTP ${r.status}`);
+  r = await req('PUT', '/api/teknisi/999999', { nama: 'Hantu' });
+  if (r.status === 404) ok('Teknisi: ubah id tak dikenal → 404'); else bad('Teknisi: 404', `HTTP ${r.status}`);
+
+  // Bersihkan: kembalikan sisa bon uji, lalu reset (menghapus bon) dan hapus teknisi uji
+  for (const b of [bonA, bonT]) await req('POST', `/api/technician-loans/${b.id}/return`, { semua_sisa: true });
+  checkNoNegativeStock('setelah Data Teknisi');
+  await req('POST', '/api/reset-seed');
+  for (const t of [andi, tower]) await req('DELETE', `/api/teknisi/${t.id}`);
+  const sisa = db.prepare('SELECT COUNT(*) AS c FROM technicians').get().c;
+  if (sisa === 0) ok('Teknisi uji dibersihkan setelah tes'); else bad('Teknisi uji dibersihkan', `${sisa} tersisa`);
 }
 
 console.log('\n=== PEMBERSIHAN: reset ke data contoh ===');

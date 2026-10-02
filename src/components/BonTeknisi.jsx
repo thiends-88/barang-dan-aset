@@ -8,11 +8,12 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Wrench, Plus, Search, RefreshCw, Eye, Printer, PackageCheck, Undo2, Ban, X, Download,
-  ClipboardList, History, BarChart3, HardHat, AlertTriangle, Truck
+  ClipboardList, History, BarChart3, HardHat, AlertTriangle, Truck, Users
 } from 'lucide-react';
 import { notify } from '../utils/notify';
 import { formatRupiah, formatNumber, formatDate, formatDateTime, todayLocal, exportToCSV } from '../utils/formatters';
 import { BonBaruModal, RealisasiModal, PengembalianModal } from './BonTeknisiForms';
+import DataTeknisiPanel, { DivisiBadge, TEKNISI_DIVISI } from './DataTeknisi';
 import BonTeknisiPrintModal, { BonDocument, STATUS_LABEL, DIVISI_LABEL } from './BonTeknisiPrint';
 
 const STATUS_STYLE = {
@@ -101,7 +102,7 @@ function BonDetailModal({ loan, onClose, canManage, canInstall, onInstall, onRet
         <div className="p-4 sm:p-6 overflow-y-auto flex-1 space-y-5">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
             <div><span className="text-slate-500 block text-[10px] uppercase font-bold">Status</span><StatusBadge status={loan.status} /></div>
-            <div><span className="text-slate-500 block text-[10px] uppercase font-bold">Teknisi Pembawa</span><span className="font-semibold">{loan.teknisi_nama}</span></div>
+            <div><span className="text-slate-500 block text-[10px] uppercase font-bold">Teknisi Pembawa</span><span className="font-semibold">{loan.teknisi_nama}</span>{loan.divisi && <span className="ml-1.5"><DivisiBadge divisi={loan.divisi} /></span>}</div>
             <div><span className="text-slate-500 block text-[10px] uppercase font-bold">Keperluan</span><span className="font-medium">{loan.keperluan || '-'}</span></div>
             <div><span className="text-slate-500 block text-[10px] uppercase font-bold">Dicatat Oleh</span><span className="font-medium">{loan.dibuat_oleh || '-'}</span></div>
             {loan.catatan && <div className="col-span-2 sm:col-span-4"><span className="text-slate-500 block text-[10px] uppercase font-bold">Catatan</span><span>{loan.catatan}</span></div>}
@@ -224,10 +225,11 @@ export default function BonTeknisi({
   canManage = false,
   canInstall = false
 }) {
-  const [tab, setTab] = useState('daftar'); // daftar | riwayat | laporan
+  const [tab, setTab] = useState('daftar'); // daftar | riwayat | laporan | teknisi
   const [loans, setLoans] = useState([]);
   const [stock, setStock] = useState(null);
   const [technicians, setTechnicians] = useState(null);
+  const [roster, setRoster] = useState([]); // Data Teknisi (master nama per divisi)
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
 
@@ -235,6 +237,7 @@ export default function BonTeknisi({
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
   const [teknisi, setTeknisi] = useState('');
+  const [fDivisi, setFDivisi] = useState('');
 
   // Riwayat mutasi
   const [movements, setMovements] = useState([]);
@@ -252,6 +255,7 @@ export default function BonTeknisi({
   const [rpEnd, setRpEnd] = useState(todayLocal());
   const [rpStatus, setRpStatus] = useState('');
   const [rpTeknisi, setRpTeknisi] = useState('');
+  const [rpDivisi, setRpDivisi] = useState('');
 
   // Modal
   const [showNew, setShowNew] = useState(false);
@@ -264,10 +268,10 @@ export default function BonTeknisi({
 
   const teknisiNames = useMemo(() => {
     const set = new Set();
-    (technicians?.users || []).forEach((u) => set.add(u.nama_lengkap));
+    roster.forEach((t) => set.add(t.nama));
     (technicians?.nama_pernah_tercatat || []).forEach((n) => set.add(n));
     return [...set].sort((a, b) => a.localeCompare(b));
-  }, [technicians]);
+  }, [technicians, roster]);
 
   const loadLoans = useCallback(async () => {
     const seq = ++reqSeq.current;
@@ -276,6 +280,7 @@ export default function BonTeknisi({
       if (search.trim()) p.set('search', search.trim());
       if (status) p.set('status', status);
       if (teknisi) p.set('teknisi', teknisi);
+      if (fDivisi) p.set('divisi', fDivisi);
       const data = await getData(`/api/technician-loans?${p.toString()}`);
       if (seq === reqSeq.current) { setLoans(data); setLoadError(''); }
     } catch (err) {
@@ -283,7 +288,7 @@ export default function BonTeknisi({
     } finally {
       if (seq === reqSeq.current) setLoading(false);
     }
-  }, [search, status, teknisi]);
+  }, [search, status, teknisi, fDivisi]);
 
   const loadStock = useCallback(async () => {
     try { setStock(await getData('/api/technician-loans/stock')); } catch { /* KPI saja — abaikan */ }
@@ -293,7 +298,12 @@ export default function BonTeknisi({
     try { setTechnicians(await getData('/api/technician-loans/technicians')); } catch { /* opsional */ }
   }, []);
 
-  useEffect(() => { loadStock(); loadTechnicians(); }, [loadStock, loadTechnicians]);
+  // Data Teknisi: dikembalikan sebagai promise supaya form bon bisa menunggu daftar terbaru
+  const loadRoster = useCallback(async () => {
+    try { setRoster(await getData('/api/teknisi')); } catch { /* opsional — pilihan teknisi saja */ }
+  }, []);
+
+  useEffect(() => { loadStock(); loadTechnicians(); loadRoster(); }, [loadStock, loadTechnicians, loadRoster]);
 
   // Pencarian diberi jeda singkat agar tidak menembak API tiap ketukan
   useEffect(() => {
@@ -332,13 +342,14 @@ export default function BonTeknisi({
       if (rpEnd) p.set('end_date', rpEnd);
       if (rpStatus) p.set('status', rpStatus);
       if (rpTeknisi) p.set('teknisi', rpTeknisi);
+      if (rpDivisi) p.set('divisi', rpDivisi);
       setReport(await getData(`/api/technician-loans/report?${p.toString()}`));
     } catch (err) {
       notify(err.message, 'error');
     } finally {
       setRpLoading(false);
     }
-  }, [rpStart, rpEnd, rpStatus, rpTeknisi]);
+  }, [rpStart, rpEnd, rpStatus, rpTeknisi, rpDivisi]);
 
   useEffect(() => {
     if (tab === 'laporan') loadReport();
@@ -348,10 +359,11 @@ export default function BonTeknisi({
     loadLoans();
     loadStock();
     loadTechnicians();
+    loadRoster();
     if (tab === 'riwayat') loadMovements();
     if (tab === 'laporan') loadReport();
     onRefresh();
-  }, [loadLoans, loadStock, loadTechnicians, loadMovements, loadReport, tab, onRefresh]);
+  }, [loadLoans, loadStock, loadTechnicians, loadRoster, loadMovements, loadReport, tab, onRefresh]);
 
   const openDetail = async (id) => {
     try { setDetail(await getData(`/api/technician-loans/${id}`)); } catch (err) { notify(err.message, 'error'); }
@@ -409,7 +421,7 @@ export default function BonTeknisi({
   const exportLaporan = () => {
     if (!report?.loans?.length) return;
     exportToCSV(`Laporan_Bon_Teknisi_${Date.now()}.csv`, report.loans.map((l, i) => ({
-      No: i + 1, 'No. Bon': l.no_bon, Tanggal: l.tanggal, Teknisi: l.teknisi_nama, Keperluan: l.keperluan,
+      No: i + 1, 'No. Bon': l.no_bon, Tanggal: l.tanggal, Divisi: DIVISI_LABEL[l.divisi] || l.divisi || '', Teknisi: l.teknisi_nama, Keperluan: l.keperluan,
       Status: STATUS_LABEL[l.status] || l.status, 'Nilai Dibawa (Rp)': l.nilai_dibawa, 'Nilai Terpasang (Rp)': l.nilai_terpasang,
       'Nilai Dikembalikan (Rp)': l.nilai_kembali, 'Nilai Sisa di Teknisi (Rp)': ['AKTIF', 'SEBAGIAN'].includes(l.status) ? l.nilai_sisa : 0
     })));
@@ -477,6 +489,7 @@ export default function BonTeknisi({
           {tabBtn('daftar', 'Daftar Bon', ClipboardList)}
           {tabBtn('riwayat', 'Riwayat Mutasi', History)}
           {tabBtn('laporan', 'Laporan', BarChart3)}
+          {tabBtn('teknisi', 'Data Teknisi', Users)}
         </div>
 
         {/* ===================== DAFTAR BON ===================== */}
@@ -495,7 +508,7 @@ export default function BonTeknisi({
                       title="Filter bon berjalan milik teknisi ini"
                     >
                       <span className="font-bold">{t.teknisi_nama}</span>
-                      <span className="text-amber-700"> • {t.jumlah_bon} bon • {formatRupiah(t.nilai_sisa)}</span>
+                      <span className="text-amber-700">{t.divisi ? ` (${DIVISI_LABEL[t.divisi] || t.divisi})` : ''} • {t.jumlah_bon} bon • {formatRupiah(t.nilai_sisa)}</span>
                     </button>
                   ))}
                 </div>
@@ -505,7 +518,7 @@ export default function BonTeknisi({
             <div className="no-print flex flex-col lg:flex-row gap-2">
               <div className="relative flex-1">
                 <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari No. Bon, teknisi, keperluan, kode / nama barang..." className={`${inputCls} w-full pl-9`} />
+                <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari No. Bon, teknisi, divisi, keperluan, kode / nama barang..." className={`${inputCls} w-full pl-9`} />
               </div>
               <select value={status} onChange={(e) => setStatus(e.target.value)} className={inputCls} aria-label="Filter status">
                 <option value="">Semua Status</option>
@@ -515,12 +528,16 @@ export default function BonTeknisi({
                 <option value="SELESAI">Selesai</option>
                 <option value="BATAL">Dibatalkan</option>
               </select>
+              <select value={fDivisi} onChange={(e) => setFDivisi(e.target.value)} className={inputCls} aria-label="Filter divisi">
+                <option value="">Semua Divisi</option>
+                {TEKNISI_DIVISI.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
+              </select>
               <select value={teknisi} onChange={(e) => setTeknisi(e.target.value)} className={inputCls} aria-label="Filter teknisi">
                 <option value="">Semua Teknisi</option>
                 {teknisiNames.map((n) => <option key={n} value={n}>{n}</option>)}
               </select>
-              {(search || status || teknisi) && (
-                <button type="button" onClick={() => { setSearch(''); setStatus(''); setTeknisi(''); }} className="px-3 py-2 rounded-xl text-xs font-semibold text-slate-600 bg-white border border-slate-200 hover:bg-slate-50">Reset</button>
+              {(search || status || teknisi || fDivisi) && (
+                <button type="button" onClick={() => { setSearch(''); setStatus(''); setTeknisi(''); setFDivisi(''); }} className="px-3 py-2 rounded-xl text-xs font-semibold text-slate-600 bg-white border border-slate-200 hover:bg-slate-50">Reset</button>
               )}
             </div>
 
@@ -563,7 +580,10 @@ export default function BonTeknisi({
                             <button type="button" onClick={() => openDetail(l.id)} className="font-mono font-bold text-indigo-700 hover:underline">{l.no_bon}</button>
                             <div className="text-[10px] text-slate-500">{formatDate(l.tanggal)} • {l.jumlah_jenis} jenis barang</div>
                           </td>
-                          <td className="px-4 py-3 font-semibold text-slate-800">{l.teknisi_nama}</td>
+                          <td className="px-4 py-3 font-semibold text-slate-800">
+                            {l.teknisi_nama}
+                            {l.divisi && <div className="mt-0.5"><DivisiBadge divisi={l.divisi} /></div>}
+                          </td>
                           <td className="px-4 py-3 text-slate-600 max-w-[220px]"><div className="truncate" title={l.keperluan}>{l.keperluan || '-'}</div></td>
                           <td className="px-4 py-3 text-right whitespace-nowrap">{formatRupiah(l.nilai_dibawa)}</td>
                           <td className="px-4 py-3 text-right whitespace-nowrap text-indigo-700">{formatRupiah(l.nilai_terpasang)}</td>
@@ -658,10 +678,17 @@ export default function BonTeknisi({
           </div>
         )}
 
+        {/* ===================== DATA TEKNISI ===================== */}
+        {tab === 'teknisi' && (
+          <div className="no-print">
+            <DataTeknisiPanel roster={roster} canManage={canManage} onChanged={async () => { await loadRoster(); loadTechnicians(); loadLoans(); }} />
+          </div>
+        )}
+
         {/* ===================== LAPORAN ===================== */}
         {tab === 'laporan' && (
           <div className="space-y-4">
-            <div className="no-print grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2">
+            <div className="no-print grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
               <div>
                 <label className="block text-[10px] font-bold uppercase text-slate-500 mb-0.5">Dari tanggal</label>
                 <input type="date" value={rpStart} onChange={(e) => setRpStart(e.target.value)} className={`${inputCls} w-full`} />
@@ -680,14 +707,21 @@ export default function BonTeknisi({
                 </select>
               </div>
               <div>
+                <label className="block text-[10px] font-bold uppercase text-slate-500 mb-0.5">Divisi</label>
+                <select value={rpDivisi} onChange={(e) => setRpDivisi(e.target.value)} className={`${inputCls} w-full`}>
+                  <option value="">Semua Divisi</option>
+                  {TEKNISI_DIVISI.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
+                </select>
+              </div>
+              <div>
                 <label className="block text-[10px] font-bold uppercase text-slate-500 mb-0.5">Teknisi</label>
                 <select value={rpTeknisi} onChange={(e) => setRpTeknisi(e.target.value)} className={`${inputCls} w-full`}>
                   <option value="">Semua Teknisi</option>
                   {teknisiNames.map((n) => <option key={n} value={n}>{n}</option>)}
                 </select>
               </div>
-              <div className="flex items-end gap-2 lg:col-span-2 lg:justify-end">
-                <button type="button" onClick={() => { setRpStart(''); setRpEnd(''); setRpStatus(''); setRpTeknisi(''); }} className="px-3 py-2 rounded-xl text-xs font-semibold text-slate-600 bg-white border border-slate-200 hover:bg-slate-50">Semua Periode</button>
+              <div className="flex flex-wrap items-end gap-2 sm:col-span-2 lg:col-span-5 lg:justify-end">
+                <button type="button" onClick={() => { setRpStart(''); setRpEnd(''); setRpStatus(''); setRpTeknisi(''); setRpDivisi(''); }} className="px-3 py-2 rounded-xl text-xs font-semibold text-slate-600 bg-white border border-slate-200 hover:bg-slate-50">Semua Periode</button>
                 <button type="button" onClick={exportLaporan} disabled={!report?.loans?.length} className="px-3 py-2 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 flex items-center gap-1.5 disabled:opacity-50"><Download className="w-4 h-4" /> CSV</button>
                 <button type="button" onClick={() => window.print()} disabled={!report} className="px-3 py-2 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-900 text-white flex items-center gap-1.5 disabled:opacity-50"><Printer className="w-4 h-4" /> Cetak / PDF</button>
               </div>
@@ -700,7 +734,7 @@ export default function BonTeknisi({
               <h2 className="text-sm font-extrabold uppercase mt-2">Laporan Bon / Barang Bawaan Teknisi</h2>
               <p className="text-[11px]">
                 Periode: {rpStart ? formatDate(rpStart) : 'awal'} s/d {rpEnd ? formatDate(rpEnd) : 'sekarang'}
-                {rpTeknisi ? ` • Teknisi: ${rpTeknisi}` : ''}{rpStatus ? ` • Status: ${rpStatus}` : ''}
+                {rpDivisi ? ` • Divisi: ${DIVISI_LABEL[rpDivisi] || rpDivisi}` : ''}{rpTeknisi ? ` • Teknisi: ${rpTeknisi}` : ''}{rpStatus ? ` • Status: ${rpStatus}` : ''}
               </p>
             </div>
 
@@ -715,6 +749,32 @@ export default function BonTeknisi({
                   <Kpi label="Nilai Dikembalikan" value={formatRupiah(report.summary.nilai_kembali)} tone="emerald" sub={`Masih di teknisi: ${formatRupiah(report.summary.nilai_sisa)}`} />
                 </div>
 
+                {report.per_divisi_bon?.length > 0 && (
+                  <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                    <h3 className="px-4 py-3 text-xs font-bold uppercase tracking-wider text-slate-700 border-b border-slate-100">Rekap per Divisi (Pembawa Bon)</h3>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs min-w-[560px]">
+                        <thead className="bg-slate-50 text-slate-500 uppercase text-[10px]"><tr>
+                          <th className="text-left px-3 py-2">Divisi</th><th className="text-right px-3 py-2">Teknisi</th><th className="text-right px-3 py-2">Bon</th><th className="text-right px-3 py-2">Dibawa</th><th className="text-right px-3 py-2">Terpasang</th><th className="text-right px-3 py-2">Kembali</th><th className="text-right px-3 py-2">Sisa</th>
+                        </tr></thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {report.per_divisi_bon.map((d) => (
+                            <tr key={d.divisi || '-'}>
+                              <td className="px-3 py-2">{d.divisi ? <DivisiBadge divisi={d.divisi} /> : <span className="text-slate-400">Tanpa divisi</span>}</td>
+                              <td className="px-3 py-2 text-right">{d.jumlah_teknisi}</td>
+                              <td className="px-3 py-2 text-right">{d.jumlah_bon}</td>
+                              <td className="px-3 py-2 text-right">{formatRupiah(d.nilai_dibawa)}</td>
+                              <td className="px-3 py-2 text-right text-indigo-700">{formatRupiah(d.nilai_terpasang)}</td>
+                              <td className="px-3 py-2 text-right text-emerald-700">{formatRupiah(d.nilai_kembali)}</td>
+                              <td className="px-3 py-2 text-right font-semibold">{formatRupiah(d.nilai_sisa)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
                   <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
                     <h3 className="px-4 py-3 text-xs font-bold uppercase tracking-wider text-slate-700 border-b border-slate-100">Rekap per Teknisi (Pembawa)</h3>
@@ -727,7 +787,7 @@ export default function BonTeknisi({
                           {report.per_teknisi.length === 0 && <tr><td colSpan={6} className="px-3 py-6 text-center text-slate-400">Tidak ada data.</td></tr>}
                           {report.per_teknisi.map((t) => (
                             <tr key={t.teknisi_nama}>
-                              <td className="px-3 py-2 font-semibold">{t.teknisi_nama}</td>
+                              <td className="px-3 py-2 font-semibold">{t.teknisi_nama}{t.divisi && <span className="ml-1.5"><DivisiBadge divisi={t.divisi} /></span>}</td>
                               <td className="px-3 py-2 text-right">{t.jumlah_bon}{t.bon_berjalan ? <span className="text-amber-700"> ({t.bon_berjalan} jalan)</span> : null}</td>
                               <td className="px-3 py-2 text-right">{formatRupiah(t.nilai_dibawa)}</td>
                               <td className="px-3 py-2 text-right text-indigo-700">{formatRupiah(t.nilai_terpasang)}</td>
@@ -818,7 +878,7 @@ export default function BonTeknisi({
                           <tr key={l.id}>
                             <td className="px-3 py-2 font-mono font-bold">{l.no_bon}</td>
                             <td className="px-3 py-2 whitespace-nowrap">{formatDate(l.tanggal)}</td>
-                            <td className="px-3 py-2">{l.teknisi_nama}</td>
+                            <td className="px-3 py-2">{l.teknisi_nama}{l.divisi ? <span className="text-slate-500"> ({DIVISI_LABEL[l.divisi] || l.divisi})</span> : ''}</td>
                             <td className="px-3 py-2">{l.keperluan || '-'}</td>
                             <td className="px-3 py-2 text-right">{formatRupiah(l.nilai_dibawa)}</td>
                             <td className="px-3 py-2 text-right">{formatRupiah(l.nilai_terpasang)}</td>
@@ -849,7 +909,8 @@ export default function BonTeknisi({
       {showNew && (
         <BonBaruModal
           items={items}
-          technicians={technicians}
+          roster={roster}
+          onRosterChange={loadRoster}
           onClose={() => setShowNew(false)}
           onSaved={(bon) => {
             setShowNew(false);
@@ -881,7 +942,9 @@ export default function BonTeknisi({
           customers={customers}
           foSites={foSites}
           towerSites={towerSites}
-          technicians={technicians}
+          roster={roster}
+          canManageRoster={canManage}
+          onRosterChange={loadRoster}
           onClose={() => setMode(null)}
           onSaved={afterAction}
         />

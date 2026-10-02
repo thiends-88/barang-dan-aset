@@ -88,6 +88,7 @@ src/
     BonTeknisi.jsx (halaman Bon Teknisi: daftar, riwayat, laporan, detail)
     BonTeknisiForms.jsx (bon baru + scan, realisasi pemasangan, pengembalian)
     BonTeknisiPrint.jsx (surat jalan / rekap bon, pakai blok .print-doc)
+    DataTeknisi.jsx (tab Data Teknisi + TeknisiFormModal, dipakai juga oleh form bon)
   utils/
     auth.js       → sesi localStorage, peta MENU_ACCESS, penambal window.fetch
     formatters.js → todayLocal(), formatRupiah(), formatNumber(), formatDate(), exportToCSV()
@@ -146,8 +147,8 @@ reverse proxy) ada di `README.md` bagian **Deploy ke Proxmox**.
 ```bash
 PORT=3001 node server/index.js &     # siapkan server untuk pengujian
 npm test                             # = api-test.mjs && ssr-test.mjs
-npm run test:api                     # 128 tes integrasi API
-npm run test:render                  # 41 tes render (18 smoke + 11 regresi Navbar + 1 Seksi 20 + 11 Seksi 21 Bon Teknisi)
+npm run test:api                     # 149 tes integrasi API
+npm run test:render                  # 46 tes render (18 smoke + 11 regresi Navbar + 1 Seksi 20 + 16 Seksi 21 Bon Teknisi)
 ```
 
 > Hasil terakhir (sesi `arena/01a0edc1`, 29 Sep 2026): **API 78/78 lolos, SSR 29/29 lolos**
@@ -393,8 +394,17 @@ itu wajar karena perbedaan versi toolchain, bukan bug.
   `total_harga`, menolak jumlah > sisa bon, SN dengan jumlah ≠ 1, dan SN yang sudah terpasang di mana pun.
   Kolom baru `dipasang_oleh` & `no_bon` pada `customer_items`/`fo_items`/`tower_items`; `reconcileInstalledItems()`
   (edit pelanggan/FO/tower) mempertahankannya dengan mencocokkan kode+SN.
-- **Teknisi**: nama bebas (datalist dari akun peran teknisi + nama yang pernah tercatat); `teknisi_id` terisi bila
-  cocok dengan akun. Teknisi pemasang boleh berbeda dari pembawa. Tidak ada pembatasan "hanya bon milik sendiri".
+- **Teknisi & divisi (Data Teknisi)**: tabel `technicians` (`nama` unik tak peka huruf, `divisi` ∈ PELANGGAN/DIVISI FO/DIVISI TOWER,
+  `no_hp`, `status` aktif|nonaktif), CRUD di `/api/teknisi` (GET semua peran; tulis hanya admin/staff_gudang — aturan ada di
+  `WRITE_RULES`). Bon baru **wajib `divisi`** dan memakai `teknisi_ref_id` (nama & divisi bon diambil dari Data Teknisi; divisi
+  boleh dikosongkan bila ada `teknisi_ref_id` → mengikuti divisi teknisi). API masih menerima `teknisi_nama` bebas (+ `divisi`)
+  demi kompatibilitas, tetapi UI hanya memakai dropdown. Teknisi nonaktif ditolak untuk bon baru. Ganti nama teknisi
+  memperbarui `technician_loans`, `technician_loan_movements`, dan `dipasang_oleh` secara berantai; hapus ditolak bila sudah
+  tercatat (pakai nonaktif). Dropdown UI: pilih Divisi → daftar teknisi aktif divisi itu (reset saat divisi diganti);
+  pemasang di Realisasi dikelompokkan per divisi (pembawa bon selalu ada, juga untuk bon lama). `GET /api/technician-loans/technicians`
+  (akun peran teknisi + nama pernah tercatat) tetap ada untuk filter nama. Filter `divisi` ada di daftar & laporan; laporan
+  punya `per_divisi_bon`. `reset-seed` TIDAK menghapus Data Teknisi (seperti tabel `users`). Seed tidak berisi nama teknisi.
+  Teknisi pemasang boleh berbeda dari pembawa. Tidak ada pembatasan "hanya bon milik sendiri".
 - **No. Bon**: kosong → `BON-YYYYMM-NNNN` berurutan per bulan (unik); bisa diisi manual (huruf besar, unik, maks 40).
 - **Cetak**: dokumen dirender dua kali — di modal (layar) dan di `<div class="print-doc">` (hanya tampil saat cetak,
   bisa pecah halaman). Jangan mencetak modal `fixed` langsung. Laporan memakai `print-only` + `print-page-laporan`.
@@ -408,7 +418,8 @@ itu wajar karena perbedaan versi toolchain, bukan bug.
 
 - Tabel: `categories`, `items`, `customers`, `customer_items`, `fo_sites`, `fo_items`,
   `tower_sites`, `tower_items`, `transactions`, `users`, dan (Bon Teknisi) `technician_loans`,
-  `technician_loan_items`, `technician_loan_movements` (jenis `BAWA|PASANG|KEMBALI|BATAL`).
+  `technician_loan_items`, `technician_loan_movements` (jenis `BAWA|PASANG|KEMBALI|BATAL`), serta `technicians` (Data Teknisi;
+  `technician_loans` punya kolom `divisi` & `teknisi_ref_id`).
 - Skema dibuat dengan `CREATE TABLE IF NOT EXISTS`; penambahan kolom baru memakai daftar
   `migrations` (`ALTER TABLE ... ADD COLUMN`, dibungkus try/catch) di `server/db.js`.
   **Cara menambah kolom baru = tambahkan entri di array itu**, jangan menulis migrasi lain.
@@ -473,8 +484,8 @@ itu wajar karena perbedaan versi toolchain, bukan bug.
 1. `npm install` (bila `package.json` berubah) —
    dependensi baru wajib tercermin di `package-lock.json`.
 2. Jalankan server di 3001, lalu:
-   - `npm run test:api` → harapan **128/128 lolos**
-   - `npm run test:render` → harapan **41/41 lolos**
+   - `npm run test:api` → harapan **149/149 lolos**
+   - `npm run test:render` → harapan **46/46 lolos**
    - bila menambah fitur, **tambahkan seksi tesnya** di `api-test.mjs` / `ssr-test.mjs`
      mengikuti gaya yang ada (fungsi `ok()` / `bad()`, judul seksi `=== N. ... ===`).
 3. `npm run build` bila menyentuh frontend; pastikan `dist/` ter-commit.
@@ -628,7 +639,9 @@ di README, info versi build (`/api/version`,
   Divisi Tower lengkap SN, lokasi tujuan & teknisi pemasang; (3) pengembalian sisa ke gudang. Detail keputusan: **§6.10**.
 - Menu baru **Bon Teknisi** (daftar bon, riwayat mutasi, laporan + CSV + cetak), surat jalan / rekap bon A4, kolom
   `+N dibawa teknisi` di Master Barang, kartu *Dibawa Teknisi* di Dashboard, filter divisi `TEKNISI` di menu Mutasi.
-- Tes: **Seksi 6F** `api-test.mjs` (+47 → **128/128**) dan **Seksi 21** `ssr-test.mjs` (+11 → **41/41**); alur UI juga
+- **Data Teknisi + Divisi pada bon** (permintaan lanjutan): tab *Data Teknisi*, pilih Divisi → nama teknisi di Bon Baru & Realisasi,
+  tambah teknisi cepat dari form bon, filter/rekap per divisi (§6.10).
+- Tes: **Seksi 6F+6G** `api-test.mjs` (**149/149**) dan **Seksi 21** `ssr-test.mjs` (**46/46**); alur UI juga
   diuji manual di jsdom (scan, bon, realisasi, pengembalian, riwayat, laporan, cetak) — skrip tidak disimpan karena jsdom bukan dependensi.
 - Belum terverifikasi visual di browser sungguhan (sandbox tanpa Chromium): tampilan responsif modal, hasil cetak
   A4, dan lebar Navbar 9 menu perlu dicek pemilik.
@@ -656,7 +669,7 @@ npm run dev                              # Vite di :3000, proxy /api → :3001
 
 # Uji
 PORT=3001 node server/index.js &         # server untuk pengujian
-npm test                                 # 128 tes API + 41 tes render
+npm test                                 # 149 tes API + 46 tes render
 npm run test:api ; npm run test:render   # terpisah
 
 # Produksi

@@ -179,6 +179,17 @@ export function initDb() {
       created_at TEXT DEFAULT (datetime('now', 'localtime'))
     );
 
+    -- Data teknisi / petugas lapangan (master untuk dropdown Bon Teknisi): dipilih per divisi
+    CREATE TABLE IF NOT EXISTS technicians (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      nama TEXT NOT NULL,
+      divisi TEXT NOT NULL DEFAULT 'DIVISI FO', -- 'PELANGGAN' | 'DIVISI FO' | 'DIVISI TOWER'
+      no_hp TEXT DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'aktif', -- 'aktif' | 'nonaktif'
+      created_at TEXT DEFAULT (datetime('now', 'localtime')),
+      updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+    );
+
     -- Bon / Barang Bawaan Teknisi (stok transit lapangan) — tahap 1: catatan awal
     CREATE TABLE IF NOT EXISTS technician_loans (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -260,7 +271,10 @@ export function initDb() {
     "ALTER TABLE fo_items ADD COLUMN dipasang_oleh TEXT DEFAULT ''",
     "ALTER TABLE fo_items ADD COLUMN no_bon TEXT DEFAULT ''",
     "ALTER TABLE tower_items ADD COLUMN dipasang_oleh TEXT DEFAULT ''",
-    "ALTER TABLE tower_items ADD COLUMN no_bon TEXT DEFAULT ''"
+    "ALTER TABLE tower_items ADD COLUMN no_bon TEXT DEFAULT ''",
+    // Bon Teknisi: divisi pembawa + rujukan ke Data Teknisi
+    "ALTER TABLE technician_loans ADD COLUMN divisi TEXT DEFAULT ''",
+    "ALTER TABLE technician_loans ADD COLUMN teknisi_ref_id INTEGER DEFAULT NULL"
   ];
 
   for (const m of migrations) {
@@ -284,6 +298,8 @@ export function initDb() {
     'CREATE INDEX IF NOT EXISTS idx_fo_items_kode ON fo_items (kode_barang)',
     'CREATE INDEX IF NOT EXISTS idx_tower_items_tower ON tower_items (tower_id)',
     'CREATE INDEX IF NOT EXISTS idx_tower_items_kode ON tower_items (kode_barang)',
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_technicians_nama ON technicians (nama COLLATE NOCASE)',
+    'CREATE INDEX IF NOT EXISTS idx_tloan_divisi ON technician_loans (divisi)',
     'CREATE INDEX IF NOT EXISTS idx_tloan_status ON technician_loans (status)',
     'CREATE INDEX IF NOT EXISTS idx_tloan_tanggal ON technician_loans (tanggal)',
     'CREATE INDEX IF NOT EXISTS idx_tloan_items_loan ON technician_loan_items (loan_id)',

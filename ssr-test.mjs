@@ -247,7 +247,7 @@ console.log('\n=== 21. Bon / Barang Bawaan Teknisi ===');
 {
   // Bon contoh murni di memori (tanpa menulis ke database) untuk menguji render formulir & cetak
   const fakeLoan = {
-    id: 1, no_bon: 'BON-202610-0001', tanggal: '2026-10-02', waktu: '09:15:00', teknisi_nama: 'Budi Santoso',
+    id: 1, no_bon: 'BON-202610-0001', tanggal: '2026-10-02', waktu: '09:15:00', teknisi_nama: 'Budi Santoso', divisi: 'DIVISI FO',
     keperluan: 'Instalasi baru Tanah Garam', catatan: '', status: 'SEBAGIAN', dibuat_oleh: 'Staff Gudang',
     items: [
       { id: 11, kode_barang: 'BRG-ONT-HG8546M', nama_barang: 'ONU XPON Huawei HG8546M', satuan: 'unit', harga_barang: 175000, jumlah_dibawa: 5, jumlah_terpasang: 1, jumlah_kembali: 0, jumlah_sisa: 4 },
@@ -269,22 +269,35 @@ console.log('\n=== 21. Bon / Barang Bawaan Teknisi ===');
   try {
     const pageAdmin = await render('/src/components/BonTeknisi.jsx', { items, customers, foSites, towerSites, onRefresh() {}, canManage: true, canInstall: true });
     const pageViewer = await render('/src/components/BonTeknisi.jsx', { items, customers, foSites, towerSites, onRefresh() {}, canManage: false, canInstall: false });
-    cek('halaman Bon Teknisi tampil (judul, tab Daftar/Riwayat/Laporan)', pageAdmin.includes('Bon / Barang Bawaan Teknisi') && pageAdmin.includes('Riwayat Mutasi') && pageAdmin.includes('Laporan') && pageAdmin.includes('Daftar Bon'));
+    cek('halaman Bon Teknisi tampil (judul, tab Daftar/Riwayat/Laporan)', pageAdmin.includes('Bon / Barang Bawaan Teknisi') && pageAdmin.includes('Riwayat Mutasi') && pageAdmin.includes('Laporan') && pageAdmin.includes('Daftar Bon') && pageAdmin.includes('Data Teknisi') && pageAdmin.includes('Semua Divisi'));
     cek('tombol "Bon Baru" hanya untuk admin/staff gudang', pageAdmin.includes('Bon Baru') && !pageViewer.includes('Bon Baru'));
     cek('penuntun alur 3 tahap tampil', ['Bawa dari Gudang', 'Realisasi Pemasangan', 'Kembalikan Sisa'].every((t) => pageAdmin.includes(t)));
 
-    const baru = await render('/src/components/BonTeknisiForms.jsx', { items, technicians: { users: [{ id: 3, nama_lengkap: 'Teknisi Lapangan' }], nama_pernah_tercatat: [] }, onClose() {}, onSaved() {} }, 'BonBaruModal');
-    cek('formulir Bon Baru (tahap 1): No. Bon, teknisi, scan barcode, daftar barang', ['No. Bon', 'Teknisi yang Membawa', 'Scan Barcode Stiker Barang', 'Daftar Barang yang Dibawa'].every((t) => baru.includes(t)));
+    const roster = [
+      { id: 1, nama: 'Andi Fiber', divisi: 'DIVISI FO', no_hp: '', status: 'aktif', jumlah_bon: 0, bon_berjalan: 0 },
+      { id: 2, nama: 'Tono Tower', divisi: 'DIVISI TOWER', no_hp: '0812', status: 'aktif', jumlah_bon: 2, bon_berjalan: 1 },
+      { id: 3, nama: 'Pensiun Lama', divisi: 'DIVISI FO', no_hp: '', status: 'nonaktif', jumlah_bon: 1, bon_berjalan: 0 }
+    ];
+    const baru = await render('/src/components/BonTeknisiForms.jsx', { items, roster, onClose() {}, onRosterChange() {}, onSaved() {} }, 'BonBaruModal');
+    cek('formulir Bon Baru (tahap 1): No. Bon, divisi, teknisi, scan barcode, daftar barang', ['No. Bon', 'Divisi *', 'Teknisi yang Membawa', 'Tambah Teknisi', 'Scan Barcode Stiker Barang', 'Daftar Barang yang Dibawa'].every((t) => baru.includes(t)));
+    cek('Bon Baru: pilihan divisi Pelanggan / Divisi FO / Divisi Tower; teknisi terkunci sebelum divisi dipilih', ['Pelanggan', 'Divisi FO', 'Divisi Tower', 'Pilih divisi dulu'].every((t) => baru.includes(t)) && /<select[^>]*disabled=""[^>]*aria-label="Teknisi yang membawa"/.test(baru));
+    const panel = await render('/src/components/DataTeknisi.jsx', { roster, canManage: true, onChanged() {} });
+    const panelView = await render('/src/components/DataTeknisi.jsx', { roster, canManage: false, onChanged() {} });
+    cek('tab Data Teknisi: daftar nama + divisi + status, nonaktif ditandai', ['Andi Fiber', 'Tono Tower', 'Pensiun Lama', 'Nonaktif', 'Divisi Tower'].every((t) => panel.includes(t)));
+    cek('tab Data Teknisi: tombol tambah/ubah hanya untuk admin/staff gudang', panel.includes('Tambah Teknisi') && panel.includes('Ubah Andi Fiber') && !panelView.includes('Tambah Teknisi') && !panelView.includes('Ubah Andi Fiber'));
+    const panelKosong = await render('/src/components/DataTeknisi.jsx', { roster: [], canManage: true, onChanged() {} });
+    cek('tab Data Teknisi: keadaan kosong memberi petunjuk', panelKosong.includes('Belum ada data teknisi'));
 
-    const real = await render('/src/components/BonTeknisiForms.jsx', { loan: fakeLoan, customers, foSites, towerSites, technicians: null, onClose() {}, onSaved() {} }, 'RealisasiModal');
+    const real = await render('/src/components/BonTeknisiForms.jsx', { loan: fakeLoan, customers, foSites, towerSites, roster, canManageRoster: true, onRosterChange() {}, onClose() {}, onSaved() {} }, 'RealisasiModal');
     cek('formulir Realisasi (tahap 2): 3 divisi, lokasi tujuan, teknisi pemasang, SN', ['Pelanggan', 'Divisi FO', 'Divisi Tower', 'Lokasi Tujuan', 'Teknisi yang Memasang', 'Serial Number'].every((t) => real.includes(t)));
+    cek('Realisasi: teknisi pemasang dipilih dari Data Teknisi per divisi (nonaktif disembunyikan, pembawa bon tetap ada)', real.includes('Andi Fiber') && real.includes('Tono Tower') && !real.includes('Pensiun Lama') && real.includes('Budi Santoso'));
 
     const kembali = await render('/src/components/BonTeknisiForms.jsx', { loan: fakeLoan, onClose() {}, onSaved() {} }, 'PengembalianModal');
     cek('formulir Pengembalian (tahap 3): hanya barang bersisa & tombol kembalikan semua', kembali.includes('Kembalikan Semua Sisa') && kembali.includes('ONU XPON Huawei HG8546M') && !kembali.includes('Patchcord SC-UPC 3M'));
 
     const docs = await render('/src/components/BonTeknisiPrint.jsx', { loan: fakeLoan, variant: 'surat_jalan' }, 'BonDocument');
     const docr = await render('/src/components/BonTeknisiPrint.jsx', { loan: fakeLoan, variant: 'rekap' }, 'BonDocument');
-    cek('surat jalan memuat No. Bon, teknisi, barang & tanda tangan, tanpa riwayat realisasi', docs.includes('Surat Jalan / Bon Barang Bawaan Teknisi') && docs.includes('BON-202610-0001') && docs.includes('Budi Santoso') && docs.includes('Dibawa oleh') && !docs.includes('SN-RENDER-777'));
+    cek('surat jalan memuat No. Bon, teknisi, barang & tanda tangan, tanpa riwayat realisasi', docs.includes('Surat Jalan / Bon Barang Bawaan Teknisi') && docs.includes('BON-202610-0001') && docs.includes('Budi Santoso') && docs.includes('Dibawa oleh') && docs.includes('Divisi FO') && !docs.includes('SN-RENDER-777'));
     cek('rekap bon memuat realisasi (SN, lokasi, teknisi pemasang) & pengembalian', ['SN-RENDER-777', 'Jl. Uji Render No. 9', 'Andi Pemasang', 'TRX-IN-202610-2222', 'Realisasi Pemasangan', 'Pengembalian ke Gudang'].every((t) => docr.includes(t)));
 
     const modal = await render('/src/components/BonTeknisiPrint.jsx', { loan: fakeLoan, variant: 'surat_jalan', onChangeVariant() {}, onClose() {} });
