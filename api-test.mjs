@@ -722,6 +722,233 @@ console.log('\n=== 6E. LAPORAN STOK GUDANG LOGISTIK (STOK TERSEDIA & BARANG STOK
   }
 }
 
+console.log('\n=== 6F. BON / BARANG BAWAAN TEKNISI (3 tahap: bawa → pasang → kembali) ===');
+{
+  const ONT = 'BRG-ONT-HG8546M';        // stok seed 45
+  const PATCH = 'BRG-FO-PATCH-SC-3M';   // stok seed 180
+  const SLING = 'BRG-TWR-SLING-4MM';    // stok seed 650 (meter)
+  const sOnt0 = stockOf(ONT), sPatch0 = stockOf(PATCH), sSling0 = stockOf(SLING);
+  const markBon = maxTrxId();
+
+  const loginRole = async (username, password) => {
+    const lr = await req('POST', '/api/auth/login', { username, password }, { noAuth: true });
+    return lr.json?.data?.token;
+  };
+  const reqAs = async (token, method, url, body) => {
+    const res = await fetch(API + url, {
+      method,
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: body ? JSON.stringify(body) : undefined
+    });
+    let json = null;
+    try { json = await res.json(); } catch { /* null */ }
+    return { status: res.status, json };
+  };
+
+  const cust = (await req('GET', '/api/customers')).json?.data?.[0];
+  const fo = (await req('GET', '/api/fo')).json?.data?.[0];
+  const twr = (await req('GET', '/api/tower')).json?.data?.[0];
+
+  // --- Tahap 1: validasi penolakan ---
+  let rb = await req('POST', '/api/technician-loans', { teknisi_nama: 'Budi Santoso', items: [{ kode_barang: ONT, jumlah: 9999 }] });
+  if (rb.status === 400 && /Stok gudang tidak mencukupi/.test(rb.json?.error || '') && stockOf(ONT) === sOnt0) ok('Bon: bawa melebihi stok gudang ditolak & stok utuh');
+  else bad('Bon: bawa melebihi stok gudang ditolak', `HTTP ${rb.status} ${rb.json?.error}`);
+
+  rb = await req('POST', '/api/technician-loans', { items: [{ kode_barang: ONT, jumlah: 1 }] });
+  if (rb.status === 400 && /teknisi/i.test(rb.json?.error || '')) ok('Bon: nama teknisi wajib diisi');
+  else bad('Bon: nama teknisi wajib diisi', `HTTP ${rb.status}`);
+
+  rb = await req('POST', '/api/technician-loans', { teknisi_nama: 'Budi Santoso', items: [{ kode_barang: 'KODE-NGAWUR', jumlah: 1 }] });
+  if (rb.status === 400) ok('Bon: kode barang tak terdaftar ditolak'); else bad('Bon: kode barang tak terdaftar ditolak', `HTTP ${rb.status}`);
+
+  rb = await req('POST', '/api/technician-loans', { teknisi_nama: 'Budi Santoso', items: [{ kode_barang: ONT, jumlah: -3 }, { kode_barang: PATCH, jumlah: 0 }] });
+  if (rb.status === 400) ok('Bon: jumlah negatif / tanpa barang ditolak'); else bad('Bon: jumlah negatif / tanpa barang ditolak', `HTTP ${rb.status}`);
+  if (db.prepare('SELECT COUNT(*) AS c FROM technician_loans').get().c === 0) ok('Bon: penolakan tidak meninggalkan bon setengah jadi');
+  else bad('Bon: penolakan tidak meninggalkan bon setengah jadi');
+
+  // --- Tahap 1: bon sah (ONT 5 + PATCH 20 + SLING 100 m); kode ONT dobel digabung ---
+  rb = await req('POST', '/api/technician-loans', {
+    teknisi_nama: 'Budi Santoso', keperluan: 'Instalasi baru Solok Selatan', no_bon: 'bon-uji-001',
+    items: [{ kode_barang: ONT, jumlah: 3 }, { kode_barang: PATCH, jumlah: 20 }, { kode_barang: SLING, jumlah: 100 }, { kode_barang: ONT.toLowerCase(), jumlah: 2 }]
+  });
+  const bon = rb.json?.data;
+  if (rb.status === 201 && bon?.no_bon === 'BON-UJI-001' && bon.status === 'AKTIF' && bon.items.length === 3) ok('Bon: dibuat dengan No. Bon, teknisi, & barang digabung per kode', bon?.no_bon);
+  else bad('Bon: dibuat dengan No. Bon, teknisi, & barang digabung per kode', `HTTP ${rb.status} ${rb.json?.error}`);
+  const liOnt = bon?.items.find((i) => i.kode_barang === ONT);
+  const liPatch = bon?.items.find((i) => i.kode_barang === PATCH);
+  const liSling = bon?.items.find((i) => i.kode_barang === SLING);
+  if (liOnt?.jumlah_dibawa === 5) ok('Bon: kode ONT dobel digabung jadi 5'); else bad('Bon: kode ONT dobel digabung jadi 5', `${liOnt?.jumlah_dibawa}`);
+
+  if (stockOf(ONT) === sOnt0 - 5 && stockOf(PATCH) === sPatch0 - 20 && stockOf(SLING) === sSling0 - 100) ok('Tahap 1: stok gudang berkurang sebesar yang dibawa teknisi');
+  else bad('Tahap 1: stok gudang berkurang', `ONT ${stockOf(ONT)}/${sOnt0 - 5} PATCH ${stockOf(PATCH)}/${sPatch0 - 20}`);
+  const trx1 = trxSince(markBon);
+  if (trx1.length === 3 && trx1.every((t) => t.jenis === 'KELUAR' && t.divisi === 'TEKNISI' && t.kategori_transaksi === 'Bon Teknisi (Dibawa)' && t.ref_id === bon.id)) ok('Tahap 1: 3 mutasi KELUAR (divisi TEKNISI) tercatat di riwayat transaksi');
+  else bad('Tahap 1: mutasi KELUAR tercatat', `${trx1.length} baris`);
+  const lstItems = (await req('GET', '/api/items')).json?.data || [];
+  if (lstItems.find((i) => i.kode_barang === ONT)?.stok_transit === 5 && lstItems.find((i) => i.kode_barang === SLING)?.stok_transit === 100) ok('Master barang menampilkan stok_transit (dibawa teknisi)');
+  else bad('Master barang menampilkan stok_transit');
+
+  rb = await req('POST', '/api/technician-loans', { teknisi_nama: 'X', no_bon: 'BON-UJI-001', items: [{ kode_barang: PATCH, jumlah: 1 }] });
+  if (rb.status === 400 && /sudah digunakan/.test(rb.json?.error || '')) ok('Bon: No. Bon dobel ditolak'); else bad('Bon: No. Bon dobel ditolak', `HTTP ${rb.status}`);
+
+  const auto = await req('POST', '/api/technician-loans', { teknisi_nama: 'Rina Wulandari', items: [{ kode_barang: PATCH, jumlah: 1 }] });
+  if (auto.status === 201 && /^BON-\d{6}-0001$/.test(auto.json?.data?.no_bon || '')) ok('Bon: No. Bon otomatis BON-YYYYMM-NNNN', auto.json.data.no_bon);
+  else bad('Bon: No. Bon otomatis', `${auto.status} ${auto.json?.data?.no_bon}`);
+
+  // --- Hak akses ---
+  const tTek = await loginRole('teknisi', 'teknisi123');
+  const tView = await loginRole('viewer', 'viewer123');
+  let ra = await reqAs(tView, 'POST', '/api/technician-loans', { teknisi_nama: 'X', items: [{ kode_barang: PATCH, jumlah: 1 }] });
+  const raView = await reqAs(tView, 'GET', '/api/technician-loans');
+  if (ra.status === 403 && raView.status === 200) ok('Hak akses: viewer boleh melihat bon, tidak boleh membuat'); else bad('Hak akses viewer', `${ra.status}/${raView.status}`);
+  ra = await reqAs(tTek, 'POST', '/api/technician-loans', { teknisi_nama: 'X', items: [{ kode_barang: PATCH, jumlah: 1 }] });
+  const rb2 = await reqAs(tTek, 'POST', `/api/technician-loans/${bon.id}/return`, { semua_sisa: true });
+  if (ra.status === 403 && rb2.status === 403) ok('Hak akses: teknisi tidak boleh membuat bon / pengembalian'); else bad('Hak akses teknisi', `${ra.status}/${rb2.status}`);
+
+  // --- Tahap 2: realisasi pemasangan ---
+  const sOntSebelumPasang = stockOf(ONT);
+  const mark2 = maxTrxId();
+  let ri = await req('POST', `/api/technician-loans/${bon.id}/install`, {
+    divisi: 'PELANGGAN', tujuan_id: cust.id, teknisi_pemasang: 'Andi Pratama',
+    items: [{ loan_item_id: liOnt.id, jumlah: 99 }]
+  });
+  if (ri.status === 400 && /melebihi sisa/.test(ri.json?.error || '')) ok('Realisasi: melebihi sisa bon ditolak'); else bad('Realisasi: melebihi sisa bon ditolak', `HTTP ${ri.status} ${ri.json?.error}`);
+
+  ri = await req('POST', `/api/technician-loans/${bon.id}/install`, { divisi: 'PELANGGAN', tujuan_id: cust.id, items: [{ loan_item_id: liOnt.id, jumlah: 2, serial_number: 'SN-UJI-AA' }] });
+  if (ri.status === 400 && /1 unit per baris/.test(ri.json?.error || '')) ok('Realisasi: SN hanya untuk 1 unit per baris'); else bad('Realisasi: SN 1 unit per baris', `HTTP ${ri.status} ${ri.json?.error}`);
+
+  ri = await req('POST', `/api/technician-loans/${bon.id}/install`, { divisi: 'GUDANG', tujuan_id: cust.id, items: [{ loan_item_id: liOnt.id, jumlah: 1 }] });
+  const ri2 = await req('POST', `/api/technician-loans/${bon.id}/install`, { divisi: 'PELANGGAN', tujuan_id: 999999, items: [{ loan_item_id: liOnt.id, jumlah: 1 }] });
+  if (ri.status === 400 && ri2.status === 400) ok('Realisasi: divisi tidak valid / tujuan tak ditemukan ditolak'); else bad('Realisasi: divisi/tujuan tidak valid', `${ri.status}/${ri2.status}`);
+
+  const custTotalSebelum = (await req('GET', `/api/customers/${cust.id}`)).json?.data?.total_harga || 0;
+  ri = await req('POST', `/api/technician-loans/${bon.id}/install`, {
+    divisi: 'PELANGGAN', tujuan_id: cust.id, teknisi_pemasang: 'Andi Pratama', lokasi_tujuan: 'Rumah pelanggan, Jl. Contoh No. 5',
+    items: [{ loan_item_id: liOnt.id, jumlah: 1, serial_number: 'SN-UJI-AA' }, { loan_item_id: liPatch.id, jumlah: 2 }]
+  });
+  const afterPasang = ri.json?.data;
+  if (ri.status === 201 && afterPasang?.status === 'SEBAGIAN') ok('Tahap 2: realisasi ke Pelanggan tersimpan, status bon SEBAGIAN'); else bad('Tahap 2: realisasi ke Pelanggan', `HTTP ${ri.status} ${ri.json?.error}`);
+  if (stockOf(ONT) === sOntSebelumPasang && trxSince(mark2).length === 0) ok('Tahap 2: stok gudang & riwayat transaksi gudang TIDAK berubah (barang sudah keluar di tahap 1)');
+  else bad('Tahap 2: stok gudang tidak berubah', `stok=${stockOf(ONT)} trx=${trxSince(mark2).length}`);
+  const ciRow = db.prepare('SELECT * FROM customer_items WHERE customer_id = ? AND serial_number = ?').get(cust.id, 'SN-UJI-AA');
+  if (ciRow && ciRow.kode_barang === ONT && ciRow.dipasang_oleh === 'Andi Pratama' && ciRow.no_bon === 'BON-UJI-001') ok('Tahap 2: barang tercatat terpasang di pelanggan lengkap SN, teknisi pemasang & No. Bon');
+  else bad('Tahap 2: barang terpasang di pelanggan', JSON.stringify(ciRow));
+  const custTotalSesudah = (await req('GET', `/api/customers/${cust.id}`)).json?.data?.total_harga || 0;
+  const nilaiPasang = 1 * liOnt.harga_barang + 2 * liPatch.harga_barang;
+  if (Math.abs(custTotalSesudah - custTotalSebelum - nilaiPasang) < 0.01) ok('Tahap 2: total nilai aset pelanggan tersinkron'); else bad('Tahap 2: total nilai aset pelanggan', `${custTotalSebelum} → ${custTotalSesudah} (+${nilaiPasang})`);
+  const mvPasang = afterPasang?.movements.filter((m) => m.jenis === 'PASANG') || [];
+  if (mvPasang.length === 2 && mvPasang.every((m) => m.teknisi_nama === 'Andi Pratama' && m.divisi === 'PELANGGAN' && m.lokasi_tujuan === 'Rumah pelanggan, Jl. Contoh No. 5') && mvPasang.some((m) => m.serial_number === 'SN-UJI-AA')) ok('Tahap 2: riwayat mutasi bon memuat teknisi pemasang, SN & lokasi tujuan');
+  else bad('Tahap 2: riwayat mutasi bon', JSON.stringify(mvPasang).slice(0, 200));
+
+  ri = await req('POST', `/api/technician-loans/${bon.id}/install`, { divisi: 'DIVISI FO', tujuan_id: fo.id, items: [{ loan_item_id: liOnt.id, jumlah: 1, serial_number: 'sn-uji-aa' }] });
+  if (ri.status === 400 && /sudah tercatat terpasang/.test(ri.json?.error || '')) ok('Realisasi: SN yang sudah terpasang ditolak (tanpa peduli huruf besar/kecil)'); else bad('Realisasi: SN dobel', `HTTP ${ri.status} ${ri.json?.error}`);
+
+  // teknisi lapangan boleh mencatat realisasi sendiri: ke FO (patch) & Tower (sling)
+  ri = await reqAs(tTek, 'POST', `/api/technician-loans/${bon.id}/install`, { divisi: 'DIVISI FO', tujuan_id: fo.id, items: [{ loan_item_id: liPatch.id, jumlah: 5 }] });
+  const ri3 = await reqAs(tTek, 'POST', `/api/technician-loans/${bon.id}/install`, { divisi: 'DIVISI TOWER', tujuan_id: twr.id, teknisi_pemasang: 'Tim Tower', items: [{ kode_barang: SLING, jumlah: 40.5 }] });
+  if (ri.status === 201 && ri3.status === 201) ok('Tahap 2: teknisi mencatat realisasi ke Divisi FO & Divisi Tower (jumlah desimal)'); else bad('Tahap 2: realisasi FO/Tower oleh teknisi', `${ri.status}/${ri3.status} ${ri.json?.error || ri3.json?.error}`);
+  const foRow = db.prepare('SELECT * FROM fo_items WHERE fo_id = ? AND kode_barang = ? AND no_bon = ?').get(fo.id, PATCH, 'BON-UJI-001');
+  const twRow = db.prepare('SELECT * FROM tower_items WHERE tower_id = ? AND kode_barang = ? AND no_bon = ?').get(twr.id, SLING, 'BON-UJI-001');
+  if (foRow?.jumlah === 5 && twRow?.jumlah === 40.5 && twRow.dipasang_oleh === 'Tim Tower') ok('Tahap 2: baris terpasang FO & Tower mencatat bon + teknisi pemasang'); else bad('Tahap 2: baris terpasang FO/Tower', JSON.stringify([foRow, twRow]));
+
+  // PUT pelanggan tidak menghapus jejak teknisi pemasang
+  {
+    const cur = (await req('GET', `/api/customers/${cust.id}`)).json?.data;
+    const put = await req('PUT', `/api/customers/${cust.id}`, { items: cur.items.map((i) => ({ kode_barang: i.kode_barang, jumlah: i.jumlah, serial_number: i.serial_number })) });
+    const masih = db.prepare('SELECT * FROM customer_items WHERE customer_id = ? AND serial_number = ?').get(cust.id, 'SN-UJI-AA');
+    if (put.status === 200 && masih?.dipasang_oleh === 'Andi Pratama' && masih?.no_bon === 'BON-UJI-001') ok('Edit pelanggan mempertahankan jejak teknisi pemasang & No. Bon'); else bad('Edit pelanggan mempertahankan jejak', `HTTP ${put.status} ${JSON.stringify(masih)}`);
+  }
+
+  // Hapus barang master yang masih dibawa teknisi ditolak
+  {
+    const idSling = lstItems.find((i) => i.kode_barang === SLING).id;
+    const del = await req('DELETE', `/api/items/${idSling}`);
+    if (del.status === 400) ok('Barang yang masih dibawa teknisi tidak bisa dihapus dari master'); else bad('Hapus barang yang masih dibawa teknisi', `HTTP ${del.status}`);
+  }
+
+  // Scanner: aset yang dibawa teknisi tetap terhitung
+  {
+    const sc = await req('GET', `/api/scanner/lookup/${ONT}`);
+    const d = sc.json?.data?.distribution;
+    if (sc.status === 200 && d?.transit_teknisi === 4 && d.total_keseluruhan === d.gudang_stock + d.total_installed + 4) ok('Scanner: stok dibawa teknisi ikut dihitung dalam total aset'); else bad('Scanner: stok dibawa teknisi', JSON.stringify(d));
+  }
+
+  // --- Tahap 3: pengembalian sisa ---
+  // sisa: ONT 5-1=4, PATCH 20-2-5=13, SLING 100-40.5=59.5
+  const sBefore = { ont: stockOf(ONT), patch: stockOf(PATCH), sling: stockOf(SLING) };
+  const mark3 = maxTrxId();
+  let rr = await req('POST', `/api/technician-loans/${bon.id}/return`, { items: [{ loan_item_id: liOnt.id, jumlah: 5 }] });
+  if (rr.status === 400 && /melebihi sisa/.test(rr.json?.error || '') && stockOf(ONT) === sBefore.ont) ok('Pengembalian: melebihi sisa ditolak & stok utuh'); else bad('Pengembalian: melebihi sisa ditolak', `HTTP ${rr.status}`);
+
+  rr = await req('POST', `/api/technician-loans/${bon.id}/return`, { items: [{ loan_item_id: liOnt.id, jumlah: 3 }, { loan_item_id: liSling.id, jumlah: 19.5 }], keterangan: 'Sisa dikembalikan sore' });
+  if (rr.status === 201 && rr.json?.data?.status === 'SEBAGIAN' && stockOf(ONT) === sBefore.ont + 3 && stockOf(SLING) === sBefore.sling + 19.5) ok('Tahap 3: pengembalian sebagian menambah stok gudang, bon tetap SEBAGIAN'); else bad('Tahap 3: pengembalian sebagian', `HTTP ${rr.status} ${rr.json?.error}`);
+  const trx3 = trxSince(mark3);
+  if (trx3.length === 2 && trx3.every((t) => t.jenis === 'MASUK' && t.divisi === 'TEKNISI' && t.kategori_transaksi === 'Pengembalian Bon Teknisi')) ok('Tahap 3: mutasi MASUK pengembalian tercatat'); else bad('Tahap 3: mutasi MASUK tercatat', `${trx3.length}`);
+
+  rr = await req('POST', `/api/technician-loans/${bon.id}/return`, { semua_sisa: true });
+  const selesai = rr.json?.data;
+  if (rr.status === 201 && selesai?.status === 'SELESAI' && selesai.summary.total_sisa === 0 && stockOf(ONT) === sBefore.ont + 4 && stockOf(PATCH) === sBefore.patch + 13 && stockOf(SLING) === sBefore.sling + 59.5) ok('Tahap 3: "kembalikan semua sisa" → bon SELESAI, stok gudang tepat'); else bad('Tahap 3: kembalikan semua sisa', `HTTP ${rr.status} ${rr.json?.error} status=${selesai?.status}`);
+  rr = await req('POST', `/api/technician-loans/${bon.id}/return`, { semua_sisa: true });
+  if (rr.status === 400) ok('Bon SELESAI tidak bisa direalisasikan lagi'); else bad('Bon SELESAI tidak bisa direalisasikan lagi', `HTTP ${rr.status}`);
+  // keseimbangan: dibawa = terpasang + kembali
+  if (selesai?.items.every((i) => Math.abs(i.jumlah_dibawa - i.jumlah_terpasang - i.jumlah_kembali) < 1e-9)) ok('Keseimbangan bon: dibawa = terpasang + kembali untuk semua barang'); else bad('Keseimbangan bon');
+  const mvTypes = selesai?.movements.map((m) => m.jenis) || [];
+  if (['BAWA', 'PASANG', 'KEMBALI'].every((j) => mvTypes.includes(j))) ok('Riwayat mutasi bon memuat BAWA, PASANG, dan KEMBALI', `${mvTypes.length} entri`); else bad('Riwayat mutasi bon', mvTypes.join(','));
+
+  // --- Pembatalan bon ---
+  {
+    const sP = stockOf(PATCH);
+    const c = await req('POST', '/api/technician-loans', { teknisi_nama: 'Rina Wulandari', items: [{ kode_barang: PATCH, jumlah: 10 }] });
+    const cb = await req('POST', `/api/technician-loans/${c.json.data.id}/cancel`, { alasan: 'Tidak jadi berangkat' });
+    if (cb.status === 200 && cb.json.data.status === 'BATAL' && stockOf(PATCH) === sP) ok('Pembatalan bon (belum dipasang) mengembalikan seluruh barang ke gudang'); else bad('Pembatalan bon', `HTTP ${cb.status} ${cb.json?.error} stok=${stockOf(PATCH)}/${sP}`);
+
+    const d = await req('POST', '/api/technician-loans', { teknisi_nama: 'Rina Wulandari', items: [{ kode_barang: PATCH, jumlah: 4 }] });
+    await req('POST', `/api/technician-loans/${d.json.data.id}/install`, { divisi: 'DIVISI FO', tujuan_id: fo.id, items: [{ kode_barang: PATCH, jumlah: 1 }] });
+    const cb2 = await req('POST', `/api/technician-loans/${d.json.data.id}/cancel`, {});
+    if (cb2.status === 400 && /sudah ada realisasi/.test(cb2.json?.error || '')) ok('Pembatalan bon yang sudah ada realisasi pemasangan ditolak'); else bad('Pembatalan bon dengan realisasi', `HTTP ${cb2.status}`);
+    await req('POST', `/api/technician-loans/${d.json.data.id}/return`, { semua_sisa: true });
+  }
+
+  // --- Laporan, daftar, dan riwayat ---
+  {
+    const rep = await req('GET', '/api/technician-loans/report');
+    const dr = rep.json?.data;
+    const bonRow = dr?.loans.find((l) => l.id === bon.id);
+    const perTek = dr?.per_teknisi.find((t) => t.teknisi_nama === 'Budi Santoso');
+    const nilaiDibawa = 5 * liOnt.harga_barang + 20 * liPatch.harga_barang + 100 * liSling.harga_barang;
+    if (rep.status === 200 && Math.abs(bonRow?.nilai_dibawa - nilaiDibawa) < 0.01 && perTek?.jumlah_bon === 1 && dr.per_divisi.length === 3 && dr.per_barang.length >= 3 && dr.summary.total_bon >= 3) ok('Laporan bon: ringkasan, per teknisi, per barang & per divisi tujuan akurat', `${dr.summary.total_bon} bon`);
+    else bad('Laporan bon', `HTTP ${rep.status} ${JSON.stringify(dr?.summary)}`);
+    const pem = dr?.per_pemasang.map((p) => p.teknisi_nama) || [];
+    if (pem.includes('Andi Pratama') && pem.includes('Tim Tower')) ok('Laporan bon: rekap per teknisi pemasang'); else bad('Laporan bon: rekap per pemasang', pem.join(','));
+
+    const f = await req('GET', '/api/technician-loans/report?status=SELESAI&teknisi=budi%20santoso');
+    if (f.json?.data?.loans.length === 1 && f.json.data.loans[0].id === bon.id) ok('Laporan bon: filter status & teknisi (tidak peka huruf besar/kecil)'); else bad('Laporan bon: filter', `${f.json?.data?.loans?.length}`);
+
+    const mv = await req('GET', `/api/technician-loans/movements?search=${encodeURIComponent('SN-UJI-AA')}`);
+    if (mv.status === 200 && mv.json.data.length === 1 && mv.json.data[0].no_bon === 'BON-UJI-001') ok('Riwayat mutasi lintas bon bisa dicari lewat SN'); else bad('Riwayat mutasi lintas bon', `${mv.json?.data?.length}`);
+
+    const stk = await req('GET', '/api/technician-loans/stock');
+    if (stk.status === 200 && stk.json.data.rows.every((r) => r.jumlah_sisa > 0) && !stk.json.data.rows.some((r) => r.loan_id === bon.id)) ok('Stok sedang dibawa teknisi tidak memuat bon yang sudah selesai'); else bad('Stok sedang dibawa teknisi');
+
+    const dash = await req('GET', '/api/reports/dashboard-summary');
+    if (dash.json?.data?.teknisi && typeof dash.json.data.teknisi.nilai_transit === 'number') ok('Dashboard memuat ringkasan stok dibawa teknisi'); else bad('Dashboard memuat ringkasan teknisi');
+  }
+
+  // --- Invarian & reset ---
+  await req('POST', `/api/technician-loans/${auto.json.data.id}/return`, { semua_sisa: true }); // tuntaskan bon otomatis tadi
+  checkInvariant('setelah bon teknisi (bawa, pasang, kembali, batal)', GLOBAL_SNAP, GLOBAL_MARK);
+  checkNoNegativeStock('setelah bon teknisi');
+  {
+    const aktif = db.prepare("SELECT COUNT(*) AS c FROM technician_loans WHERE status IN ('AKTIF','SEBAGIAN')").get().c;
+    if (aktif === 0) ok('Seluruh bon uji tuntas (tidak ada sisa tertahan di teknisi)'); else bad('Seluruh bon uji tuntas', `${aktif} bon masih aktif`);
+  }
+  // Reset data contoh ikut membersihkan bon
+  const rs = await req('POST', '/api/reset-seed');
+  const sisaBon = db.prepare('SELECT COUNT(*) AS c FROM technician_loans').get().c;
+  const sisaMv = db.prepare('SELECT COUNT(*) AS c FROM technician_loan_movements').get().c;
+  if (rs.status === 200 && sisaBon === 0 && sisaMv === 0) ok('Reset data contoh membersihkan bon & riwayat mutasinya'); else bad('Reset data contoh membersihkan bon', `HTTP ${rs.status} bon=${sisaBon} mutasi=${sisaMv}`);
+}
+
 console.log('\n=== PEMBERSIHAN: reset ke data contoh ===');
 await req('POST', '/api/reset-seed');
 const setelahReset = db.prepare('SELECT COUNT(*) AS c FROM customers').get().c;

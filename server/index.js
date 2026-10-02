@@ -106,6 +106,10 @@ app.get('/api/version', (req, res) => {
 const WRITE_RULES = [
   { pattern: /^\/api\/users(\/|$)/, roles: ['admin'] },
   { pattern: /^\/api\/reset-seed$/, roles: ['admin'] },
+  // Bon Teknisi: realisasi pemasangan boleh dicatat teknisi sendiri; bawa barang
+  // (stok gudang keluar), pengembalian, dan pembatalan hanya admin/staff gudang.
+  { pattern: /^\/api\/technician-loans\/\d+\/install$/, roles: ['admin', 'staff_gudang', 'teknisi'] },
+  { pattern: /^\/api\/technician-loans(\/|$)/, roles: ['admin', 'staff_gudang'] },
   { pattern: /^\/api\/(items|categories|transactions)(\/|$)/, roles: ['admin', 'staff_gudang'] },
   { pattern: /^\/api\/(customers|fo|tower)(\/|$)/, roles: ['admin', 'staff_gudang', 'teknisi'] }
 ];
@@ -519,15 +523,16 @@ function assertStockAvailable(newQtyByCode, oldQtyByCode = new Map()) {
 }
 
 /** Catat satu baris mutasi stok ke tabel transactions. */
-function logStockMutation({ jenis, kategori, divisi, refId = null, lokasi, item, jumlah, harga_satuan, keterangan = '' }) {
+function logStockMutation({ jenis, kategori, divisi, refId = null, lokasi, item, jumlah, harga_satuan, keterangan = '', tanggal: tanggalMutasi }) {
   const now = new Date();
-  const tanggal = todayLocal();
+  const tanggal = tanggalMutasi || todayLocal();
   const harga = Number(harga_satuan !== undefined ? harga_satuan : (item.harga_barang || 0));
+  const trxNo = generateTrxNumber(jenis, tanggal);
   db.prepare(`
     INSERT INTO transactions (no_transaksi, tanggal, waktu, jenis, kategori_transaksi, divisi, ref_id, lokasi_penerima, kode_barang, nama_barang, satuan, jumlah, harga_satuan, total_harga, serial_number, keterangan)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    generateTrxNumber(jenis, tanggal),
+    trxNo,
     tanggal,
     now.toTimeString().split(' ')[0],
     jenis,
@@ -544,6 +549,7 @@ function logStockMutation({ jenis, kategori, divisi, refId = null, lokasi, item,
     item.serial_number || '',
     keterangan
   );
+  return trxNo;
 }
 
 /**
@@ -555,13 +561,22 @@ function reconcileInstalledItems({ table, fkColumn, ownerId, oldItems, validated
   const oldQtyByCode = sumQtyByCode(oldItems);
   const newQtyByCode = sumQtyByCode(validatedItems);
 
+  // Baris dihapus lalu dibuat ulang — jejak teknisi pemasang & No. Bon (dari fitur Bon Teknisi)
+  // dipertahankan dengan mencocokkan kode barang + SN pada baris lama.
+  const jejak = new Map();
+  for (const o of oldItems || []) {
+    if (o && (o.dipasang_oleh || o.no_bon)) {
+      jejak.set(`${o.kode_barang}|${(o.serial_number || '').toUpperCase()}`, { dipasang_oleh: o.dipasang_oleh || '', no_bon: o.no_bon || '' });
+    }
+  }
   db.prepare(`DELETE FROM ${table} WHERE ${fkColumn} = ?`).run(ownerId);
   const insert = db.prepare(`
-    INSERT INTO ${table} (${fkColumn}, kode_barang, nama_barang, jenis_barang, satuan, jumlah, harga_barang, subtotal, serial_number, referensi_suplayer, tanggal_pasang)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO ${table} (${fkColumn}, kode_barang, nama_barang, jenis_barang, satuan, jumlah, harga_barang, subtotal, serial_number, referensi_suplayer, tanggal_pasang, dipasang_oleh, no_bon)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   for (const it of validatedItems) {
-    insert.run(ownerId, it.kode_barang, it.nama_barang, it.jenis_barang, it.satuan, it.jumlah, it.harga_barang, it.subtotal, it.serial_number, it.referensi_suplayer, it.tanggal_pasang);
+    const j = jejak.get(`${it.kode_barang}|${(it.serial_number || '').toUpperCase()}`) || { dipasang_oleh: '', no_bon: '' };
+    insert.run(ownerId, it.kode_barang, it.nama_barang, it.jenis_barang, it.satuan, it.jumlah, it.harga_barang, it.subtotal, it.serial_number, it.referensi_suplayer, it.tanggal_pasang, j.dipasang_oleh, j.no_bon);
   }
 
   const semuaKode = new Set([...oldQtyByCode.keys(), ...newQtyByCode.keys()]);
@@ -722,9 +737,16 @@ app.delete('/api/categories/:id', (req, res) => {
 // Get all items
 app.get('/api/items', (req, res) => {
   try {
+    // stok_transit = barang yang sedang dibawa teknisi (bon aktif) — sudah keluar dari stok gudang
     const items = db.prepare(`
-      SELECT * FROM items 
-      ORDER BY id DESC
+      SELECT i.*, COALESCE((
+        SELECT SUM(li.jumlah_dibawa - li.jumlah_terpasang - li.jumlah_kembali)
+        FROM technician_loan_items li
+        JOIN technician_loans l ON l.id = li.loan_id
+        WHERE li.kode_barang = i.kode_barang AND l.status IN ('AKTIF', 'SEBAGIAN')
+      ), 0) AS stok_transit
+      FROM items i
+      ORDER BY i.id DESC
     `).all();
     res.json({ success: true, data: items });
   } catch (err) {
@@ -928,6 +950,18 @@ app.delete('/api/items/:id', (req, res) => {
       return res.status(400).json({
         success: false,
         error: `Barang "${item.nama_barang}" tidak dapat dihapus karena masih terpasang di divisi (${custUse.c} pelanggan, ${foUse.c} titik FO, ${towerUse.c} site tower). Silakan dismantle terlebih dahulu.`
+      });
+    }
+
+    const transit = db.prepare(`
+      SELECT COALESCE(SUM(li.jumlah_dibawa - li.jumlah_terpasang - li.jumlah_kembali), 0) AS qty
+      FROM technician_loan_items li JOIN technician_loans l ON l.id = li.loan_id
+      WHERE li.kode_barang = ? AND l.status IN ('AKTIF', 'SEBAGIAN')
+    `).get(item.kode_barang);
+    if (transit.qty > 0) {
+      return res.status(400).json({
+        success: false,
+        error: `Barang \"${item.nama_barang}\" tidak dapat dihapus karena masih dibawa teknisi (${transit.qty} ${item.satuan} pada bon aktif). Selesaikan atau kembalikan bon terlebih dahulu.`
       });
     }
 
@@ -2483,6 +2517,642 @@ app.post('/api/transactions', (req, res) => {
 
 
 // ==========================================
+// 5B. BON / BARANG BAWAAN TEKNISI (STOK TRANSIT LAPANGAN)
+// ==========================================
+// Alur 3 tahap:
+//  1. BAWA   — teknisi membawa barang dari gudang: stok gudang BERKURANG (mutasi KELUAR,
+//              divisi 'TEKNISI') dan masuk ke "stok dibawa teknisi" (sisa bon).
+//  2. PASANG — realisasi dari bon ke Pelanggan / Divisi FO / Divisi Tower beserta SN, lokasi
+//              tujuan, dan teknisi pemasang. Stok gudang TIDAK berubah (barang sudah keluar
+//              pada tahap 1) — yang berubah hanya sisa bon & barang terpasang di divisi.
+//  3. KEMBALI — sisa yang tidak terpakai dikembalikan ke gudang: stok BERTAMBAH (mutasi MASUK).
+// Invarian stok tetap terjaga: stok = snapshot + Σ(transactions), karena hanya tahap 1 & 3
+// yang menyentuh stok gudang, dan keduanya selalu tercatat di tabel transactions.
+// Rincian per bon (termasuk tahap 2) ada di technician_loan_movements.
+
+const TEKNISI_DIVISI = 'TEKNISI';
+const LOAN_OPEN_STATUSES = ['AKTIF', 'SEBAGIAN'];
+const round3 = (n) => Math.round(Number(n || 0) * 1000) / 1000;
+const isDateStr = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+const loanItemSisa = (li) => round3(Number(li.jumlah_dibawa) - Number(li.jumlah_terpasang) - Number(li.jumlah_kembali));
+
+/** No. Bon berurutan per bulan: BON-YYYYMM-NNNN (dijamin unik). */
+function generateBonNumber(tanggal) {
+  const ym = (isDateStr(tanggal) ? tanggal : todayLocal()).slice(0, 7).replace('-', '');
+  const prefix = `BON-${ym}-`;
+  const last = db.prepare('SELECT no_bon FROM technician_loans WHERE no_bon LIKE ? ORDER BY LENGTH(no_bon) DESC, no_bon DESC LIMIT 1').get(`${prefix}%`);
+  let seq = last ? parseInt(last.no_bon.slice(prefix.length), 10) || 0 : 0;
+  while (true) {
+    seq += 1;
+    const candidate = `${prefix}${String(seq).padStart(4, '0')}`;
+    if (!db.prepare('SELECT 1 FROM technician_loans WHERE no_bon = ?').get(candidate)) return candidate;
+  }
+}
+
+/** Hitung ulang status bon dari jumlah barangnya (BATAL bersifat permanen). */
+function refreshLoanStatus(loanId) {
+  const loan = db.prepare('SELECT * FROM technician_loans WHERE id = ?').get(loanId);
+  if (!loan || loan.status === 'BATAL') return loan?.status;
+  const items = db.prepare('SELECT * FROM technician_loan_items WHERE loan_id = ?').all(loanId);
+  const sisa = round3(items.reduce((a, li) => a + Math.max(0, loanItemSisa(li)), 0));
+  const adaRealisasi = items.some((li) => Number(li.jumlah_terpasang) + Number(li.jumlah_kembali) > 0);
+  const status = sisa <= 0 ? 'SELESAI' : (adaRealisasi ? 'SEBAGIAN' : 'AKTIF');
+  db.prepare("UPDATE technician_loans SET status = ?, updated_at = datetime('now','localtime') WHERE id = ?").run(status, loanId);
+  return status;
+}
+
+/** Ambil satu bon lengkap: barang (+ sisa), riwayat mutasi, dan ringkasan angka. */
+function loadLoanDetail(loanId) {
+  const loan = db.prepare('SELECT * FROM technician_loans WHERE id = ?').get(loanId);
+  if (!loan) return null;
+  const items = db.prepare('SELECT * FROM technician_loan_items WHERE loan_id = ? ORDER BY id').all(loanId)
+    .map((li) => ({ ...li, jumlah_sisa: loanItemSisa(li), nilai_sisa: round3(loanItemSisa(li) * li.harga_barang) }));
+  const movements = db.prepare('SELECT * FROM technician_loan_movements WHERE loan_id = ? ORDER BY id').all(loanId);
+  const sum = (f) => round3(items.reduce((a, li) => a + f(li), 0));
+  return {
+    ...loan,
+    items,
+    movements,
+    summary: {
+      jumlah_jenis: items.length,
+      total_dibawa: sum((li) => li.jumlah_dibawa),
+      total_terpasang: sum((li) => li.jumlah_terpasang),
+      total_kembali: sum((li) => li.jumlah_kembali),
+      total_sisa: sum((li) => li.jumlah_sisa),
+      nilai_dibawa: sum((li) => li.jumlah_dibawa * li.harga_barang),
+      nilai_terpasang: sum((li) => li.jumlah_terpasang * li.harga_barang),
+      nilai_kembali: sum((li) => li.jumlah_kembali * li.harga_barang),
+      nilai_sisa: sum((li) => li.nilai_sisa)
+    }
+  };
+}
+
+/** Daftar bon beserta agregat angka (dipakai daftar & laporan). */
+function queryLoans({ status, teknisi, search, start_date, end_date } = {}) {
+  let sql = `
+    SELECT l.*,
+      COUNT(li.id) AS jumlah_jenis,
+      COALESCE(SUM(li.jumlah_dibawa), 0) AS total_dibawa,
+      COALESCE(SUM(li.jumlah_terpasang), 0) AS total_terpasang,
+      COALESCE(SUM(li.jumlah_kembali), 0) AS total_kembali,
+      COALESCE(SUM(li.jumlah_dibawa - li.jumlah_terpasang - li.jumlah_kembali), 0) AS total_sisa,
+      COALESCE(SUM(li.jumlah_dibawa * li.harga_barang), 0) AS nilai_dibawa,
+      COALESCE(SUM(li.jumlah_terpasang * li.harga_barang), 0) AS nilai_terpasang,
+      COALESCE(SUM(li.jumlah_kembali * li.harga_barang), 0) AS nilai_kembali,
+      COALESCE(SUM((li.jumlah_dibawa - li.jumlah_terpasang - li.jumlah_kembali) * li.harga_barang), 0) AS nilai_sisa
+    FROM technician_loans l
+    LEFT JOIN technician_loan_items li ON li.loan_id = l.id
+    WHERE 1=1`;
+  const params = [];
+  if (status === 'BERJALAN') sql += " AND l.status IN ('AKTIF', 'SEBAGIAN')";
+  else if (['AKTIF', 'SEBAGIAN', 'SELESAI', 'BATAL'].includes(status)) { sql += ' AND l.status = ?'; params.push(status); }
+  if (teknisi) { sql += ' AND UPPER(l.teknisi_nama) = UPPER(?)'; params.push(String(teknisi).trim()); }
+  if (isDateStr(start_date)) { sql += ' AND l.tanggal >= ?'; params.push(start_date); }
+  if (isDateStr(end_date)) { sql += ' AND l.tanggal <= ?'; params.push(end_date); }
+  if (search && String(search).trim()) {
+    const q = `%${String(search).trim()}%`;
+    sql += ` AND (l.no_bon LIKE ? OR l.teknisi_nama LIKE ? OR l.keperluan LIKE ? OR EXISTS (
+      SELECT 1 FROM technician_loan_items x WHERE x.loan_id = l.id AND (x.kode_barang LIKE ? OR x.nama_barang LIKE ?)))`;
+    params.push(q, q, q, q, q);
+  }
+  sql += ' GROUP BY l.id ORDER BY l.tanggal DESC, l.id DESC';
+  return db.prepare(sql).all(...params).map((r) => ({
+    ...r,
+    total_dibawa: round3(r.total_dibawa), total_terpasang: round3(r.total_terpasang),
+    total_kembali: round3(r.total_kembali), total_sisa: round3(r.total_sisa),
+    nilai_dibawa: round3(r.nilai_dibawa), nilai_terpasang: round3(r.nilai_terpasang),
+    nilai_kembali: round3(r.nilai_kembali), nilai_sisa: round3(r.nilai_sisa)
+  }));
+}
+
+function insertLoanMovement(m) {
+  const now = new Date();
+  db.prepare(`
+    INSERT INTO technician_loan_movements
+      (loan_id, loan_item_id, jenis, tanggal, waktu, kode_barang, nama_barang, satuan, harga_barang, jumlah, serial_number,
+       divisi, tujuan_id, tujuan_nama, lokasi_tujuan, teknisi_nama, no_transaksi, keterangan, dicatat_oleh)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    m.loan_id, m.loan_item_id ?? null, m.jenis, m.tanggal, now.toTimeString().split(' ')[0],
+    m.kode_barang, m.nama_barang, m.satuan, m.harga_barang || 0, m.jumlah, m.serial_number || '',
+    m.divisi || '', m.tujuan_id ?? null, m.tujuan_nama || '', m.lokasi_tujuan || '',
+    m.teknisi_nama || '', m.no_transaksi || '', m.keterangan || '', m.dicatat_oleh || ''
+  );
+}
+
+/** Cari baris barang bon dari { loan_item_id | kode_barang }. */
+function findLoanItem(loanId, row) {
+  if (row.loan_item_id !== undefined && row.loan_item_id !== null && row.loan_item_id !== '') {
+    return db.prepare('SELECT * FROM technician_loan_items WHERE id = ? AND loan_id = ?').get(Number(row.loan_item_id), loanId);
+  }
+  const kode = String(row.kode_barang || '').trim();
+  if (!kode) return null;
+  return db.prepare('SELECT * FROM technician_loan_items WHERE loan_id = ? AND UPPER(kode_barang) = UPPER(?)').get(loanId, kode);
+}
+
+/** Ambil bon & pastikan masih bisa direalisasikan. */
+function getOpenLoan(id) {
+  const loan = db.prepare('SELECT * FROM technician_loans WHERE id = ?').get(Number(id));
+  if (!loan) {
+    const err = new Error('Bon teknisi tidak ditemukan');
+    err.statusCode = 404;
+    throw err;
+  }
+  if (loan.status === 'BATAL') throw new Error(`Bon ${loan.no_bon} sudah dibatalkan`);
+  if (loan.status === 'SELESAI') throw new Error(`Bon ${loan.no_bon} sudah selesai — tidak ada sisa barang yang dibawa teknisi`);
+  return loan;
+}
+
+/** Validasi baris { loan_item_id|kode_barang, jumlah } → [{ li, qty, raw }], jumlah kumulatif per barang <= sisa. */
+function resolveLoanRows(loan, rows, aksi) {
+  const resolved = [];
+  const dipakai = new Map(); // loan_item_id → total diminta
+  for (const raw of Array.isArray(rows) ? rows : []) {
+    if (!raw) continue;
+    const mentah = raw.jumlah;
+    if (mentah === undefined || mentah === null || mentah === '') continue;
+    const qty = Number(mentah);
+    if (!Number.isFinite(qty)) throw new Error(`Jumlah harus berupa angka (diterima: "${mentah}")`);
+    if (qty < 0) throw new Error(`Jumlah tidak boleh negatif (diterima: ${qty})`);
+    if (qty === 0) continue;
+    const li = findLoanItem(loan.id, raw);
+    if (!li) throw new Error(`Barang "${raw.kode_barang || raw.loan_item_id}" tidak ada di bon ${loan.no_bon}`);
+    const total = round3((dipakai.get(li.id) || 0) + qty);
+    dipakai.set(li.id, total);
+    const sisa = loanItemSisa(li);
+    if (total > sisa) {
+      throw new Error(
+        `Jumlah ${aksi} "${li.nama_barang}" (${total} ${li.satuan}) melebihi sisa yang dibawa teknisi pada bon ${loan.no_bon}: ${sisa} ${li.satuan}.`
+      );
+    }
+    resolved.push({ li, qty: round3(qty), raw });
+  }
+  if (resolved.length === 0) throw new Error(`Isi minimal satu barang dengan jumlah lebih dari 0 untuk ${aksi}`);
+  return resolved;
+}
+
+const statusFromError = (err) => err.statusCode || 400;
+
+// Daftar teknisi (akun peran teknisi aktif + nama yang pernah tercatat di bon) — untuk dropdown
+app.get('/api/technician-loans/technicians', (req, res) => {
+  try {
+    const users = db.prepare("SELECT id, nama_lengkap FROM users WHERE role = 'teknisi' AND status = 'aktif' ORDER BY nama_lengkap").all();
+    const pernah = db.prepare('SELECT DISTINCT teknisi_nama FROM technician_loans ORDER BY teknisi_nama').all().map((r) => r.teknisi_nama);
+    res.json({ success: true, data: { users, nama_pernah_tercatat: pernah } });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Stok yang SEDANG dibawa teknisi (bon berjalan): per teknisi dan per barang
+app.get('/api/technician-loans/stock', (req, res) => {
+  try {
+    const rows = db.prepare(`
+      SELECT l.id AS loan_id, l.no_bon, l.tanggal, l.teknisi_nama, l.status,
+             li.id AS loan_item_id, li.kode_barang, li.nama_barang, li.satuan, li.harga_barang,
+             li.jumlah_dibawa, li.jumlah_terpasang, li.jumlah_kembali,
+             (li.jumlah_dibawa - li.jumlah_terpasang - li.jumlah_kembali) AS jumlah_sisa
+      FROM technician_loan_items li JOIN technician_loans l ON l.id = li.loan_id
+      WHERE l.status IN ('AKTIF', 'SEBAGIAN') AND (li.jumlah_dibawa - li.jumlah_terpasang - li.jumlah_kembali) > 0
+      ORDER BY l.teknisi_nama, l.id, li.id
+    `).all().map((r) => ({ ...r, jumlah_sisa: round3(r.jumlah_sisa), nilai_sisa: round3(r.jumlah_sisa * r.harga_barang) }));
+
+    const perBarang = new Map();
+    const perTeknisi = new Map();
+    for (const r of rows) {
+      const b = perBarang.get(r.kode_barang) || { kode_barang: r.kode_barang, nama_barang: r.nama_barang, satuan: r.satuan, jumlah_sisa: 0, nilai_sisa: 0 };
+      b.jumlah_sisa = round3(b.jumlah_sisa + r.jumlah_sisa);
+      b.nilai_sisa = round3(b.nilai_sisa + r.nilai_sisa);
+      perBarang.set(r.kode_barang, b);
+      const t = perTeknisi.get(r.teknisi_nama) || { teknisi_nama: r.teknisi_nama, bon: new Set(), nilai_sisa: 0 };
+      t.bon.add(r.no_bon);
+      t.nilai_sisa = round3(t.nilai_sisa + r.nilai_sisa);
+      perTeknisi.set(r.teknisi_nama, t);
+    }
+    res.json({
+      success: true,
+      data: {
+        rows,
+        per_barang: [...perBarang.values()],
+        per_teknisi: [...perTeknisi.values()].map((t) => ({ teknisi_nama: t.teknisi_nama, jumlah_bon: t.bon.size, nilai_sisa: t.nilai_sisa })),
+        total_nilai_sisa: round3(rows.reduce((a, r) => a + r.nilai_sisa, 0))
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Riwayat mutasi bon (BAWA / PASANG / KEMBALI / BATAL) lintas bon
+app.get('/api/technician-loans/movements', (req, res) => {
+  try {
+    const { start_date, end_date, jenis, teknisi, search, loan_id } = req.query;
+    let sql = `
+      SELECT m.*, l.no_bon, l.teknisi_nama AS teknisi_bon
+      FROM technician_loan_movements m JOIN technician_loans l ON l.id = m.loan_id
+      WHERE 1=1`;
+    const params = [];
+    if (loan_id) { sql += ' AND m.loan_id = ?'; params.push(Number(loan_id)); }
+    if (isDateStr(start_date)) { sql += ' AND m.tanggal >= ?'; params.push(start_date); }
+    if (isDateStr(end_date)) { sql += ' AND m.tanggal <= ?'; params.push(end_date); }
+    if (['BAWA', 'PASANG', 'KEMBALI', 'BATAL'].includes(jenis)) { sql += ' AND m.jenis = ?'; params.push(jenis); }
+    if (teknisi) { sql += ' AND (UPPER(m.teknisi_nama) = UPPER(?) OR UPPER(l.teknisi_nama) = UPPER(?))'; params.push(String(teknisi).trim(), String(teknisi).trim()); }
+    if (search && String(search).trim()) {
+      const q = `%${String(search).trim()}%`;
+      sql += ' AND (l.no_bon LIKE ? OR m.kode_barang LIKE ? OR m.nama_barang LIKE ? OR m.serial_number LIKE ? OR m.tujuan_nama LIKE ? OR m.lokasi_tujuan LIKE ? OR m.teknisi_nama LIKE ?)';
+      params.push(q, q, q, q, q, q, q);
+    }
+    sql += ' ORDER BY m.tanggal DESC, m.id DESC';
+    res.json({ success: true, data: db.prepare(sql).all(...params) });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Laporan Bon Teknisi: ringkasan, rekap per teknisi / barang / divisi tujuan, dan daftar bon
+app.get('/api/technician-loans/report', (req, res) => {
+  try {
+    const loans = queryLoans(req.query);
+    const ids = loans.map((l) => l.id);
+    const summary = {
+      total_bon: loans.length,
+      bon_berjalan: loans.filter((l) => LOAN_OPEN_STATUSES.includes(l.status)).length,
+      bon_selesai: loans.filter((l) => l.status === 'SELESAI').length,
+      bon_batal: loans.filter((l) => l.status === 'BATAL').length,
+      nilai_dibawa: round3(loans.reduce((a, l) => a + l.nilai_dibawa, 0)),
+      nilai_terpasang: round3(loans.reduce((a, l) => a + l.nilai_terpasang, 0)),
+      nilai_kembali: round3(loans.reduce((a, l) => a + l.nilai_kembali, 0)),
+      nilai_sisa: round3(loans.filter((l) => LOAN_OPEN_STATUSES.includes(l.status)).reduce((a, l) => a + l.nilai_sisa, 0))
+    };
+
+    const perTeknisiMap = new Map();
+    for (const l of loans) {
+      const t = perTeknisiMap.get(l.teknisi_nama) || {
+        teknisi_nama: l.teknisi_nama, jumlah_bon: 0, bon_berjalan: 0,
+        nilai_dibawa: 0, nilai_terpasang: 0, nilai_kembali: 0, nilai_sisa: 0
+      };
+      t.jumlah_bon += 1;
+      if (LOAN_OPEN_STATUSES.includes(l.status)) { t.bon_berjalan += 1; t.nilai_sisa = round3(t.nilai_sisa + l.nilai_sisa); }
+      t.nilai_dibawa = round3(t.nilai_dibawa + l.nilai_dibawa);
+      t.nilai_terpasang = round3(t.nilai_terpasang + l.nilai_terpasang);
+      t.nilai_kembali = round3(t.nilai_kembali + l.nilai_kembali);
+      perTeknisiMap.set(l.teknisi_nama, t);
+    }
+
+    const perBarangMap = new Map();
+    const perDivisiMap = new Map();
+    const perPemasangMap = new Map();
+    if (ids.length > 0) {
+      const ph = ids.map(() => '?').join(',');
+      const statusById = new Map(loans.map((l) => [l.id, l.status]));
+      for (const li of db.prepare(`SELECT * FROM technician_loan_items WHERE loan_id IN (${ph})`).all(...ids)) {
+        const b = perBarangMap.get(li.kode_barang) || {
+          kode_barang: li.kode_barang, nama_barang: li.nama_barang, satuan: li.satuan,
+          jumlah_dibawa: 0, jumlah_terpasang: 0, jumlah_kembali: 0, jumlah_sisa: 0, nilai_dibawa: 0
+        };
+        b.jumlah_dibawa = round3(b.jumlah_dibawa + li.jumlah_dibawa);
+        b.jumlah_terpasang = round3(b.jumlah_terpasang + li.jumlah_terpasang);
+        b.jumlah_kembali = round3(b.jumlah_kembali + li.jumlah_kembali);
+        if (LOAN_OPEN_STATUSES.includes(statusById.get(li.loan_id))) b.jumlah_sisa = round3(b.jumlah_sisa + loanItemSisa(li));
+        b.nilai_dibawa = round3(b.nilai_dibawa + li.jumlah_dibawa * li.harga_barang);
+        perBarangMap.set(li.kode_barang, b);
+      }
+      for (const m of db.prepare(`SELECT * FROM technician_loan_movements WHERE jenis = 'PASANG' AND loan_id IN (${ph})`).all(...ids)) {
+        const d = perDivisiMap.get(m.divisi) || { divisi: m.divisi, jumlah_realisasi: 0, nilai: 0, tujuan: new Set() };
+        d.jumlah_realisasi += 1;
+        d.nilai = round3(d.nilai + m.jumlah * m.harga_barang);
+        d.tujuan.add(`${m.tujuan_id}`);
+        perDivisiMap.set(m.divisi, d);
+        const p = perPemasangMap.get(m.teknisi_nama) || { teknisi_nama: m.teknisi_nama, jumlah_realisasi: 0, nilai: 0 };
+        p.jumlah_realisasi += 1;
+        p.nilai = round3(p.nilai + m.jumlah * m.harga_barang);
+        perPemasangMap.set(m.teknisi_nama, p);
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        summary,
+        per_teknisi: [...perTeknisiMap.values()].sort((a, b) => b.nilai_dibawa - a.nilai_dibawa),
+        per_barang: [...perBarangMap.values()].sort((a, b) => b.nilai_dibawa - a.nilai_dibawa),
+        per_divisi: [...perDivisiMap.values()].map((d) => ({ divisi: d.divisi, jumlah_realisasi: d.jumlah_realisasi, jumlah_tujuan: d.tujuan.size, nilai: d.nilai })),
+        per_pemasang: [...perPemasangMap.values()].sort((a, b) => b.nilai - a.nilai),
+        loans
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Daftar bon
+app.get('/api/technician-loans', (req, res) => {
+  try {
+    res.json({ success: true, data: queryLoans(req.query) });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Detail satu bon (barang, sisa, riwayat mutasi)
+app.get('/api/technician-loans/:id', (req, res) => {
+  try {
+    const detail = loadLoanDetail(Number(req.params.id));
+    if (!detail) return res.status(404).json({ success: false, error: 'Bon teknisi tidak ditemukan' });
+    res.json({ success: true, data: detail });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// TAHAP 1 — Catat bon: teknisi membawa barang dari gudang (stok gudang berkurang)
+app.post('/api/technician-loans', (req, res) => {
+  const transaction = db.transaction(() => {
+    const { no_bon, tanggal, teknisi_id, teknisi_nama, keperluan = '', catatan = '', items } = req.body || {};
+
+    if (tanggal !== undefined && tanggal !== '' && !isDateStr(tanggal)) {
+      throw new Error('Format tanggal harus YYYY-MM-DD');
+    }
+    const tgl = tanggal || todayLocal();
+
+    // Nama teknisi: dari akun teknisi (bila dipilih) atau diketik bebas
+    let teknisiNama = String(teknisi_nama || '').trim();
+    let teknisiId = null;
+    if (teknisi_id) {
+      const u = db.prepare("SELECT id, nama_lengkap FROM users WHERE id = ? AND role = 'teknisi'").get(Number(teknisi_id));
+      if (!u) throw new Error('Akun teknisi yang dipilih tidak ditemukan');
+      teknisiId = u.id;
+      if (!teknisiNama) teknisiNama = u.nama_lengkap;
+    }
+    if (!teknisiNama) throw new Error('Nama teknisi yang membawa barang wajib diisi');
+
+    // Gabungkan kode barang yang sama & validasi terhadap master
+    const { validated } = validateInstalledItems(items, tgl);
+    if (validated.length === 0) throw new Error('Daftar barang bon kosong — tambahkan minimal satu barang dengan jumlah lebih dari 0');
+    const perKode = new Map();
+    for (const v of validated) {
+      const ada = perKode.get(v.kode_barang);
+      if (ada) ada.jumlah = round3(ada.jumlah + v.jumlah);
+      else perKode.set(v.kode_barang, { ...v });
+    }
+    const baris = [...perKode.values()];
+    assertStockAvailable(sumQtyByCode(baris));
+
+    let noBon = String(no_bon || '').trim().toUpperCase();
+    if (noBon) {
+      if (noBon.length > 40) throw new Error('No. Bon maksimal 40 karakter');
+      if (db.prepare('SELECT 1 FROM technician_loans WHERE no_bon = ?').get(noBon)) {
+        throw new Error(`No. Bon "${noBon}" sudah digunakan`);
+      }
+    } else {
+      noBon = generateBonNumber(tgl);
+    }
+
+    const now = new Date();
+    const dicatatOleh = req.user?.nama_lengkap || req.user?.username || '';
+    const ins = db.prepare(`
+      INSERT INTO technician_loans (no_bon, tanggal, waktu, teknisi_id, teknisi_nama, keperluan, catatan, status, dibuat_oleh)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'AKTIF', ?)
+    `).run(noBon, tgl, now.toTimeString().split(' ')[0], teknisiId, teknisiNama, String(keperluan).trim(), String(catatan).trim(), dicatatOleh);
+    const loanId = Number(ins.lastInsertRowid);
+
+    for (const b of baris) {
+      const li = db.prepare(`
+        INSERT INTO technician_loan_items (loan_id, kode_barang, nama_barang, jenis_barang, satuan, harga_barang, jumlah_dibawa)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(loanId, b.kode_barang, b.nama_barang, b.jenis_barang, b.satuan, b.harga_barang, b.jumlah);
+
+      // Stok gudang berkurang → masuk stok dibawa teknisi
+      db.prepare("UPDATE items SET stok = stok - ?, updated_at = datetime('now','localtime') WHERE kode_barang = ?").run(b.jumlah, b.kode_barang);
+      const master = getMasterItem(b.kode_barang);
+      const trxNo = logStockMutation({
+        jenis: 'KELUAR',
+        kategori: 'Bon Teknisi (Dibawa)',
+        divisi: TEKNISI_DIVISI,
+        refId: loanId,
+        lokasi: `Teknisi ${teknisiNama} (${noBon})`,
+        item: master,
+        jumlah: b.jumlah,
+        harga_satuan: master.harga_barang,
+        keterangan: `Bon ${noBon} — dibawa teknisi ${teknisiNama}${keperluan ? ` untuk ${String(keperluan).trim()}` : ''}`,
+        tanggal: tgl
+      });
+      insertLoanMovement({
+        loan_id: loanId, loan_item_id: Number(li.lastInsertRowid), jenis: 'BAWA', tanggal: tgl,
+        kode_barang: b.kode_barang, nama_barang: b.nama_barang, satuan: b.satuan, harga_barang: b.harga_barang,
+        jumlah: b.jumlah, teknisi_nama: teknisiNama, no_transaksi: trxNo,
+        keterangan: 'Dibawa dari gudang', dicatat_oleh: dicatatOleh
+      });
+    }
+    return loadLoanDetail(loanId);
+  });
+
+  try {
+    const data = transaction();
+    res.status(201).json({ success: true, data, message: `Bon ${data.no_bon} tersimpan — stok gudang dipindahkan ke stok dibawa teknisi ${data.teknisi_nama}` });
+  } catch (err) {
+    res.status(statusFromError(err)).json({ success: false, error: err.message });
+  }
+});
+
+// TAHAP 2 — Realisasi pemasangan dari bon ke Pelanggan / Divisi FO / Divisi Tower
+app.post('/api/technician-loans/:id/install', (req, res) => {
+  const transaction = db.transaction(() => {
+    const loan = getOpenLoan(req.params.id);
+    const {
+      divisi, tujuan_id, lokasi_tujuan = '', teknisi_pemasang, tanggal,
+      keterangan = '', items
+    } = req.body || {};
+
+    const cfg = LINKED_DIVISI[divisi];
+    if (!cfg) throw new Error('Divisi tujuan harus salah satu dari: Pelanggan, Divisi FO, Divisi Tower');
+    if (!tujuan_id) throw new Error(`Pilih data tujuan ${cfg.label} tempat barang dipasang`);
+    const owner = db.prepare(`SELECT * FROM ${cfg.siteTable} WHERE id = ?`).get(Number(tujuan_id));
+    if (!owner) throw new Error(`Data tujuan ${cfg.label} tidak ditemukan`);
+    const ownerName = owner[cfg.nameCol];
+
+    if (tanggal !== undefined && tanggal !== '' && !isDateStr(tanggal)) throw new Error('Format tanggal harus YYYY-MM-DD');
+    const tgl = tanggal || todayLocal();
+    const pemasang = String(teknisi_pemasang || '').trim() || loan.teknisi_nama;
+    const lokasi = String(lokasi_tujuan || '').trim() ||
+      (divisi === 'PELANGGAN' ? [ownerName, owner.alamat].filter(Boolean).join(' — ') : ownerName);
+    const dicatatOleh = req.user?.nama_lengkap || req.user?.username || '';
+
+    const rows = resolveLoanRows(loan, items, 'pemasangan');
+
+    // SN: hanya untuk 1 unit per baris, tidak boleh dobel di permintaan ini maupun yang sudah terpasang
+    const snDalamPermintaan = new Set();
+    for (const r of rows) {
+      const sn = String(r.raw.serial_number || '').trim();
+      r.sn = sn;
+      if (!sn) continue;
+      if (r.qty !== 1) throw new Error(`Barang bernomor seri (SN "${sn}") harus dipasang 1 unit per baris`);
+      const key = `${r.li.kode_barang}|${sn.toUpperCase()}`;
+      if (snDalamPermintaan.has(key)) throw new Error(`SN "${sn}" diisi lebih dari satu kali`);
+      snDalamPermintaan.add(key);
+      for (const [tbl, label] of [['customer_items', 'pelanggan'], ['fo_items', 'titik FO'], ['tower_items', 'site tower']]) {
+        const dup = db.prepare(`SELECT 1 FROM ${tbl} WHERE UPPER(kode_barang) = UPPER(?) AND UPPER(serial_number) = UPPER(?)`).get(r.li.kode_barang, sn);
+        if (dup) throw new Error(`SN "${sn}" untuk ${r.li.nama_barang} sudah tercatat terpasang di ${label}`);
+      }
+    }
+
+    for (const r of rows) {
+      const { li, qty, sn } = r;
+      const existing = db.prepare(
+        `SELECT * FROM ${cfg.itemsTable} WHERE ${cfg.fk} = ? AND kode_barang = ? AND COALESCE(serial_number, '') = ?`
+      ).get(owner.id, li.kode_barang, sn);
+      if (existing) {
+        const jumlahBaru = round3(Number(existing.jumlah) + qty);
+        db.prepare(`UPDATE ${cfg.itemsTable} SET jumlah = ?, subtotal = ?, dipasang_oleh = ?, no_bon = ? WHERE id = ?`)
+          .run(jumlahBaru, jumlahBaru * Number(existing.harga_barang), pemasang, loan.no_bon, existing.id);
+      } else {
+        const master = getMasterItem(li.kode_barang);
+        db.prepare(`
+          INSERT INTO ${cfg.itemsTable} (${cfg.fk}, kode_barang, nama_barang, jenis_barang, satuan, jumlah, harga_barang, subtotal, serial_number, referensi_suplayer, tanggal_pasang, dipasang_oleh, no_bon)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          owner.id, li.kode_barang, li.nama_barang, li.jenis_barang, li.satuan, qty, li.harga_barang,
+          qty * li.harga_barang, sn, master?.referensi_suplayer || '', tgl, pemasang, loan.no_bon
+        );
+      }
+
+      db.prepare('UPDATE technician_loan_items SET jumlah_terpasang = ? WHERE id = ?').run(round3(li.jumlah_terpasang + qty), li.id);
+      insertLoanMovement({
+        loan_id: loan.id, loan_item_id: li.id, jenis: 'PASANG', tanggal: tgl,
+        kode_barang: li.kode_barang, nama_barang: li.nama_barang, satuan: li.satuan, harga_barang: li.harga_barang,
+        jumlah: qty, serial_number: sn, divisi, tujuan_id: owner.id, tujuan_nama: ownerName, lokasi_tujuan: lokasi,
+        teknisi_nama: pemasang, keterangan: String(keterangan).trim() || `Dipasang di ${cfg.label} ${ownerName}`, dicatat_oleh: dicatatOleh
+      });
+    }
+
+    // Nilai aset tujuan selalu = jumlah subtotal barang terpasang
+    db.prepare(`
+      UPDATE ${cfg.siteTable}
+      SET total_harga = (SELECT COALESCE(SUM(subtotal), 0) FROM ${cfg.itemsTable} WHERE ${cfg.fk} = ?),
+          updated_at = datetime('now', 'localtime')
+      WHERE id = ?
+    `).run(owner.id, owner.id);
+
+    refreshLoanStatus(loan.id);
+    return { detail: loadLoanDetail(loan.id), tujuan: `${cfg.label} — ${ownerName}`, jumlahBaris: rows.length };
+  });
+
+  try {
+    const r = transaction();
+    res.status(201).json({
+      success: true, data: r.detail,
+      message: `${r.jumlahBaris} barang dari bon ${r.detail.no_bon} tercatat terpasang di ${r.tujuan}`
+    });
+  } catch (err) {
+    res.status(statusFromError(err)).json({ success: false, error: err.message });
+  }
+});
+
+// TAHAP 3 — Pengembalian sisa barang yang tidak terpakai ke gudang (stok gudang bertambah)
+app.post('/api/technician-loans/:id/return', (req, res) => {
+  const transaction = db.transaction(() => {
+    const loan = getOpenLoan(req.params.id);
+    const { tanggal, keterangan = '', items, semua_sisa, dikembalikan_oleh } = req.body || {};
+
+    if (tanggal !== undefined && tanggal !== '' && !isDateStr(tanggal)) throw new Error('Format tanggal harus YYYY-MM-DD');
+    const tgl = tanggal || todayLocal();
+    const dicatatOleh = req.user?.nama_lengkap || req.user?.username || '';
+    const pengembali = String(dikembalikan_oleh || '').trim() || loan.teknisi_nama;
+
+    // semua_sisa = true → kembalikan seluruh sisa semua barang pada bon
+    const rows = semua_sisa
+      ? db.prepare('SELECT * FROM technician_loan_items WHERE loan_id = ?').all(loan.id)
+          .filter((li) => loanItemSisa(li) > 0)
+          .map((li) => ({ loan_item_id: li.id, jumlah: loanItemSisa(li) }))
+      : items;
+    const resolved = resolveLoanRows(loan, rows, 'pengembalian');
+
+    for (const { li, qty } of resolved) {
+      const master = getMasterItem(li.kode_barang);
+      if (!master) throw new Error(`Barang "${li.nama_barang}" (${li.kode_barang}) sudah tidak ada di master data — tidak bisa dikembalikan ke gudang`);
+      db.prepare("UPDATE items SET stok = stok + ?, updated_at = datetime('now','localtime') WHERE id = ?").run(qty, master.id);
+      db.prepare('UPDATE technician_loan_items SET jumlah_kembali = ? WHERE id = ?').run(round3(li.jumlah_kembali + qty), li.id);
+      const trxNo = logStockMutation({
+        jenis: 'MASUK',
+        kategori: 'Pengembalian Bon Teknisi',
+        divisi: TEKNISI_DIVISI,
+        refId: loan.id,
+        lokasi: `Teknisi ${loan.teknisi_nama} (${loan.no_bon})`,
+        item: master,
+        jumlah: qty,
+        harga_satuan: li.harga_barang,
+        keterangan: String(keterangan).trim() || `Bon ${loan.no_bon} — sisa tidak terpakai dikembalikan oleh ${pengembali} ke gudang`,
+        tanggal: tgl
+      });
+      insertLoanMovement({
+        loan_id: loan.id, loan_item_id: li.id, jenis: 'KEMBALI', tanggal: tgl,
+        kode_barang: li.kode_barang, nama_barang: li.nama_barang, satuan: li.satuan, harga_barang: li.harga_barang,
+        jumlah: qty, teknisi_nama: pengembali, no_transaksi: trxNo,
+        keterangan: String(keterangan).trim() || 'Sisa tidak terpakai dikembalikan ke gudang', dicatat_oleh: dicatatOleh
+      });
+    }
+
+    refreshLoanStatus(loan.id);
+    return loadLoanDetail(loan.id);
+  });
+
+  try {
+    const data = transaction();
+    res.status(201).json({
+      success: true, data,
+      message: data.status === 'SELESAI'
+        ? `Pengembalian dicatat — bon ${data.no_bon} SELESAI`
+        : `Pengembalian dicatat — bon ${data.no_bon} masih menyisakan barang di teknisi`
+    });
+  } catch (err) {
+    res.status(statusFromError(err)).json({ success: false, error: err.message });
+  }
+});
+
+// Batalkan bon (hanya bila belum ada realisasi pemasangan): seluruh sisa kembali ke gudang
+app.post('/api/technician-loans/:id/cancel', (req, res) => {
+  const transaction = db.transaction(() => {
+    const loan = getOpenLoan(req.params.id);
+    const alasan = String(req.body?.alasan || '').trim();
+    const dicatatOleh = req.user?.nama_lengkap || req.user?.username || '';
+    const sudahPasang = db.prepare("SELECT COUNT(*) AS c FROM technician_loan_movements WHERE loan_id = ? AND jenis = 'PASANG'").get(loan.id).c;
+    if (sudahPasang > 0) {
+      throw new Error(`Bon ${loan.no_bon} tidak bisa dibatalkan karena sudah ada realisasi pemasangan. Kembalikan sisa barang lewat Pengembalian.`);
+    }
+    const tgl = todayLocal();
+    for (const li of db.prepare('SELECT * FROM technician_loan_items WHERE loan_id = ?').all(loan.id)) {
+      const sisa = loanItemSisa(li);
+      if (sisa <= 0) continue;
+      const master = getMasterItem(li.kode_barang);
+      if (!master) throw new Error(`Barang "${li.nama_barang}" (${li.kode_barang}) sudah tidak ada di master data`);
+      db.prepare("UPDATE items SET stok = stok + ?, updated_at = datetime('now','localtime') WHERE id = ?").run(sisa, master.id);
+      db.prepare('UPDATE technician_loan_items SET jumlah_kembali = ? WHERE id = ?').run(round3(li.jumlah_kembali + sisa), li.id);
+      const trxNo = logStockMutation({
+        jenis: 'MASUK', kategori: 'Pembatalan Bon Teknisi', divisi: TEKNISI_DIVISI, refId: loan.id,
+        lokasi: `Teknisi ${loan.teknisi_nama} (${loan.no_bon})`, item: master, jumlah: sisa, harga_satuan: li.harga_barang,
+        keterangan: `Bon ${loan.no_bon} dibatalkan${alasan ? ` — ${alasan}` : ''}; barang kembali ke stok gudang`, tanggal: tgl
+      });
+      insertLoanMovement({
+        loan_id: loan.id, loan_item_id: li.id, jenis: 'BATAL', tanggal: tgl,
+        kode_barang: li.kode_barang, nama_barang: li.nama_barang, satuan: li.satuan, harga_barang: li.harga_barang,
+        jumlah: sisa, teknisi_nama: loan.teknisi_nama, no_transaksi: trxNo,
+        keterangan: alasan || 'Bon dibatalkan', dicatat_oleh: dicatatOleh
+      });
+    }
+    db.prepare("UPDATE technician_loans SET status = 'BATAL', updated_at = datetime('now','localtime') WHERE id = ?").run(loan.id);
+    return loadLoanDetail(loan.id);
+  });
+
+  try {
+    const data = transaction();
+    res.json({ success: true, data, message: `Bon ${data.no_bon} dibatalkan — seluruh barang kembali ke stok gudang` });
+  } catch (err) {
+    res.status(statusFromError(err)).json({ success: false, error: err.message });
+  }
+});
+
+// ==========================================
 // 6. BARCODE SCANNER & ASSET LOOKUP
 // ==========================================
 
@@ -2560,7 +3230,17 @@ app.get('/api/scanner/lookup/:code', (req, res) => {
     const totalInstalledFO = inFO.reduce((acc, cur) => acc + cur.jumlah, 0);
     const totalInstalledTower = inTower.reduce((acc, cur) => acc + cur.jumlah, 0);
     const totalInstalled = totalInstalledCust + totalInstalledFO + totalInstalledTower;
-    const totalAssetStock = item.stok + totalInstalled;
+    // Barang yang sedang dibawa teknisi (bon aktif) — masih aset perusahaan, bukan stok gudang
+    const dibawaTeknisi = db.prepare(`
+      SELECT l.id AS loan_id, l.no_bon, l.teknisi_nama, l.tanggal, l.status,
+             (li.jumlah_dibawa - li.jumlah_terpasang - li.jumlah_kembali) AS sisa, li.satuan
+      FROM technician_loan_items li JOIN technician_loans l ON l.id = li.loan_id
+      WHERE li.kode_barang = ? AND l.status IN ('AKTIF', 'SEBAGIAN')
+        AND (li.jumlah_dibawa - li.jumlah_terpasang - li.jumlah_kembali) > 0
+      ORDER BY l.id DESC
+    `).all(item.kode_barang);
+    const totalTransit = dibawaTeknisi.reduce((acc, cur) => acc + cur.sisa, 0);
+    const totalAssetStock = item.stok + totalInstalled + totalTransit;
 
     res.json({
       success: true,
@@ -2574,13 +3254,15 @@ app.get('/api/scanner/lookup/:code', (req, res) => {
           installed_fo: totalInstalledFO,
           installed_tower: totalInstalledTower,
           total_installed: totalInstalled,
+          transit_teknisi: totalTransit,
           total_keseluruhan: totalAssetStock,
           total_nilai_aset: totalAssetStock * item.harga_barang
         },
         locations: {
           pelanggan: inCustomers,
           fo: inFO,
-          tower: inTower
+          tower: inTower,
+          teknisi: dibawaTeknisi
         },
         transactions: recentTransactions
       }
@@ -2806,7 +3488,16 @@ app.get('/api/reports/dashboard-summary', (req, res) => {
       LIMIT 6
     `).all().reverse();
 
-    const grandTotalValuation = (totalItems.total_nilai_gudang || 0) + 
+    // Barang yang sedang dibawa teknisi (bon berjalan) — masih aset, tapi di luar gudang
+    const transit = db.prepare(`
+      SELECT COUNT(DISTINCT l.id) AS bon_berjalan,
+             COALESCE(SUM((li.jumlah_dibawa - li.jumlah_terpasang - li.jumlah_kembali) * li.harga_barang), 0) AS nilai_transit,
+             COUNT(DISTINCT CASE WHEN (li.jumlah_dibawa - li.jumlah_terpasang - li.jumlah_kembali) > 0 THEN li.kode_barang END) AS jenis_barang
+      FROM technician_loans l JOIN technician_loan_items li ON li.loan_id = l.id
+      WHERE l.status IN ('AKTIF', 'SEBAGIAN')
+    `).get();
+
+    const grandTotalValuation = (transit.nilai_transit || 0) + (totalItems.total_nilai_gudang || 0) + 
                                 (totalCust.total_nilai || 0) + 
                                 (totalFO.total_nilai || 0) + 
                                 (totalTower.total_nilai || 0);
@@ -2835,6 +3526,11 @@ app.get('/api/reports/dashboard-summary', (req, res) => {
           total_sites: totalTower.c,
           total_nilai: totalTower.total_nilai || 0
         },
+        teknisi: {
+          bon_berjalan: transit.bon_berjalan || 0,
+          jenis_barang: transit.jenis_barang || 0,
+          nilai_transit: transit.nilai_transit || 0
+        },
         grand_total_valuation: grandTotalValuation,
         recent_transactions: recentTx,
         monthly_trend: monthlyTrend
@@ -2850,6 +3546,9 @@ app.post('/api/reset-seed', (req, res) => {
   try {
     const resetTx = db.transaction(() => {
       db.exec(`
+        DELETE FROM technician_loan_movements;
+        DELETE FROM technician_loan_items;
+        DELETE FROM technician_loans;
         DELETE FROM customer_items;
         DELETE FROM customers;
         DELETE FROM fo_items;
