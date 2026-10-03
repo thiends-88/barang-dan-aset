@@ -145,13 +145,26 @@ Fitur pendukung: riwayat mutasi per bon & lintas bon (cari lewat No. Bon / SN / 
    Menguji alur pemasangan, pengeditan, dismantle, dan penghapusan barang untuk Pelanggan, Divisi FO, dan Divisi Tower, lalu memeriksa bahwa stok gudang tidak pernah minus dan **selalu cocok dengan riwayat mutasi**. Data contoh direset otomatis di awal dan di akhir pengujian. Menjalankan keduanya sekaligus: `npm test`.
 
 6. **CI (GitHub Actions)**:
-   Workflow CI sudah **aktif otomatis** di [`.github/workflows/ci.yml`](.github/workflows/ci.yml) (salinan rujukan di [`docs/ci.yml`](docs/ci.yml)) — menjalankan `npm ci` → server uji port 3001 → `npm test` (156 tes API + 47 tes render) → `npm run build` pada setiap push ke `main` dan setiap Pull Request, di lingkungan yang selalu bersih (database dibuat + diisi data contoh dari nol).
+   Workflow CI sudah **aktif otomatis** di [`.github/workflows/ci.yml`](.github/workflows/ci.yml) (salinan rujukan di [`docs/ci.yml`](docs/ci.yml)) — menjalankan `npm ci` → server uji port 3001 → `npm test` (157 tes API + 48 tes render) → `npm run build` pada setiap push ke `main` dan setiap Pull Request, di lingkungan yang selalu bersih (database dibuat + diisi data contoh dari nol).
 
 ---
 
 ## 🖥️ Deploy ke Proxmox (Production)
 
 Aplikasi ini sudah **siap jalan tanpa build** di server: hasil build frontend ikut tersimpan di folder `dist/`, dan server Express menyajikan `dist/` sekaligus API dari port yang sama (`PORT`, default `3000`).
+
+### Spesifikasi Server / Container LXC yang Disarankan
+
+| Komponen | Minimum (LXC Hemat) | Rekomendasi Produksi (Jangka Panjang) | Keterangan |
+|---|---|---|---|
+| **Tipe Virtualisasi** | Proxmox LXC Container (*unprivileged* boleh) | Proxmox LXC Container / VM KVM | Ubuntu 22.04 / 24.04 LTS atau Debian 12 |
+| **CPU** | 1 vCore | 2 vCore (`x86_64`) | Beban ringan; SQLite (`node:sqlite`) berjalan satu proses dengan kolom filter berindeks |
+| **RAM** | 512 MB (+ 512 MB swap) | 1 – 2 GB | Proses Node.js idle ±60–90 MB; unduh & pulihkan cadangan `.db` memakai *streaming* ke disk (tidak menampung berkas di RAM) |
+| **Penyimpanan (Disk)** | 8 GB SSD | 16 – 32 GB SSD / NVMe | OS + Node.js ±1,5 GB, aplikasi + `node_modules` ±150 MB, DB ratusan ribu mutasi ±50–200 MB, sisanya untuk `VACUUM INTO` & arsip `data/backups/` |
+| **Jaringan** | 1 NIC LAN (`vmbr0`) | 1 NIC LAN + Reverse Proxy HTTPS (Nginx/Caddy) | Port default `TCP 3000` |
+| **Runtime & Layanan** | Node.js 22+ LTS, `git`, `systemd` | Node.js 22+ LTS, `git`, `systemd` (`Restart=always`), `cron` | `Restart=always` **wajib** bila memakai fitur *Pulihkan Database* dari UI |
+
+> 💡 **Kapasitas multi-tahun**: 10.000 baris mutasi di SQLite hanya berukuran ±2–3 MB. Agar browser tetap cepat saat riwayat tumbuh puluhan ribu baris selama bertahun-tahun, `GET /api/transactions` membatasi rincian tabel maksimal **5.000 baris terbaru** per permintaan sementara angka rekapitulasi (total transaksi, barang masuk/keluar, dan saldo nilai) tetap dihitung **utuh di SQL** atas seluruh data yang cocok dengan filter.
 
 ### 1. Persiapan (sekali saja)
 
@@ -314,6 +327,7 @@ Seluruh perubahan stok divalidasi di sisi server:
 ## ⚡ Optimasi
 
 - **Pemuatan malas per halaman (code splitting)** — setiap tab utama (Master Barang, Pelanggan, FO, Tower, Transaksi, Laporan, Pengguna) menjadi chunk JS tersendiri yang baru diunduh saat tabnya dibuka. Library berat ikut tertunda: `html5-qrcode` (kamera) hanya diunduh saat pemindai dibuka, `jsbarcode` saat barcode/label pertama kali tampil, dan `xlsx` saat pratinjau import. Hasilnya **bundle awal turun dari ~947 kB menjadi ~273 kB** (gzip ~84 kB).
+- **Batas 5.000 baris mutasi + ringkasan SQL utuh** — `GET /api/transactions` membatasi rincian baris maksimal 5.000 terbaru per permintaan agar browser tidak membeku saat riwayat mutasi tumbuh puluhan ribu baris, sementara total transaksi, kuantitas masuk/keluar, dan nilai rupiah tetap dihitung utuh di SQL. Jika data terpotong, spanduk peringatan tampil di halaman *Keluar/Masuk Barang* dan *Laporan*. Pilihan tahun filter dibangkitkan secara dinamis mengikuti tahun berjalan.
 - **Indeks database** pada kolom yang sering difilter (`transactions.tanggal/jenis/divisi/kode_barang`, kolom kode barang, dan kolom relasi antar tabel) mempercepat laporan, pencarian, dan penghapusan berantai.
 - **Notifikasi in-app** menggantikan `alert()` bawaan browser: pesan error panjang (mis. stok tidak mencukupi) tampil rapi, tidak memblokir, dan bertahan lebih lama.
 

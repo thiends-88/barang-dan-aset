@@ -206,6 +206,51 @@ console.log('\n=== 0B. KETAHANAN API: error selalu JSON, rute /api tak dikenal 4
   }
 }
 
+console.log('\n=== 0C. BATAS 5.000 BARIS & RINGKASAN SQL UTUH PADA GET /api/transactions ===');
+{
+  const penuh = await req('GET', '/api/transactions');
+  const potong = await req('GET', '/api/transactions?limit=5');
+  const batasMaks = await req('GET', '/api/transactions?limit=99999');
+  const sPenuh = penuh.json?.summary;
+  const sPotong = potong.json?.summary;
+  const masukDiPotong = (potong.json?.data || [])
+    .filter((t) => t.jenis === 'MASUK')
+    .reduce((a, t) => a + Number(t.jumlah), 0);
+
+  if (
+    penuh.status === 200 &&
+    sPenuh?.limit === 5000 &&
+    sPenuh?.terpotong === false &&
+    sPenuh?.total_transaksi === penuh.json?.data?.length &&
+    potong.status === 200 &&
+    potong.json?.data?.length === 5 &&
+    sPotong?.ditampilkan === 5 &&
+    sPotong?.limit === 5 &&
+    sPotong?.terpotong === true &&
+    sPotong?.truncated === true &&
+    sPotong?.total_transaksi === sPenuh?.total_transaksi &&
+    sPotong?.total_masuk_qty === sPenuh?.total_masuk_qty &&
+    sPotong?.total_masuk_nilai === sPenuh?.total_masuk_nilai &&
+    sPotong?.total_keluar_qty === sPenuh?.total_keluar_qty &&
+    sPotong?.total_keluar_nilai === sPenuh?.total_keluar_nilai &&
+    sPotong?.net_qty === sPenuh?.net_qty &&
+    sPotong?.net_nilai === sPenuh?.net_nilai &&
+    sPotong?.total_masuk_qty > masukDiPotong &&
+    batasMaks.status === 200 &&
+    batasMaks.json?.summary?.limit === 5000
+  ) {
+    ok(
+      'GET /api/transactions membatasi baris (maks 5.000) dengan ringkasan SQL utuh atas seluruh data',
+      `ditampilkan=${sPotong.ditampilkan}/${sPotong.total_transaksi}, terpotong=true, masuk=${sPotong.total_masuk_qty} unit`
+    );
+  } else {
+    bad(
+      'GET /api/transactions batas baris & ringkasan SQL utuh',
+      `penuh=${JSON.stringify(sPenuh)} potong=${JSON.stringify(sPotong)} maks=${batasMaks.json?.summary?.limit}`
+    );
+  }
+}
+
 console.log('\n=== 1. PEMASANGAN PELANGGAN (POST /api/customers) ===');
 let snap = allStocks();
 let mark = maxTrxId();

@@ -337,6 +337,61 @@ console.log('\n=== 22. Cadangan & Pemulihan Database ===');
   }
 }
 
+// ============================================================
+// 23. KETAHANAN JANGKA PANJANG: batas 5.000 baris transaksi + spanduk UI & tahun dinamis
+// ============================================================
+console.log('\n=== 23. Batas 5.000 Baris Transaksi (Spanduk UI) & Tahun Dinamis ===');
+{
+  try {
+    const KM = (await vite.ssrLoadModule('/src/components/KeluarMasukBarang.jsx')).default;
+    const Lap = (await vite.ssrLoadModule('/src/components/Laporan.jsx')).default;
+    const kmSrc = fs.readFileSync('src/components/KeluarMasukBarang.jsx', 'utf-8');
+    const lapSrc = fs.readFileSync('src/components/Laporan.jsx', 'utf-8');
+    const srvSrc = fs.readFileSync('server/index.js', 'utf-8');
+
+    const truncatedSummary = {
+      total_transaksi: 6200,
+      ditampilkan: 5000,
+      displayed: 5000,
+      limit: 5000,
+      terpotong: true,
+      truncated: true,
+      total_masuk_qty: 120,
+      total_masuk_nilai: 15000000,
+      total_keluar_qty: 80,
+      total_keluar_nilai: 9000000,
+      net_qty: 40,
+      net_nilai: 6000000
+    };
+
+    const kmNormal = renderToString(React.createElement(KM, { items, onRefreshMaster() {} }));
+    const kmPotong = renderToString(React.createElement(KM, { items, onRefreshMaster() {}, initialSummary: truncatedSummary }));
+    const lapNormal = renderToString(React.createElement(Lap, { onRefreshData() {} }));
+    const lapPotong = renderToString(React.createElement(Lap, { onRefreshData() {}, initialSummary: truncatedSummary }));
+
+    const spandukKm = kmPotong.includes('5.000') && kmPotong.includes('6.200') && kmPotong.includes('transaksi terbaru') && !kmNormal.includes('6.200 transaksi');
+    const spandukLap = lapPotong.includes('5.000') && lapPotong.includes('6.200') && lapPotong.includes('transaksi terbaru') && !lapNormal.includes('6.200 transaksi');
+
+    const thnSekarang = String(new Date().getFullYear());
+    const tahunDinamis = !/YEARS\s*=\s*\[2026/.test(kmSrc) && !/YEARS\s*=\s*\[2026/.test(lapSrc)
+      && !/useState\(['"]2026['"]\)/.test(kmSrc) && !/useState\(['"]2026['"]\)/.test(lapSrc)
+      && !/setSelectedYear\(['"]2026['"]\)/.test(kmSrc)
+      && kmNormal.includes(`>${thnSekarang}</option>`) && lapNormal.includes(`>${thnSekarang}</option>`);
+
+    const serverUtuh = srvSrc.includes('MAX_TRANSACTION_ROWS = 5000')
+      && srvSrc.includes('COUNT(*) AS total_transaksi')
+      && srvSrc.includes("WHEN jenis = 'MASUK' THEN jumlah");
+
+    if (spandukKm && spandukLap && tahunDinamis && serverUtuh) {
+      sectionOk('23.1 Spanduk batas 5.000 baris tampil di Mutasi & Laporan saat terpotong, ringkasan SQL utuh, dan opsi tahun dinamis');
+    } else {
+      sectionBad(`23.1 spandukKm=${spandukKm} spandukLap=${spandukLap} tahunDinamis=${tahunDinamis} serverUtuh=${serverUtuh}`);
+    }
+  } catch (e) {
+    sectionBad(`23.1 render spanduk & tahun dinamis gagal: ${String(e.message).split('\n')[0]}`);
+  }
+}
+
 await vite.close();
 console.log(`\nHasil: ${pass} lolos, ${fail} gagal`);
 process.exit(fail ? 1 : 0);

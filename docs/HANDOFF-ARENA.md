@@ -5,8 +5,8 @@
 > pernah kena, dan hal-hal yang belum selesai — supaya sesi baru tidak mengulang debat yang
 > sama atau merusak hal yang sudah disepakati.
 >
-> Terakhir diperbarui: **3 Oktober 2026** · basis commit: `f67b5c1` (merge PR #13)
-> Repo: <https://github.com/thiends-88/barang-dan-aset> · Branch kerja sesi terakhir: `arena/01a10104-barang-dan-aset`
+> Terakhir diperbarui: **3 Oktober 2026** · basis commit: `65b32cd` (merge PR #14)
+> Repo: <https://github.com/thiends-88/barang-dan-aset> · Branch kerja sesi terakhir: `arena/01a1013f-barang-dan-aset`
 > Sesi baru cukup diminta: *"Baca docs/HANDOFF-ARENA.md lalu lanjutkan dari §12."*
 
 ---
@@ -101,8 +101,8 @@ update-proxmox.sh      → skrip update server: cadangkan DB → reset --hard �
 .github/workflows/ci.yml → workflow CI GitHub Actions (AKTIF — JANGAN diubah commit App Arena, lihat §11)
 docs/ci.yml              → salinan rujukan workflow CI (tempat aman bila sesi Arena perlu mengusulkan edit CI)
 
-api-test.mjs       → 156 tes integrasi API (integritas stok, auth, peran, waktu, scan tertaut, import massal, versi, bon teknisi, cadangan DB)
-ssr-test.mjs       → 47 tes render (18 smoke + 11 regresi Navbar + Seksi 20/21/22), data asli API
+api-test.mjs       → 157 tes integrasi API (integritas stok, auth, peran, waktu, scan tertaut, import massal, versi, bon teknisi, cadangan DB, batas 5.000 transaksi)
+ssr-test.mjs       → 48 tes render (18 smoke + 11 regresi Navbar + Seksi 20/21/22/23), data asli API
 contoh-import/     → barang.csv, pelanggan.csv (contoh file import)
 data/inventory.db  → database (TIDAK dilacak git sejak PR #5 — lihat §7)
 data/backups/      → cadangan otomatis dari update-proxmox.sh (diabaikan git)
@@ -147,8 +147,8 @@ reverse proxy) ada di `README.md` bagian **Deploy ke Proxmox**.
 ```bash
 PORT=3001 node server/index.js &     # siapkan server untuk pengujian
 npm test                             # = api-test.mjs && ssr-test.mjs
-npm run test:api                     # 156 tes integrasi API
-npm run test:render                  # 47 tes render (18 smoke + 11 regresi Navbar + 1 Seksi 20 + 16 Seksi 21 Bon Teknisi + 1 Seksi 22 Cadangan DB)
+npm run test:api                     # 157 tes integrasi API
+npm run test:render                  # 48 tes render (18 smoke + 11 regresi Navbar + 1 Seksi 20 + 16 Seksi 21 Bon Teknisi + 1 Seksi 22 Cadangan DB + 1 Seksi 23 Batas 5.000 Transaksi & Tahun Dinamis)
 ```
 
 > Hasil terakhir (sesi `arena/01a0edc1`, 29 Sep 2026): **API 78/78 lolos, SSR 29/29 lolos**
@@ -451,6 +451,30 @@ itu wajar karena perbedaan versi toolchain, bukan bug.
 
 ---
 
+### 6.12 Ketahanan Jangka Panjang: Batas 5.000 Baris Transaksi, Ringkasan SQL Utuh & Tahun Dinamis (sesi `arena/01a1013f`)
+
+- **`GET /api/transactions` dibatasi maks 5.000 baris (`MAX_TRANSACTION_ROWS = 5000`)**: mencegah payload JSON
+  dan jumlah baris `<tr>` di DOM membengkak tanpa batas saat riwayat mutasi tumbuh puluhan ribu baris selama
+  bertahun-tahun operasional. Mendukung query opsional `?limit=N` (dipangkas ke maks `5000`, default `5000`).
+- **Ringkasan (`summary`) tetap dihitung utuh di SQL** (`COUNT(*) AS total_transaksi`, `SUM(CASE WHEN jenis = 'MASUK' ...)`
+  dan `SUM(CASE WHEN jenis = 'KELUAR' ...)` tanpa `LIMIT`) atas seluruh baris yang cocok dengan filter — bukan
+  dijumlahkan di JavaScript dari array `data` yang sudah terpotong. `summary` menyertakan `total_transaksi` (jumlah
+  utuh di DB), `ditampilkan`/`displayed` (`data.length`), `limit`, serta flag `terpotong`/`truncated`
+  (`total_transaksi > data.length`).
+- **Spanduk peringatan di UI** (`KeluarMasukBarang.jsx` & `Laporan.jsx`): tampil otomatis saat `summary.terpotong`
+  bernilai `true` untuk memberi tahu operator bahwa tabel menampilkan 5.000 transaksi terbaru sementara angka
+  rekapitulasi KPI tetap dihitung utuh dari seluruh transaksi yang cocok, sekaligus menyarankan mempersempit
+  filter periode/tanggal/divisi/kata kunci.
+- **Pilihan tahun dinamis** (`KeluarMasukBarang.jsx` & `Laporan.jsx`): konstanta hardcoded `YEARS = [2026, 2025, 2024]`
+  dan default `'2026'` diganti dengan perhitungan dinamis dari `todayLocal()` (`CURRENT_YEAR` mundur hingga `2024`),
+  sehingga saat pergantian tahun ke 2027, 2028, dst. opsi filter tahun langsung tersedia tanpa ubah kode.
+- **Tabel spesifikasi server Proxmox LXC/VM** ditambahkan di `README.md` (perbandingan Minimum LXC Hemat vs
+  Rekomendasi Produksi Jangka Panjang: CPU, RAM, SSD, jaringan, Node.js 22+, systemd `Restart=always`, serta
+  estimasi pertumbuhan ukuran DB multi-tahun).
+- **Tes**: Seksi **0C** `api-test.mjs` (+1 → **157/157**) dan Seksi **23** `ssr-test.mjs` (+1 → **48/48**).
+
+---
+
 ## 7. Database & data
 
 - Tabel: `categories`, `items`, `customers`, `customer_items`, `fo_sites`, `fo_items`,
@@ -521,8 +545,8 @@ itu wajar karena perbedaan versi toolchain, bukan bug.
 1. `npm install` (bila `package.json` berubah) —
    dependensi baru wajib tercermin di `package-lock.json`.
 2. Jalankan server di 3001, lalu:
-   - `npm run test:api` → harapan **156/156 lolos**
-   - `npm run test:render` → harapan **47/47 lolos**
+   - `npm run test:api` → harapan **157/157 lolos**
+   - `npm run test:render` → harapan **48/48 lolos**
    - bila menambah fitur, **tambahkan seksi tesnya** di `api-test.mjs` / `ssr-test.mjs`
      mengikuti gaya yang ada (fungsi `ok()` / `bad()`, judul seksi `=== N. ... ===`).
 3. `npm run build` bila menyentuh frontend; pastikan `dist/` ter-commit.
@@ -703,6 +727,14 @@ di README, info versi build (`/api/version`,
   (tidak menyentuh `sebelum-pulihkan-*`), proteksi admin terakhir, template import, tidak ada URL localhost di
   frontend, referensi aset `dist/index.html` lengkap.
 
+**Selesai di sesi `arena/01a1013f` (batas 5.000 baris `GET /api/transactions` dengan ringkasan SQL utuh + spanduk UI, tahun dinamis, dan tabel spesifikasi server Proxmox):**
+- Penerapan ulang keputusan **§6.12**:
+  1. `GET /api/transactions` dibatasi maks **5.000 baris** (`MAX_TRANSACTION_ROWS = 5000`, mendukung `?limit=N` hingga 5.000) sementara `summary` (`total_transaksi`, `total_masuk_qty/nilai`, `total_keluar_qty/nilai`, `net_qty/nilai`) dihitung **utuh di SQL** tanpa terpotong `LIMIT`, disertai metadata `ditampilkan`/`displayed`, `limit`, dan `terpotong`/`truncated`.
+  2. Spanduk peringatan di `KeluarMasukBarang.jsx` dan `Laporan.jsx` saat `summary.terpotong` bernilai `true`.
+  3. Daftar tahun filter di `KeluarMasukBarang.jsx` dan `Laporan.jsx` dibangkitkan dinamis dari `todayLocal()` (`CURRENT_YEAR` mundur ke `2024`).
+  4. Tabel spesifikasi server Proxmox LXC/VM ditambahkan di `README.md`.
+  5. Tes: Seksi **0C** `api-test.mjs` (+1 → **157/157 lolos**) dan Seksi **23** `ssr-test.mjs` (+1 → **48/48 lolos**), `dist/` di-build ulang.
+
 **Belum dikerjakan / kandidat sesi berikutnya:**
 
 0. Bon Teknisi: opsi **tambah barang ke bon yang sudah berjalan**, pembatasan teknisi hanya melihat/merealisasi bon sendiri,
@@ -728,7 +760,7 @@ npm run dev                              # Vite di :3000, proxy /api → :3001
 
 # Uji
 PORT=3001 node server/index.js &         # server untuk pengujian
-npm test                                 # 156 tes API + 47 tes render
+npm test                                 # 157 tes API + 48 tes render
 npm run test:api ; npm run test:render   # terpisah
 
 # Produksi

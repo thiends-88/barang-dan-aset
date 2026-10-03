@@ -24,8 +24,12 @@ import { formatRupiah, formatNumber, formatDate, exportToCSV, todayLocal } from 
 import { notify } from '../utils/notify';
 
 const DIVISI_OPTIONS = ['SEMUA', 'PELANGGAN', 'DIVISI FO', 'DIVISI TOWER', 'GUDANG', 'TEKNISI']; // TEKNISI = mutasi Bon Teknisi (dibawa / dikembalikan)
-const CURRENT_YEAR = 2026;
-const YEARS = [2026, 2025, 2024];
+const CURRENT_YEAR = Number(todayLocal().slice(0, 4)) || new Date().getFullYear();
+const START_YEAR = 2024;
+const YEARS = Array.from(
+  { length: Math.max(CURRENT_YEAR, START_YEAR) - START_YEAR + 1 },
+  (_, i) => Math.max(CURRENT_YEAR, START_YEAR) - i
+);
 const MONTHS = [
   { val: '', label: 'Semua Bulan' },
   { val: '1', label: 'Januari' },
@@ -42,9 +46,9 @@ const MONTHS = [
   { val: '12', label: 'Desember' }
 ];
 
-export default function KeluarMasukBarang({ items, onRefreshMaster }) {
+export default function KeluarMasukBarang({ items, onRefreshMaster, initialSummary = null }) {
   const [transactions, setTransactions] = useState([]);
-  const [summary, setSummary] = useState(null);
+  const [summary, setSummary] = useState(initialSummary);
   const [loading, setLoading] = useState(false);
 
   // Filters
@@ -52,7 +56,7 @@ export default function KeluarMasukBarang({ items, onRefreshMaster }) {
   const [selectedDivisi, setSelectedDivisi] = useState('SEMUA');
   const [selectedJenis, setSelectedJenis] = useState(''); // '' | 'MASUK' | 'KELUAR'
   const [filterMode, setFilterMode] = useState('period'); // 'period' | 'custom_range'
-  const [selectedYear, setSelectedYear] = useState('2026');
+  const [selectedYear, setSelectedYear] = useState(String(CURRENT_YEAR));
   const [selectedMonth, setSelectedMonth] = useState('');
   const [selectedWeek, setSelectedWeek] = useState('');
   const [startDate, setStartDate] = useState('');
@@ -562,7 +566,7 @@ export default function KeluarMasukBarang({ items, onRefreshMaster }) {
                 setSearch('');
                 setSelectedDivisi('SEMUA');
                 setSelectedJenis('');
-                setSelectedYear('2026');
+                setSelectedYear(String(CURRENT_YEAR));
                 setSelectedMonth('');
                 setSelectedWeek('');
                 setStartDate('');
@@ -574,6 +578,19 @@ export default function KeluarMasukBarang({ items, onRefreshMaster }) {
             </button>
           </div>
         </div>
+
+        {/* Spanduk peringatan bila jumlah baris melebihi batas 5.000 transaksi */}
+        {(summary?.terpotong || summary?.truncated || (summary?.total_transaksi > transactions.length && transactions.length > 0)) && (
+          <div className="no-print mx-5 mt-4 p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-start gap-2.5">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <span className="font-bold">
+                Menampilkan {formatNumber(summary?.ditampilkan || transactions.length || summary?.limit || 5000)} transaksi terbaru dari total {formatNumber(summary?.total_transaksi || 0)} transaksi.
+              </span>{' '}
+              Angka ringkasan di atas (total mutasi, barang masuk, dan barang keluar) tetap dihitung utuh dari seluruh {formatNumber(summary?.total_transaksi || 0)} transaksi di database. Gunakan filter tahun, bulan, minggu, rentang tanggal, divisi, atau kata kunci untuk mempersempit daftar tabel &amp; ekspor CSV.
+            </div>
+          </div>
+        )}
 
         {/* Transactions Table */}
         <div className="overflow-x-auto">
@@ -683,7 +700,11 @@ export default function KeluarMasukBarang({ items, onRefreshMaster }) {
 
         {/* Footer */}
         <div className="p-4 bg-slate-50 border-t border-slate-200 text-xs text-slate-600 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <span>Menampilkan {transactions.length} baris transaksi mutasi</span>
+          <span>
+            {summary?.terpotong || summary?.truncated
+              ? `Menampilkan ${formatNumber(summary?.ditampilkan || transactions.length)} dari ${formatNumber(summary?.total_transaksi || transactions.length)} baris transaksi mutasi (dibatasi ${formatNumber(summary?.limit || 5000)} terbaru)`
+              : `Menampilkan ${formatNumber(transactions.length)} baris transaksi mutasi`}
+          </span>
           <div className="flex items-center gap-4 font-semibold">
             <span className="text-emerald-700">Total Masuk: {formatRupiah(summary?.total_masuk_nilai || 0)}</span>
             <span className="text-slate-300">|</span>
