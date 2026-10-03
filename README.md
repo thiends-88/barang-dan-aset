@@ -145,7 +145,7 @@ Fitur pendukung: riwayat mutasi per bon & lintas bon (cari lewat No. Bon / SN / 
    Menguji alur pemasangan, pengeditan, dismantle, dan penghapusan barang untuk Pelanggan, Divisi FO, dan Divisi Tower, lalu memeriksa bahwa stok gudang tidak pernah minus dan **selalu cocok dengan riwayat mutasi**. Data contoh direset otomatis di awal dan di akhir pengujian. Menjalankan keduanya sekaligus: `npm test`.
 
 6. **CI (GitHub Actions)**:
-   Workflow CI sudah **aktif otomatis** di [`.github/workflows/ci.yml`](.github/workflows/ci.yml) (salinan rujukan di [`docs/ci.yml`](docs/ci.yml)) — menjalankan `npm ci` → server uji port 3001 → `npm test` (149 tes API + 46 tes render) → `npm run build` pada setiap push ke `main` dan setiap Pull Request, di lingkungan yang selalu bersih (database dibuat + diisi data contoh dari nol).
+   Workflow CI sudah **aktif otomatis** di [`.github/workflows/ci.yml`](.github/workflows/ci.yml) (salinan rujukan di [`docs/ci.yml`](docs/ci.yml)) — menjalankan `npm ci` → server uji port 3001 → `npm test` (156 tes API + 47 tes render) → `npm run build` pada setiap push ke `main` dan setiap Pull Request, di lingkungan yang selalu bersih (database dibuat + diisi data contoh dari nol).
 
 ---
 
@@ -216,6 +216,37 @@ sudo systemctl start barang-dan-aset
 
 - Di aplikasi: lencana versi di **footer** (mis. `v1.0.0 · a1b2c3d`). Klik untuk melihat commit build, waktu build, commit yang berjalan di server, dan versi Node.js. Bila server sudah diperbarui tetapi browser masih memuat versi lama, muncul tombol **"Versi baru — muat ulang"**.
 - Dari terminal: `curl -s http://127.0.0.1:3000/api/version` (tanpa login).
+
+### Pindah ke server / LXC baru (hanya butuh repo GitHub + satu berkas cadangan `.db`)
+
+Seluruh data aplikasi (barang, kategori, pelanggan, FO, tower, transaksi, bon & data teknisi, akun user) tersimpan dalam **satu berkas** `data/inventory.db` — tidak ada berkas lain yang perlu dipindahkan. Jadi di LXC baru cukup:
+
+```bash
+# 1. Prasyarat & kode
+apt install -y git curl && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt install -y nodejs
+git clone https://github.com/thiends-88/barang-dan-aset.git /opt/barang-dan-aset
+cd /opt/barang-dan-aset && npm install --omit=dev      # dist/ sudah ikut repo, tidak perlu build
+
+# 2. Pasang unit systemd (lihat §3 di bawah — WAJIB Restart=always), lalu
+systemctl daemon-reload && systemctl enable --now barang-dan-aset
+```
+
+Lalu pulihkan data dengan **salah satu** cara:
+
+- **Cara A — lewat UI (paling mudah):** buka aplikasi, login dengan akun bawaan `admin / admin123` (server baru otomatis terisi data contoh), masuk **Manajemen User → Cadangan & Pemulihan Database → Pulihkan Database**, unggah berkas `sim-aset-YYYYMMDD-HHMMSS.db` hasil *Unduh Cadangan* dari server lama, ketik `PULIHKAN`. Server memulai ulang sendiri; setelah itu **login memakai akun & password dari server lama** (akun demo sudah tidak ada lagi karena ikut tergantikan).
+- **Cara B — lewat terminal (tanpa login):** sebelum/selagi layanan berhenti, salin berkas cadangan menjadi database:
+  ```bash
+  systemctl stop barang-dan-aset
+  mkdir -p data && rm -f data/inventory.db data/inventory.db-wal data/inventory.db-shm
+  cp /path/ke/sim-aset-YYYYMMDD-HHMMSS.db data/inventory.db
+  systemctl start barang-dan-aset
+  ```
+
+Catatan penting saat pindah:
+- Data yang dipulihkan adalah data **per saat cadangan diunduh** — unduh cadangan terbaru dari server lama tepat sebelum pindah.
+- Pakai `AUTH_SECRET` yang sama di unit systemd baru bila ingin sesi login yang masih tersimpan di browser tetap berlaku; bila berbeda, pengguna cukup login ulang (password tersimpan di database, tidak bergantung pada `AUTH_SECRET`).
+- Cadangan dari versi aplikasi yang lebih lama tetap bisa dipulihkan: tabel/kolom baru dibuat otomatis saat server menyala.
+- Jangan memulihkan dari salinan `cp inventory.db` yang diambil saat server lama masih berjalan — data terbaru bisa masih berada di `inventory.db-wal`. Gunakan berkas *Unduh Cadangan*, `data/backups/` buatan skrip update, atau cron `VACUUM INTO`.
 
 ### 3. Jalankan otomatis saat server menyala (systemd)
 
