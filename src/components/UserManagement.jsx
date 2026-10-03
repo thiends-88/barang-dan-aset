@@ -277,7 +277,19 @@ export function DatabaseBackupPanel() {
             {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <HardDriveDownload className="w-4 h-4" />}
             {downloading ? 'Menyiapkan cadangan...' : 'Unduh Cadangan (.db)'}
           </a>
-          <p className="text-[10px] text-slate-500 mt-2">Bila browser tidak menampilkan unduhan (mis. di jendela pratinjau tersemat), buka aplikasi di tab browser penuh lalu klik lagi.</p>
+          <p className="text-[10px] text-slate-500 mt-2">
+            Tidak muncul di unduhan browser (mis. aplikasi dibuka di dalam jendela pratinjau tersemat)?{' '}
+            <a
+              href={backupHref || '#'}
+              target="_blank"
+              rel="noopener"
+              onClick={(e) => { if (!backupHref) e.preventDefault(); }}
+              className="font-semibold text-indigo-600 hover:underline"
+            >
+              Unduh lewat tab baru
+            </a>
+            {' '}atau buka aplikasi langsung di tab browser penuh.
+          </p>
         </div>
 
         <div className="border border-rose-200 bg-rose-50/60 rounded-xl p-3.5">
