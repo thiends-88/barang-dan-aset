@@ -2206,6 +2206,12 @@ app.delete('/api/tower/:id', (req, res) => {
 // 5. TRANSAKSI KELUAR MASUK BARANG (TRANSACTIONS)
 // ==========================================
 
+// Batas aman jumlah baris rincian yang dikirim sekaligus oleh GET /api/transactions
+// agar respons JSON dan render tabel browser tetap ringan saat mutasi tumbuh puluhan
+// ribu baris selama bertahun-tahun. Angka ringkasan (summary) tetap dihitung utuh di
+// SQL atas seluruh baris yang cocok dengan filter (tanpa terpotong LIMIT).
+const MAX_TRANSACTION_ROWS = 5000;
+
 // Get transactions with rich filtering
 app.get('/api/transactions', (req, res) => {
   try {
@@ -2217,34 +2223,35 @@ app.get('/api/transactions', (req, res) => {
       week,
       divisi,
       jenis,
-      search
+      search,
+      limit
     } = req.query;
 
-    let query = 'SELECT * FROM transactions WHERE 1=1';
+    let whereSql = ' WHERE 1=1';
     const params = [];
 
     // Date range
     if (start_date && end_date) {
-      query += ' AND tanggal >= ? AND tanggal <= ?';
+      whereSql += ' AND tanggal >= ? AND tanggal <= ?';
       params.push(start_date, end_date);
     } else if (start_date) {
-      query += ' AND tanggal >= ?';
+      whereSql += ' AND tanggal >= ?';
       params.push(start_date);
     } else if (end_date) {
-      query += ' AND tanggal <= ?';
+      whereSql += ' AND tanggal <= ?';
       params.push(end_date);
     }
 
     // Specific Year filter
     if (year) {
-      query += " AND strftime('%Y', tanggal) = ?";
+      whereSql += " AND strftime('%Y', tanggal) = ?";
       params.push(String(year));
     }
 
     // Specific Month filter (1-12)
     if (month && year) {
       const formattedMonth = String(month).padStart(2, '0');
-      query += " AND strftime('%Y-%m', tanggal) = ?";
+      whereSql += " AND strftime('%Y-%m', tanggal) = ?";
       params.push(`${year}-${formattedMonth}`);
     }
 
@@ -2264,54 +2271,68 @@ app.get('/api/transactions', (req, res) => {
       const sDate = `${year}-${formattedMonth}-${String(dayStart).padStart(2, '0')}`;
       const eDate = `${year}-${formattedMonth}-${String(dayEnd).padStart(2, '0')}`;
 
-      query += ' AND tanggal >= ? AND tanggal <= ?';
+      whereSql += ' AND tanggal >= ? AND tanggal <= ?';
       params.push(sDate, eDate);
     }
 
     // Divisi filter
     if (divisi && divisi !== 'SEMUA') {
-      query += ' AND UPPER(divisi) = UPPER(?)';
+      whereSql += ' AND UPPER(divisi) = UPPER(?)';
       params.push(divisi);
     }
 
     // Jenis filter (MASUK / KELUAR)
     if (jenis && (jenis === 'MASUK' || jenis === 'KELUAR')) {
-      query += ' AND jenis = ?';
+      whereSql += ' AND jenis = ?';
       params.push(jenis);
     }
 
     // Keyword search
     if (search) {
-      query += ' AND (kode_barang LIKE ? OR nama_barang LIKE ? OR no_transaksi LIKE ? OR lokasi_penerima LIKE ? OR keterangan LIKE ?)';
+      whereSql += ' AND (kode_barang LIKE ? OR nama_barang LIKE ? OR no_transaksi LIKE ? OR lokasi_penerima LIKE ? OR keterangan LIKE ?)';
       const s = `%${search}%`;
       params.push(s, s, s, s, s);
     }
 
-    query += ' ORDER BY tanggal DESC, id DESC';
+    // Ringkasan dihitung utuh di SQL atas seluruh baris yang cocok dengan filter
+    // (tidak ikut terpotong oleh LIMIT rincian baris).
+    const agg = db.prepare(`
+      SELECT
+        COUNT(*) AS total_transaksi,
+        COALESCE(SUM(CASE WHEN jenis = 'MASUK' THEN jumlah ELSE 0 END), 0) AS total_masuk_qty,
+        COALESCE(SUM(CASE WHEN jenis = 'MASUK' THEN total_harga ELSE 0 END), 0) AS total_masuk_nilai,
+        COALESCE(SUM(CASE WHEN jenis = 'KELUAR' THEN jumlah ELSE 0 END), 0) AS total_keluar_qty,
+        COALESCE(SUM(CASE WHEN jenis = 'KELUAR' THEN total_harga ELSE 0 END), 0) AS total_keluar_nilai
+      FROM transactions
+      ${whereSql}
+    `).get(...params);
 
-    const txs = db.prepare(query).all(...params);
+    const parsedLimit = parseInt(limit, 10);
+    const rowLimit = Number.isFinite(parsedLimit) && parsedLimit > 0
+      ? Math.min(parsedLimit, MAX_TRANSACTION_ROWS)
+      : MAX_TRANSACTION_ROWS;
 
-    // Compute summary metrics
-    let totalMasukQty = 0;
-    let totalMasukNilai = 0;
-    let totalKeluarQty = 0;
-    let totalKeluarNilai = 0;
+    const txs = db.prepare(
+      `SELECT * FROM transactions${whereSql} ORDER BY tanggal DESC, id DESC LIMIT ?`
+    ).all(...params, rowLimit);
 
-    for (const t of txs) {
-      if (t.jenis === 'MASUK') {
-        totalMasukQty += t.jumlah;
-        totalMasukNilai += t.total_harga;
-      } else {
-        totalKeluarQty += t.jumlah;
-        totalKeluarNilai += t.total_harga;
-      }
-    }
+    const totalTransaksi = Number(agg?.total_transaksi) || 0;
+    const totalMasukQty = Number(agg?.total_masuk_qty) || 0;
+    const totalMasukNilai = Number(agg?.total_masuk_nilai) || 0;
+    const totalKeluarQty = Number(agg?.total_keluar_qty) || 0;
+    const totalKeluarNilai = Number(agg?.total_keluar_nilai) || 0;
+    const terpotong = totalTransaksi > txs.length;
 
     res.json({
       success: true,
       data: txs,
       summary: {
-        total_transaksi: txs.length,
+        total_transaksi: totalTransaksi,
+        ditampilkan: txs.length,
+        displayed: txs.length,
+        limit: rowLimit,
+        terpotong,
+        truncated: terpotong,
         total_masuk_qty: totalMasukQty,
         total_masuk_nilai: totalMasukNilai,
         total_keluar_qty: totalKeluarQty,
