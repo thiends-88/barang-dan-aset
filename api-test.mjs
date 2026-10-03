@@ -181,6 +181,31 @@ const GLOBAL_MARK = maxTrxId();
 console.log(`  Barang uji: ${KODE} (stok ${STOK_AWAL})`);
 
 // ============================================================
+console.log('\n=== 0B. KETAHANAN API: error selalu JSON, rute /api tak dikenal 404 ===');
+{
+  // Sebelumnya body JSON rusak / terlalu besar dijawab halaman HTML Express berisi stack trace,
+  // dan rute /api yang tidak ada jatuh ke fallback SPA (200 + index.html).
+  const kirimMentah = (url, body, ct = 'application/json') => fetch(API + url, { method: 'POST', headers: { 'Content-Type': ct, Authorization: `Bearer ${TOKEN}` }, body });
+  const rusak = await kirimMentah('/api/items', '{"kode_barang": ');
+  const rusakJson = await rusak.json().catch(() => null);
+  const besar = await kirimMentah('/api/items', JSON.stringify({ x: 'a'.repeat(6 * 1024 * 1024) }));
+  const besarJson = await besar.json().catch(() => null);
+  if (rusak.status === 400 && rusakJson?.success === false && /JSON/.test(rusakJson.error) && besar.status === 413 && besarJson?.success === false && /terlalu besar/i.test(besarJson.error)) {
+    ok('Body JSON rusak → 400 JSON, body > 5 MB → 413 JSON (bukan halaman HTML Express)');
+  } else {
+    bad('Body JSON rusak / terlalu besar dijawab JSON', `rusak=${rusak.status} ${JSON.stringify(rusakJson)} besar=${besar.status} ${JSON.stringify(besarJson)}`);
+  }
+
+  const takAda = await req('GET', '/api/tidak-ada-endpoint');
+  const takAdaTulis = await req('DELETE', '/api/items/1/sub/x');
+  const spa = await fetch(API + '/laporan');
+  if (takAda.status === 404 && takAda.json?.success === false && takAdaTulis.status === 404 && takAdaTulis.json?.success === false && spa.status === 200 && /text\/html/.test(spa.headers.get('content-type') || '')) {
+    ok('Rute /api tak dikenal → 404 JSON; fallback SPA untuk rute non-API tetap 200 HTML');
+  } else {
+    bad('Rute /api tak dikenal → 404 JSON', `get=${takAda.status} del=${takAdaTulis.status} spa=${spa.status}`);
+  }
+}
+
 console.log('\n=== 1. PEMASANGAN PELANGGAN (POST /api/customers) ===');
 let snap = allStocks();
 let mark = maxTrxId();
@@ -581,16 +606,28 @@ console.log('\n=== 8B. CADANGAN & PEMULIHAN DATABASE (khusus admin) ===');
     n.exec("UPDATE users SET status = 'nonaktif' WHERE role = 'admin'");
     n.close();
 
+    // Kandidat ber-mode WAL (seperti salinan mentah inventory.db): saat divalidasi SQLite membuat
+    // berkas pendamping -wal/-shm — keduanya tidak boleh tertinggal di data/.
+    const walMode = tmpPath('wal-tanpa-admin.db');
+    writeFileSync(walMode, cadanganBuf);
+    const w = new DatabaseSync(walMode);
+    w.exec('PRAGMA journal_mode = WAL');
+    w.exec("UPDATE users SET status = 'nonaktif' WHERE role = 'admin'");
+    w.close();
+    for (const ext of ['-wal', '-shm']) { try { rmSync(walMode + ext, { force: true }); } catch { /* abaikan */ } }
+
     const rAsing = await kirimRestore(readFileSync(asing));
     const rTanpaAdmin = await kirimRestore(readFileSync(tanpaAdmin));
-    const sisaTemp = tempDiData().filter((f) => !tempAwal.has(f));
+    const rWal = await kirimRestore(readFileSync(walMode));
+    const sisaTemp = tempDiData().filter((f) => !tempAwal.has(f)); // termasuk .restore-*.db-wal / -shm
     const serverMasihHidup = (await req('GET', '/api/health', undefined, { noAuth: true })).status === 200;
     if (rAsing.status === 400 && /tabel wajib/i.test(rAsing.json?.error || '')
       && rTanpaAdmin.status === 400 && /Administrator aktif/i.test(rTanpaAdmin.json?.error || '')
+      && rWal.status === 400 && /Administrator aktif/i.test(rWal.json?.error || '')
       && sidikJariDb() === sidikAwal && sisaTemp.length === 0 && serverMasihHidup) {
-      ok('Pemulihan ditolak untuk SQLite asing (tabel wajib hilang) & cadangan tanpa admin aktif; DB aktif utuh, tanpa berkas sementara');
+      ok('Pemulihan ditolak untuk SQLite asing (tabel wajib hilang) & cadangan tanpa admin aktif (termasuk ber-mode WAL); DB aktif utuh, tanpa berkas sementara/-wal/-shm');
     } else {
-      bad('Pemulihan ditolak untuk SQLite asing / tanpa admin aktif, DB aktif utuh', `asing=${rAsing.status} "${rAsing.json?.error || ''}" tanpaAdmin=${rTanpaAdmin.status} "${rTanpaAdmin.json?.error || ''}" utuh=${sidikJariDb() === sidikAwal} temp=${sisaTemp.join(',')} hidup=${serverMasihHidup}`);
+      bad('Pemulihan ditolak untuk SQLite asing / tanpa admin aktif, DB aktif utuh', `asing=${rAsing.status} "${rAsing.json?.error || ''}" wal=${rWal.status} tanpaAdmin=${rTanpaAdmin.status} "${rTanpaAdmin.json?.error || ''}" utuh=${sidikJariDb() === sidikAwal} temp=${sisaTemp.join(',')} hidup=${serverMasihHidup}`);
     }
   }
 

@@ -5,7 +5,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import db, { initDb, DB_PATH, BACKUP_DIR } from './db.js';
 import { DatabaseSync } from 'node:sqlite';
-import { pipeline } from 'node:stream';
+import { pipeline, Transform } from 'node:stream';
 import { seedData, seedUsers } from './seed.js';
 import { ROLES, hashPassword, verifyPassword, signToken, verifyToken } from './auth.js';
 import { getGitInfo, readPackageVersion, localStamp } from '../scripts/build-info.mjs';
@@ -3752,6 +3752,11 @@ function stampForFile(d = new Date()) {
   return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}-${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`;
 }
 
+/** Hapus berkas beserta pendamping SQLite-nya (-wal/-shm/-journal yang bisa muncul saat berkas dibuka). */
+function hapusBerkasSqlite(file) {
+  for (const ext of ['', '-wal', '-shm', '-journal']) fs.rmSync(`${file}${ext}`, { force: true });
+}
+
 function ensureBackupDir() {
   if (!fs.existsSync(BACKUP_DIR)) fs.mkdirSync(BACKUP_DIR, { recursive: true });
 }
@@ -3767,6 +3772,7 @@ function snapshotDatabase(target) {
     if (hasil !== 'ok') throw new Error(`Salinan cadangan tidak lolos integrity_check: ${hasil}`);
   } finally {
     check.close();
+    for (const ext of ['-wal', '-shm', '-journal']) fs.rmSync(`${target}${ext}`, { force: true });
   }
   return fs.statSync(target).size;
 }
@@ -3878,38 +3884,61 @@ app.get('/api/admin/database/backup', (req, res) => {
     // putus di tengah (proxy/browser menutup lebih dulu) — berkas sementara selalu dihapus.
     // (stream.pipe() tidak menutup sumber bila tujuan ditutup lebih dulu → berkas bocor.)
     pipeline(fs.createReadStream(tmp), res, (err) => {
-      fs.rm(tmp, { force: true }, () => {});
+      hapusBerkasSqlite(tmp);
       if (err && err.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
         console.error('[backup] Gagal mengirim cadangan:', err.message);
         if (!res.headersSent) res.status(500).json({ success: false, error: err.message });
       }
     });
   } catch (err) {
-    fs.rm(tmp, { force: true }, () => {});
+    hapusBerkasSqlite(tmp);
     res.status(500).json({ success: false, error: `Gagal membuat cadangan: ${err.message}` });
   }
 });
 
-app.post(
-  '/api/admin/database/restore',
-  express.raw({ type: () => true, limit: RESTORE_MAX_BYTES }),
-  (req, res) => {
-    if (!requireAdmin(req, res)) return;
-    const konfirmasi = String(req.query?.konfirmasi || req.headers['x-konfirmasi'] || '');
-    if (konfirmasi !== RESTORE_CONFIRM_WORD) {
-      return res.status(400).json({ success: false, error: `Pemulihan harus dikonfirmasi dengan kata ${RESTORE_CONFIRM_WORD}.` });
+app.post('/api/admin/database/restore', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const konfirmasi = String(req.query?.konfirmasi || req.headers['x-konfirmasi'] || '');
+  if (konfirmasi !== RESTORE_CONFIRM_WORD) {
+    return res.status(400).json({ success: false, error: `Pemulihan harus dikonfirmasi dengan kata ${RESTORE_CONFIRM_WORD}.` });
+  }
+  const panjangDiumumkan = Number(req.headers['content-length'] || 0);
+  if (panjangDiumumkan > RESTORE_MAX_BYTES) {
+    return res.status(413).json({ success: false, error: `Berkas terlalu besar (maks ${Math.round(RESTORE_MAX_BYTES / 1048576)} MB).` });
+  }
+
+  const stamp = stampForFile();
+  const dataDir = path.dirname(DB_PATH);
+  const kandidat = path.join(dataDir, `.restore-${stamp}-${process.pid}.db`);
+  const cadanganLama = path.join(BACKUP_DIR, `sebelum-pulihkan-${stamp}.db`);
+
+  // Unggahan dialirkan LANGSUNG ke berkas sementara, tidak ditampung di memori
+  // (LXC Proxmox sering ber-RAM kecil; express.raw akan menampung seluruh berkas).
+  let total = 0;
+  const pembatas = new Transform({
+    transform(chunk, _enc, cb) {
+      total += chunk.length;
+      if (total > RESTORE_MAX_BYTES) {
+        const e = new Error(`Berkas terlalu besar (maks ${Math.round(RESTORE_MAX_BYTES / 1048576)} MB).`);
+        e.statusCode = 413;
+        return cb(e);
+      }
+      cb(null, chunk);
     }
-    const body = Buffer.isBuffer(req.body) ? req.body : null;
-    if (!body || body.length < 1024) {
+  });
+
+  pipeline(req, pembatas, fs.createWriteStream(kandidat), (errUnggah) => {
+    if (errUnggah) {
+      hapusBerkasSqlite(kandidat);
+      if (res.headersSent || (req.destroyed && errUnggah.code === 'ERR_STREAM_PREMATURE_CLOSE')) return;
+      return res.status(errUnggah.statusCode || 400).json({ success: false, error: errUnggah.statusCode ? errUnggah.message : `Unggahan terputus: ${errUnggah.message}` });
+    }
+    if (total < 1024) {
+      hapusBerkasSqlite(kandidat);
       return res.status(400).json({ success: false, error: 'Berkas database tidak diterima atau terlalu kecil. Unggah berkas .db hasil Unduh Cadangan.' });
     }
 
-    const stamp = stampForFile();
-    const dataDir = path.dirname(DB_PATH);
-    const kandidat = path.join(dataDir, `.restore-${stamp}-${process.pid}.db`);
-    const cadanganLama = path.join(BACKUP_DIR, `sebelum-pulihkan-${stamp}.db`);
     try {
-      fs.writeFileSync(kandidat, body);
       const info = validateRestoreCandidate(kandidat);
 
       // 1) Amankan DB yang sedang berjalan ke data/backups
@@ -3923,8 +3952,10 @@ app.post(
       db.close();
       for (const ext of ['-wal', '-shm', '-journal']) fs.rmSync(`${DB_PATH}${ext}`, { force: true });
       fs.renameSync(kandidat, DB_PATH);
+      // Berkas pendamping kandidat (muncul bila berkas unggahan ber-mode WAL) tidak boleh tertinggal
+      for (const ext of ['-wal', '-shm', '-journal']) fs.rmSync(`${kandidat}${ext}`, { force: true });
 
-      console.log(`[restore] Database dipulihkan oleh ${req.user.username} dari unggahan ${body.length} byte; DB lama disimpan di ${cadanganLama}. Proses keluar agar dimuat ulang oleh systemd.`);
+      console.log(`[restore] Database dipulihkan oleh ${req.user.username} dari unggahan ${total} byte; DB lama disimpan di ${cadanganLama}. Proses keluar agar dimuat ulang oleh systemd.`);
       res.json({
         success: true,
         message: 'Database berhasil dipulihkan. Server memulai ulang — halaman akan dimuat ulang otomatis.',
@@ -3939,7 +3970,7 @@ app.post(
       // ulang proses dengan DB baru; tanpa supervisor proses TIDAK hidup lagi dengan sendirinya.
       setTimeout(() => process.exit(0), 700).unref();
     } catch (err) {
-      fs.rmSync(kandidat, { force: true });
+      hapusBerkasSqlite(kandidat);
       if (serverRestarting) {
         // Gagal setelah koneksi ditutup — kondisi tidak bisa dilanjutkan, biarkan supervisor menyalakan ulang.
         console.error('[restore] Gagal di tahap penukaran berkas:', err);
@@ -3949,8 +3980,34 @@ app.post(
       }
       res.status(400).json({ success: false, error: err.message });
     }
+  });
+});
+
+// ==========================================
+// PENANGANAN AKHIR UNTUK /api: 404 JSON & error terpusat
+// ==========================================
+// Rute /api yang tidak dikenal jangan sampai jatuh ke fallback SPA (200 + index.html).
+app.use('/api', (req, res) => {
+  res.status(404).json({ success: false, error: `Endpoint ${req.method} /api${req.path === '/' ? '' : req.path} tidak ditemukan.` });
+});
+
+// Error yang lolos dari handler (JSON rusak, body terlalu besar, exception tak tertangkap)
+// dibalas JSON ber-Bahasa Indonesia — bukan halaman HTML Express berisi stack trace.
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  if (res.headersSent) return res.destroy(err);
+  const status = Number(err.status || err.statusCode) || 500;
+  let pesan;
+  if (err.type === 'entity.parse.failed') pesan = 'Format JSON pada permintaan tidak valid.';
+  else if (err.type === 'entity.too.large') pesan = `Data yang dikirim terlalu besar (maks ${err.limit ? Math.round(err.limit / 1048576) + ' MB' : 'batas server'}). Pecah menjadi beberapa bagian.`;
+  else if (status >= 500) pesan = 'Terjadi kesalahan di server. Coba lagi atau hubungi Administrator.';
+  else pesan = err.message || 'Permintaan tidak dapat diproses.';
+  if (status >= 500) console.error(`[${req.method} ${req.originalUrl}]`, err);
+  if (req.path.startsWith('/api/') || req.originalUrl.startsWith('/api/')) {
+    return res.status(status).json({ success: false, error: pesan });
   }
-);
+  res.status(status).type('text/plain').send(pesan);
+});
 
 // Serve frontend static build if available
 const distPath = path.join(__dirname, '..', 'dist');

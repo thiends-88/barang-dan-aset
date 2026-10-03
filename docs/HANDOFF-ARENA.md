@@ -101,7 +101,7 @@ update-proxmox.sh      → skrip update server: cadangkan DB → reset --hard �
 .github/workflows/ci.yml → workflow CI GitHub Actions (AKTIF — JANGAN diubah commit App Arena, lihat §11)
 docs/ci.yml              → salinan rujukan workflow CI (tempat aman bila sesi Arena perlu mengusulkan edit CI)
 
-api-test.mjs       → 154 tes integrasi API (integritas stok, auth, peran, waktu, scan tertaut, import massal, versi, bon teknisi, cadangan DB)
+api-test.mjs       → 156 tes integrasi API (integritas stok, auth, peran, waktu, scan tertaut, import massal, versi, bon teknisi, cadangan DB)
 ssr-test.mjs       → 47 tes render (18 smoke + 11 regresi Navbar + Seksi 20/21/22), data asli API
 contoh-import/     → barang.csv, pelanggan.csv (contoh file import)
 data/inventory.db  → database (TIDAK dilacak git sejak PR #5 — lihat §7)
@@ -147,7 +147,7 @@ reverse proxy) ada di `README.md` bagian **Deploy ke Proxmox**.
 ```bash
 PORT=3001 node server/index.js &     # siapkan server untuk pengujian
 npm test                             # = api-test.mjs && ssr-test.mjs
-npm run test:api                     # 154 tes integrasi API
+npm run test:api                     # 156 tes integrasi API
 npm run test:render                  # 47 tes render (18 smoke + 11 regresi Navbar + 1 Seksi 20 + 16 Seksi 21 Bon Teknisi + 1 Seksi 22 Cadangan DB)
 ```
 
@@ -435,6 +435,15 @@ itu wajar karena perbedaan versi toolchain, bukan bug.
   kuning bila tidak terdeteksi, dan setelah pemulihan UI mem-poll `/api/health` hingga 90 detik lalu reload.
 - Selama jeda keluar, flag `serverRestarting` membuat semua `/api/*` (kecuali `/api/health`) dibalas **503**
   — jangan hapus middleware ini (dipasang di awal rantai, sebelum autentikasi).
+- Unggahan pemulihan **dialirkan langsung ke berkas sementara** (`pipeline(req, Transform pembatas, WriteStream)`),
+  bukan `express.raw` — LXC Proxmox sering ber-RAM kecil; batas 512 MB ditegakkan per-chunk + `Content-Length` (413).
+  Pengiriman cadangan juga memakai `pipeline()` agar berkas sementara pasti dihapus walau koneksi putus.
+- Tombol *Unduh Cadangan* adalah **tautan langsung** (`<a href=/api/admin/database/backup?_token=…>`), bukan
+  `fetch → blob → a.click()`: unduhan yang dipicu setelah `await` kehilangan gestur klik dan diblokir browser
+  (terjadi di iframe pratinjau Arena) padahal notifikasi sukses tetap tampil.
+- Salinan `cp inventory.db` saat server hidup **kehilangan data yang masih di WAL** (diuji: pelanggan baru hilang) —
+  pulihkan hanya dari berkas VACUUM INTO (Unduh Cadangan / skrip update / cron). Pemulihan dari skema lama
+  (tanpa tabel Bon Teknisi, tanpa kolom migrasi) sudah diuji: `initDb()` membuat ulang semuanya saat restart.
 - Tes: Seksi **8B** `api-test.mjs` (5 tes: info, 403 non-admin di 3 endpoint, cadangan valid, 4 penolakan
   konfirmasi/format, penolakan SQLite asing & tanpa admin + DB utuh + tanpa berkas sementara) dan Seksi **22**
   `ssr-test.mjs`. **Jalur sukses sengaja tidak di-test otomatis** (akan mematikan server tes); diverifikasi
@@ -512,7 +521,7 @@ itu wajar karena perbedaan versi toolchain, bukan bug.
 1. `npm install` (bila `package.json` berubah) —
    dependensi baru wajib tercermin di `package-lock.json`.
 2. Jalankan server di 3001, lalu:
-   - `npm run test:api` → harapan **154/154 lolos**
+   - `npm run test:api` → harapan **156/156 lolos**
    - `npm run test:render` → harapan **47/47 lolos**
    - bila menambah fitur, **tambahkan seksi tesnya** di `api-test.mjs` / `ssr-test.mjs`
      mengikuti gaya yang ada (fungsi `ok()` / `bad()`, judul seksi `=== N. ... ===`).
@@ -683,9 +692,16 @@ di README, info versi build (`/api/version`,
 - Panel **Cadangan & Pemulihan Database** di Manajemen User (admin): unduh cadangan `.db`, pulihkan dengan konfirmasi
   ketik `PULIHKAN`, info DB (ukuran, jumlah per tabel, daftar `data/backups/`, deteksi systemd), overlay tunggu restart.
 - Endpoint admin-only `GET /api/admin/database/info|backup`, `POST /api/admin/database/restore` — keputusan rinci **§6.11**.
-- Tes: Seksi **8B** `api-test.mjs` (+5 → **154/154**) dan Seksi **22** `ssr-test.mjs` (+1 → **47/47**); mutasi
+- Tes: Seksi **8B** `api-test.mjs` (+5) dan Seksi **22** `ssr-test.mjs` (+1 → **47/47**); mutasi
   "hapus `requireAdmin` di unduh cadangan" terbukti membuat tes gagal. `dist/` di-build ulang. `.github/workflows/`
   tidak disentuh; `update-proxmox.sh` tidak dijalankan.
+- **Audit menyeluruh sebelum update Proxmox** (permintaan pemilik) menemukan & memperbaiki: (1) body JSON rusak /
+  > 5 MB dijawab **halaman HTML Express berisi stack trace** → kini error handler terpusat JSON Bahasa Indonesia
+  (400/413/500); (2) rute `/api/*` tak dikenal jatuh ke fallback SPA (**200 + index.html**) → kini **404 JSON**;
+  (3) unggahan pemulihan ditampung di RAM → streaming; (4) berkas sementara cadangan bocor saat koneksi putus →
+  `pipeline()`. Seksi **0B** `api-test.mjs` (+2 → **156/156**). Diperiksa & dinyatakan aman: skrip update
+  (tidak menyentuh `sebelum-pulihkan-*`), proteksi admin terakhir, template import, tidak ada URL localhost di
+  frontend, referensi aset `dist/index.html` lengkap.
 
 **Belum dikerjakan / kandidat sesi berikutnya:**
 
@@ -712,7 +728,7 @@ npm run dev                              # Vite di :3000, proxy /api → :3001
 
 # Uji
 PORT=3001 node server/index.js &         # server untuk pengujian
-npm test                                 # 154 tes API + 47 tes render
+npm test                                 # 156 tes API + 47 tes render
 npm run test:api ; npm run test:render   # terpisah
 
 # Produksi

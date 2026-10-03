@@ -332,6 +332,7 @@ export function DatabaseBackupPanel() {
                 <li>Database lama disimpan otomatis di <span className="font-mono">data/backups/sebelum-pulihkan-…db</span>.</li>
                 <li>Server akan <strong>memulai ulang</strong>; semua pengguna terputus beberapa detik.</li>
                 <li>Akun login mengikuti isi cadangan — pastikan Anda tahu password admin di dalamnya.</li>
+                <li>Gunakan berkas hasil <strong>Unduh Cadangan</strong> (atau cadangan skrip update / cron). Salinan <span className="font-mono">cp inventory.db</span> saat aplikasi berjalan bisa kehilangan data terbaru yang masih di WAL.</li>
               </ul>
             </div>
             <label className="block mt-3 text-xs font-semibold text-slate-700">
