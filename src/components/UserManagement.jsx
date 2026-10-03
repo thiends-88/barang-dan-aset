@@ -13,10 +13,15 @@ import {
   CheckCircle2,
   Clock,
   Eye,
-  EyeOff
+  EyeOff,
+  DatabaseBackup,
+  HardDriveDownload,
+  HardDriveUpload,
+  Server,
+  Loader2
 } from 'lucide-react';
 import { notify } from '../utils/notify';
-import { ROLE_LABELS, ROLE_DESCRIPTIONS } from '../utils/auth';
+import { ROLE_LABELS, ROLE_DESCRIPTIONS, getToken } from '../utils/auth';
 
 const ROLE_BADGE = {
   admin: 'bg-indigo-100 text-indigo-700 border-indigo-200',
@@ -32,6 +37,377 @@ const ROLE_OPTIONS = Object.entries(ROLE_LABELS).map(([value, label]) => ({
 }));
 
 const emptyForm = { username: '', nama_lengkap: '', password: '', role: 'viewer', status: 'aktif' };
+
+const formatBytes = (n) => {
+  const v = Number(n) || 0;
+  if (v < 1024) return `${v} B`;
+  if (v < 1024 * 1024) return `${(v / 1024).toFixed(1)} KB`;
+  return `${(v / (1024 * 1024)).toFixed(2)} MB`;
+};
+
+const COUNT_LABELS = {
+  items: 'Barang',
+  categories: 'Kategori',
+  customers: 'Pelanggan',
+  fo_sites: 'Titik FO',
+  tower_sites: 'Site Tower',
+  transactions: 'Transaksi',
+  users: 'User',
+  technicians: 'Teknisi',
+  technician_loans: 'Bon Teknisi'
+};
+
+/**
+ * Panel Cadangan & Pemulihan Database — hanya untuk Administrator.
+ * - Unduh Cadangan: salinan konsisten .db (VACUUM INTO + integrity_check) dari server.
+ * - Pulihkan: unggah berkas .db hasil cadangan; server mencadangkan DB lama ke data/backups,
+ *   menukar berkas, lalu keluar supaya systemd (Restart=always) memuat ulang dengan DB baru.
+ */
+export function DatabaseBackupPanel() {
+  const [info, setInfo] = useState(null);
+  const [infoError, setInfoError] = useState('');
+  const [loadingInfo, setLoadingInfo] = useState(true);
+  const [downloading, setDownloading] = useState(false);
+  const [file, setFile] = useState(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmWord, setConfirmWord] = useState('');
+  const [restoring, setRestoring] = useState(false);
+  const [restoreError, setRestoreError] = useState('');
+  const [restartState, setRestartState] = useState(null); // null | 'menunggu' | 'siap'
+  const fileInputRef = React.useRef(null);
+
+  const kataKonfirmasi = info?.kataKonfirmasi || 'PULIHKAN';
+
+  const fetchInfo = useCallback(async () => {
+    setLoadingInfo(true);
+    setInfoError('');
+    try {
+      const res = await fetch('/api/admin/database/info');
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'Gagal memuat info database');
+      setInfo(data.data);
+    } catch (err) {
+      setInfoError(err.message || 'Gagal terhubung ke server');
+    } finally {
+      setLoadingInfo(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchInfo();
+  }, [fetchInfo]);
+
+  // Unduhan dipicu lewat tautan langsung (bukan fetch → blob → a.click()): browser
+  // memblokir unduhan yang dimulai SETELAH `await` karena gestur klik sudah kedaluwarsa
+  // (terutama di iframe lintas-origin seperti preview). Server menjawab dengan
+  // Content-Disposition: attachment, jadi halaman tidak berpindah. Token dikirim lewat
+  // query `_token` — saluran yang memang sudah dipakai semua request GET aplikasi ini.
+  const [backupHref, setBackupHref] = useState('');
+  useEffect(() => {
+    const token = getToken();
+    setBackupHref(token ? `/api/admin/database/backup?_token=${encodeURIComponent(token)}` : '');
+  }, []);
+
+  const handleDownloadClick = (e) => {
+    if (!backupHref) {
+      e.preventDefault();
+      notify('Sesi tidak ditemukan — silakan login ulang', 'error');
+      return;
+    }
+    // Segarkan token tepat saat klik (bila sesi diperbarui sejak panel dibuka)
+    const token = getToken();
+    if (token) e.currentTarget.href = `/api/admin/database/backup?_token=${encodeURIComponent(token)}&t=${Date.now()}`;
+    setDownloading(true);
+    notify('Cadangan sedang disiapkan — berkas .db akan muncul di unduhan browser');
+    setTimeout(() => setDownloading(false), 4000);
+  };
+
+  const openConfirm = () => {
+    if (!file) {
+      notify('Pilih berkas cadangan (.db) terlebih dahulu', 'error');
+      return;
+    }
+    setConfirmWord('');
+    setRestoreError('');
+    setConfirmOpen(true);
+  };
+
+  /** Tunggu server hidup kembali (systemd Restart=always), lalu muat ulang halaman. */
+  const waitForRestart = async () => {
+    setRestartState('menunggu');
+    const mulai = Date.now();
+    // Beri waktu proses lama benar-benar keluar dulu
+    await new Promise((r) => setTimeout(r, 2500));
+    while (Date.now() - mulai < 90_000) {
+      try {
+        const res = await fetch(`/api/health?_t=${Date.now()}`, { cache: 'no-store' });
+        if (res.ok) {
+          setRestartState('siap');
+          setTimeout(() => window.location.reload(), 800);
+          return;
+        }
+      } catch { /* server masih mati, coba lagi */ }
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+    setRestartState('gagal');
+  };
+
+  const handleRestore = async () => {
+    if (!file || confirmWord.trim() !== kataKonfirmasi) return;
+    setRestoring(true);
+    setRestoreError('');
+    try {
+      const res = await fetch(`/api/admin/database/restore?konfirmasi=${encodeURIComponent(kataKonfirmasi)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: file
+      });
+      let data = null;
+      try { data = await res.json(); } catch { /* respons kosong */ }
+      if (!res.ok || !data?.success) {
+        throw new Error(data?.error || `Pemulihan gagal (HTTP ${res.status})`);
+      }
+      notify(data.message || 'Database berhasil dipulihkan');
+      setConfirmOpen(false);
+      setFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      await waitForRestart();
+    } catch (err) {
+      setRestoreError(err.message || 'Gagal terhubung ke server');
+    } finally {
+      setRestoring(false);
+    }
+  };
+
+  const counts = info?.counts || {};
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 sm:p-5" data-testid="panel-cadangan-database">
+      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+        <div>
+          <h3 className="text-base font-black text-slate-800 flex items-center gap-2">
+            <DatabaseBackup className="w-5 h-5 text-indigo-600" />
+            Cadangan &amp; Pemulihan Database
+          </h3>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Unduh salinan lengkap database (barang, pelanggan, FO, tower, transaksi, bon teknisi, user) atau pulihkan dari berkas cadangan. Khusus Administrator.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={fetchInfo}
+          disabled={loadingInfo}
+          className="p-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-500 transition self-start disabled:opacity-50"
+          title="Muat ulang info database"
+        >
+          <RefreshCw className={`w-4 h-4 ${loadingInfo ? 'animate-spin' : ''}`} />
+        </button>
+      </div>
+
+      {infoError && (
+        <div className="mt-3 text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2.5 flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>{infoError}</span>
+        </div>
+      )}
+
+      {/* Info database aktif */}
+      <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5">
+          <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2 flex items-center gap-1.5">
+            <Server className="w-3.5 h-3.5" /> Database Aktif
+          </div>
+          {info ? (
+            <>
+              <div className="text-xs text-slate-700 space-y-1">
+                <div className="flex justify-between gap-3"><span className="text-slate-500">Ukuran</span><span className="font-semibold">{formatBytes(info.ukuran)}{info.ukuranWal > 0 ? ` (+${formatBytes(info.ukuranWal)} WAL)` : ''}</span></div>
+                <div className="flex justify-between gap-3"><span className="text-slate-500">Terakhir diubah</span><span className="font-semibold">{info.diubah || '—'}</span></div>
+                <div className="flex justify-between gap-3"><span className="text-slate-500">Mode jurnal</span><span className="font-mono font-semibold uppercase">{info.journalMode || '—'}</span></div>
+                <div className="flex justify-between gap-3">
+                  <span className="text-slate-500">Layanan systemd</span>
+                  <span className={`font-semibold ${info.systemd ? 'text-emerald-700' : 'text-amber-700'}`}>{info.systemd ? 'Terdeteksi (Restart otomatis)' : 'Tidak terdeteksi'}</span>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-1.5 mt-3">
+                {Object.entries(counts).filter(([, v]) => v !== null && v !== undefined).map(([k, v]) => (
+                  <span key={k} className="px-2 py-0.5 rounded-full bg-white border border-slate-200 text-[11px] text-slate-600">
+                    <span className="font-bold text-slate-800">{v}</span> {COUNT_LABELS[k] || k}
+                  </span>
+                ))}
+              </div>
+            </>
+          ) : (
+            <div className="text-xs text-slate-400">{loadingInfo ? 'Memuat info database...' : 'Info database tidak tersedia.'}</div>
+          )}
+        </div>
+
+        <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5">
+          <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2">Cadangan Otomatis di Server (data/backups)</div>
+          {info?.cadangan?.length ? (
+            <ul className="text-xs text-slate-700 space-y-1 max-h-32 overflow-y-auto pr-1">
+              {info.cadangan.map((c) => (
+                <li key={c.nama} className="flex justify-between gap-3">
+                  <span className="font-mono truncate" title={c.nama}>{c.nama}</span>
+                  <span className="text-slate-500 whitespace-nowrap">{formatBytes(c.ukuran)} · {c.dibuat}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="text-xs text-slate-400">Belum ada cadangan otomatis. Berkas dibuat oleh skrip update server dan setiap kali pemulihan dijalankan.</div>
+          )}
+        </div>
+      </div>
+
+      {/* Aksi */}
+      <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <div className="border border-indigo-200 bg-indigo-50/60 rounded-xl p-3.5">
+          <div className="font-bold text-sm text-slate-800 flex items-center gap-2">
+            <HardDriveDownload className="w-4 h-4 text-indigo-600" /> Unduh Cadangan
+          </div>
+          <p className="text-[11px] text-slate-600 mt-1 mb-3">
+            Membuat salinan konsisten database saat ini (aman walau aplikasi sedang dipakai) dan mengunduhnya sebagai berkas <span className="font-mono">.db</span>. Simpan di tempat aman secara berkala.
+          </p>
+          <a
+            href={backupHref || '#'}
+            download
+            onClick={handleDownloadClick}
+            aria-disabled={!backupHref}
+            className={`inline-flex px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl items-center gap-2 shadow-sm transition ${!backupHref ? 'opacity-50 pointer-events-none' : ''}`}
+          >
+            {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <HardDriveDownload className="w-4 h-4" />}
+            {downloading ? 'Menyiapkan cadangan...' : 'Unduh Cadangan (.db)'}
+          </a>
+          <p className="text-[10px] text-slate-500 mt-2">
+            Tidak muncul di unduhan browser (mis. aplikasi dibuka di dalam jendela pratinjau tersemat)?{' '}
+            <a
+              href={backupHref || '#'}
+              target="_blank"
+              rel="noopener"
+              onClick={(e) => { if (!backupHref) e.preventDefault(); }}
+              className="font-semibold text-indigo-600 hover:underline"
+            >
+              Unduh lewat tab baru
+            </a>
+            {' '}atau buka aplikasi langsung di tab browser penuh.
+          </p>
+        </div>
+
+        <div className="border border-rose-200 bg-rose-50/60 rounded-xl p-3.5">
+          <div className="font-bold text-sm text-slate-800 flex items-center gap-2">
+            <HardDriveUpload className="w-4 h-4 text-rose-600" /> Pulihkan Database
+          </div>
+          <p className="text-[11px] text-slate-600 mt-1 mb-3">
+            Mengganti <strong>seluruh</strong> data saat ini dengan isi berkas cadangan. Database lama otomatis disimpan ke <span className="font-mono">data/backups/</span>, lalu server memulai ulang.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".db,.sqlite,.sqlite3,application/vnd.sqlite3,application/x-sqlite3"
+              onChange={(e) => setFile(e.target.files?.[0] || null)}
+              className="flex-1 min-w-0 text-xs text-slate-600 file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border-0 file:bg-white file:text-xs file:font-semibold file:text-slate-700 file:shadow-sm"
+            />
+            <button
+              type="button"
+              onClick={openConfirm}
+              disabled={!file || restoring}
+              className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs rounded-xl flex items-center justify-center gap-2 shadow-sm transition disabled:opacity-50"
+            >
+              <HardDriveUpload className="w-4 h-4" /> Pulihkan…
+            </button>
+          </div>
+          {info && !info.systemd && (
+            <div className="mt-2.5 text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2 flex items-start gap-1.5">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+              <span>Server tidak terdeteksi berjalan sebagai layanan systemd. Setelah pemulihan, proses akan berhenti dan <strong>harus dinyalakan ulang manual</strong> (<span className="font-mono">npm start</span>). Di produksi pastikan unit systemd memakai <span className="font-mono">Restart=always</span>.</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Modal konfirmasi pemulihan */}
+      {confirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm">
+          <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 p-5">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-11 h-11 rounded-full bg-rose-100 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-rose-600" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-800">Pulihkan Database?</h3>
+                <p className="text-xs text-slate-500">Semua data saat ini akan diganti dengan isi berkas cadangan.</p>
+              </div>
+            </div>
+            <div className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 space-y-1.5">
+              <div>Berkas: <span className="font-mono font-bold break-all">{file?.name}</span> ({formatBytes(file?.size)})</div>
+              <ul className="list-disc pl-4 space-y-0.5">
+                <li>Database lama disimpan otomatis di <span className="font-mono">data/backups/sebelum-pulihkan-…db</span>.</li>
+                <li>Server akan <strong>memulai ulang</strong>; semua pengguna terputus beberapa detik.</li>
+                <li>Akun login mengikuti isi cadangan — pastikan Anda tahu password admin di dalamnya.</li>
+                <li>Gunakan berkas hasil <strong>Unduh Cadangan</strong> (atau cadangan skrip update / cron). Salinan <span className="font-mono">cp inventory.db</span> saat aplikasi berjalan bisa kehilangan data terbaru yang masih di WAL.</li>
+              </ul>
+            </div>
+            <label className="block mt-3 text-xs font-semibold text-slate-700">
+              Ketik <span className="font-mono text-rose-700">{kataKonfirmasi}</span> untuk melanjutkan
+              <input
+                type="text"
+                value={confirmWord}
+                onChange={(e) => setConfirmWord(e.target.value)}
+                autoFocus
+                className="mt-1 w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-mono focus:border-rose-400 outline-none"
+                placeholder={kataKonfirmasi}
+              />
+            </label>
+            {restoreError && (
+              <div className="mt-2 text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2">{restoreError}</div>
+            )}
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                type="button"
+                onClick={() => setConfirmOpen(false)}
+                disabled={restoring}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl transition disabled:opacity-50"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleRestore}
+                disabled={restoring || confirmWord.trim() !== kataKonfirmasi}
+                className="px-5 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-xl transition disabled:opacity-50 flex items-center gap-2"
+              >
+                {restoring && <Loader2 className="w-4 h-4 animate-spin" />}
+                {restoring ? 'Memulihkan...' : 'Ya, Pulihkan Database'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Overlay menunggu server hidup kembali */}
+      {restartState && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
+          <div className="w-full max-w-sm bg-white rounded-2xl shadow-2xl border border-slate-200 p-6 text-center">
+            {restartState === 'gagal' ? (
+              <>
+                <AlertTriangle className="w-8 h-8 text-amber-500 mx-auto mb-3" />
+                <h3 className="font-bold text-slate-800">Server belum merespons</h3>
+                <p className="text-xs text-slate-500 mt-1">Database sudah ditukar, tetapi server belum hidup kembali dalam 90 detik. Nyalakan ulang layanan secara manual, lalu muat ulang halaman ini.</p>
+                <button type="button" onClick={() => window.location.reload()} className="mt-4 px-4 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl">Muat ulang sekarang</button>
+              </>
+            ) : (
+              <>
+                {restartState === 'siap' ? <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto mb-3" /> : <Loader2 className="w-8 h-8 text-indigo-600 animate-spin mx-auto mb-3" />}
+                <h3 className="font-bold text-slate-800">{restartState === 'siap' ? 'Server sudah hidup kembali' : 'Database dipulihkan — menunggu server memulai ulang…'}</h3>
+                <p className="text-xs text-slate-500 mt-1">{restartState === 'siap' ? 'Memuat ulang halaman…' : 'Jangan tutup halaman ini. Biasanya butuh 5–10 detik.'}</p>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function UserManagement({ currentUser }) {
   const [users, setUsers] = useState([]);
@@ -348,6 +724,9 @@ export default function UserManagement({ currentUser }) {
           </table>
         </div>
       </div>
+
+      {/* Cadangan & Pemulihan Database — hanya Administrator */}
+      {currentUser?.role === 'admin' && <DatabaseBackupPanel />}
 
       {/* Modal Tambah / Edit */}
       {isFormOpen && (

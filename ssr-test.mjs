@@ -311,6 +311,32 @@ console.log('\n=== 21. Bon / Barang Bawaan Teknisi ===');
   }
 }
 
+// ============================================================
+// 22. CADANGAN & PEMULIHAN DATABASE (panel admin di Manajemen User)
+// ============================================================
+console.log('\n=== 22. Cadangan & Pemulihan Database ===');
+{
+  try {
+    const UM = (await vite.ssrLoadModule('/src/components/UserManagement.jsx')).default;
+    const asAdmin = renderToString(React.createElement(UM, { currentUser: { id: 1, username: 'admin', nama_lengkap: 'Administrator Sistem', role: 'admin' } }));
+    const asStaff = renderToString(React.createElement(UM, { currentUser: { id: 2, username: 'gudang', nama_lengkap: 'Staff Gudang', role: 'staff_gudang' } }));
+    const serverSrc = fs.readFileSync('server/index.js', 'utf-8');
+
+    const adminLihat = ['Cadangan &amp; Pemulihan Database', 'Unduh Cadangan (.db)', 'Pulihkan Database', 'data/backups'].every((t) => asAdmin.includes(t));
+    const staffTidak = !asStaff.includes('Pemulihan Database') && !asStaff.includes('Unduh Cadangan');
+    const endpointAda = ['/api/admin/database/info', '/api/admin/database/backup', '/api/admin/database/restore'].every((p) => serverSrc.includes(`'${p}'`))
+      && /pattern: \/\^\\\/api\\\/admin\(\\\/\|\$\)\/, roles: \['admin'\]/.test(serverSrc)
+      && serverSrc.includes('process.exit(0)'); // keluar agar systemd Restart=always memuat DB baru
+    if (adminLihat && staffTidak && endpointAda) {
+      sectionOk('22.1 Panel Cadangan & Pemulihan Database tampil hanya untuk admin; endpoint admin-only + restart via systemd tersedia');
+    } else {
+      sectionBad(`22.1 Panel Cadangan & Pemulihan Database — adminLihat=${adminLihat} staffTidak=${staffTidak} endpointAda=${endpointAda}`);
+    }
+  } catch (e) {
+    sectionBad(`22.1 render panel Cadangan & Pemulihan gagal: ${String(e.message).split('\n')[0]}`);
+  }
+}
+
 await vite.close();
 console.log(`\nHasil: ${pass} lolos, ${fail} gagal`);
 process.exit(fail ? 1 : 0);

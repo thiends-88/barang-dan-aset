@@ -5,8 +5,8 @@
 > pernah kena, dan hal-hal yang belum selesai — supaya sesi baru tidak mengulang debat yang
 > sama atau merusak hal yang sudah disepakati.
 >
-> Terakhir diperbarui: **1 Oktober 2026** · basis commit: `f1e7e84` (merge PR #9)
-> Repo: <https://github.com/thiends-88/barang-dan-aset> · Branch kerja sesi terakhir: `arena/01a0f6d1-barang-dan-aset`
+> Terakhir diperbarui: **3 Oktober 2026** · basis commit: `f67b5c1` (merge PR #13)
+> Repo: <https://github.com/thiends-88/barang-dan-aset> · Branch kerja sesi terakhir: `arena/01a10104-barang-dan-aset`
 > Sesi baru cukup diminta: *"Baca docs/HANDOFF-ARENA.md lalu lanjutkan dari §12."*
 
 ---
@@ -101,8 +101,8 @@ update-proxmox.sh      → skrip update server: cadangkan DB → reset --hard �
 .github/workflows/ci.yml → workflow CI GitHub Actions (AKTIF — JANGAN diubah commit App Arena, lihat §11)
 docs/ci.yml              → salinan rujukan workflow CI (tempat aman bila sesi Arena perlu mengusulkan edit CI)
 
-api-test.mjs       → 78 tes integrasi API (integritas stok, auth, peran, waktu, scan tertaut, import massal, versi)
-ssr-test.mjs       → 18 smoke test render + 11 tes regresi Navbar (Seksi 19), data asli API
+api-test.mjs       → 156 tes integrasi API (integritas stok, auth, peran, waktu, scan tertaut, import massal, versi, bon teknisi, cadangan DB)
+ssr-test.mjs       → 47 tes render (18 smoke + 11 regresi Navbar + Seksi 20/21/22), data asli API
 contoh-import/     → barang.csv, pelanggan.csv (contoh file import)
 data/inventory.db  → database (TIDAK dilacak git sejak PR #5 — lihat §7)
 data/backups/      → cadangan otomatis dari update-proxmox.sh (diabaikan git)
@@ -147,8 +147,8 @@ reverse proxy) ada di `README.md` bagian **Deploy ke Proxmox**.
 ```bash
 PORT=3001 node server/index.js &     # siapkan server untuk pengujian
 npm test                             # = api-test.mjs && ssr-test.mjs
-npm run test:api                     # 149 tes integrasi API
-npm run test:render                  # 46 tes render (18 smoke + 11 regresi Navbar + 1 Seksi 20 + 16 Seksi 21 Bon Teknisi)
+npm run test:api                     # 156 tes integrasi API
+npm run test:render                  # 47 tes render (18 smoke + 11 regresi Navbar + 1 Seksi 20 + 16 Seksi 21 Bon Teknisi + 1 Seksi 22 Cadangan DB)
 ```
 
 > Hasil terakhir (sesi `arena/01a0edc1`, 29 Sep 2026): **API 78/78 lolos, SSR 29/29 lolos**
@@ -414,6 +414,43 @@ itu wajar karena perbedaan versi toolchain, bukan bug.
 
 ---
 
+### 6.11 Cadangan & Pemulihan Database dari UI (sesi `arena/01a10104`)
+
+- Panel **Cadangan & Pemulihan Database** ada di bawah tabel *Manajemen User* (`DatabaseBackupPanel`
+  di `UserManagement.jsx`), **hanya dirender untuk admin**. Endpoint: `GET /api/admin/database/info`,
+  `GET /api/admin/database/backup`, `POST /api/admin/database/restore?konfirmasi=PULIHKAN`
+  (body biner `application/octet-stream`, maks 512 MB). Semua `/api/admin/*` admin-only — GET pun dicek
+  eksplisit (`requireAdmin`) karena middleware umum hanya membatasi non-GET.
+- **Cadangan** = `VACUUM INTO` ke berkas sementara `data/.backup-*.db` → `integrity_check` → stream →
+  hapus. Jangan ganti dengan `cp inventory.db` (data terbaru bisa masih di WAL).
+- **Pemulihan** divalidasi berlapis sebelum menyentuh DB aktif: header `SQLite format 3`, `integrity_check`,
+  10 tabel inti wajib ada (`RESTORE_REQUIRED_TABLES`; tabel Bon Teknisi boleh tidak ada — dibuat ulang
+  `initDb()`), dan **harus ada akun admin aktif** di dalamnya (mencegah terkunci). Lalu: DB lama disimpan
+  `data/backups/sebelum-pulihkan-<stamp>.db`, `wal_checkpoint(TRUNCATE)`, `db.close()`, hapus `-wal/-shm`,
+  `rename` kandidat → `inventory.db`, balas 200, **`process.exit(0)` setelah 700 ms**.
+- **Keputusan sadar: proses keluar, bukan membuka ulang koneksi di tempat.** `db` adalah singleton
+  `DatabaseSync` yang di-import di banyak modul + statement yang sudah di-prepare; satu-satunya cara
+  yang pasti bersih adalah restart proses. Karena itu fitur ini **hanya aman di systemd `Restart=always`**
+  (README §3). Server melaporkan `systemd: Boolean(process.env.INVOCATION_ID)`; UI menampilkan peringatan
+  kuning bila tidak terdeteksi, dan setelah pemulihan UI mem-poll `/api/health` hingga 90 detik lalu reload.
+- Selama jeda keluar, flag `serverRestarting` membuat semua `/api/*` (kecuali `/api/health`) dibalas **503**
+  — jangan hapus middleware ini (dipasang di awal rantai, sebelum autentikasi).
+- Unggahan pemulihan **dialirkan langsung ke berkas sementara** (`pipeline(req, Transform pembatas, WriteStream)`),
+  bukan `express.raw` — LXC Proxmox sering ber-RAM kecil; batas 512 MB ditegakkan per-chunk + `Content-Length` (413).
+  Pengiriman cadangan juga memakai `pipeline()` agar berkas sementara pasti dihapus walau koneksi putus.
+- Tombol *Unduh Cadangan* adalah **tautan langsung** (`<a href=/api/admin/database/backup?_token=…>`), bukan
+  `fetch → blob → a.click()`: unduhan yang dipicu setelah `await` kehilangan gestur klik dan diblokir browser
+  (terjadi di iframe pratinjau Arena) padahal notifikasi sukses tetap tampil.
+- Salinan `cp inventory.db` saat server hidup **kehilangan data yang masih di WAL** (diuji: pelanggan baru hilang) —
+  pulihkan hanya dari berkas VACUUM INTO (Unduh Cadangan / skrip update / cron). Pemulihan dari skema lama
+  (tanpa tabel Bon Teknisi, tanpa kolom migrasi) sudah diuji: `initDb()` membuat ulang semuanya saat restart.
+- Tes: Seksi **8B** `api-test.mjs` (5 tes: info, 403 non-admin di 3 endpoint, cadangan valid, 4 penolakan
+  konfirmasi/format, penolakan SQLite asing & tanpa admin + DB utuh + tanpa berkas sementara) dan Seksi **22**
+  `ssr-test.mjs`. **Jalur sukses sengaja tidak di-test otomatis** (akan mematikan server tes); diverifikasi
+  manual dengan loop `while true; do node server/index.js; done` sebagai pengganti systemd — berhasil.
+
+---
+
 ## 7. Database & data
 
 - Tabel: `categories`, `items`, `customers`, `customer_items`, `fo_sites`, `fo_items`,
@@ -484,8 +521,8 @@ itu wajar karena perbedaan versi toolchain, bukan bug.
 1. `npm install` (bila `package.json` berubah) —
    dependensi baru wajib tercermin di `package-lock.json`.
 2. Jalankan server di 3001, lalu:
-   - `npm run test:api` → harapan **149/149 lolos**
-   - `npm run test:render` → harapan **46/46 lolos**
+   - `npm run test:api` → harapan **156/156 lolos**
+   - `npm run test:render` → harapan **47/47 lolos**
    - bila menambah fitur, **tambahkan seksi tesnya** di `api-test.mjs` / `ssr-test.mjs`
      mengikuti gaya yang ada (fungsi `ok()` / `bad()`, judul seksi `=== N. ... ===`).
 3. `npm run build` bila menyentuh frontend; pastikan `dist/` ter-commit.
@@ -646,6 +683,26 @@ di README, info versi build (`/api/version`,
 - Belum terverifikasi visual di browser sungguhan (sandbox tanpa Chromium): tampilan responsif modal, hasil cetak
   A4, dan lebar Navbar 9 menu perlu dicek pemilik.
 
+**Selesai di sesi `arena/01a0ffc7` (PR #13):** kolom **Kategori Mutasi** pada riwayat pemindai barcode
+(`BarcodeScannerModal.jsx`).
+
+**Selesai di sesi `arena/01a10104` (Cadangan & Pemulihan Database dari UI):**
+- Rekonstruksi pekerjaan sesi sebelumnya yang hilang karena belum di-push (hanya PR #13 yang selamat) — pelajaran §2
+  "push lebih awal & sering" terbukti lagi.
+- Panel **Cadangan & Pemulihan Database** di Manajemen User (admin): unduh cadangan `.db`, pulihkan dengan konfirmasi
+  ketik `PULIHKAN`, info DB (ukuran, jumlah per tabel, daftar `data/backups/`, deteksi systemd), overlay tunggu restart.
+- Endpoint admin-only `GET /api/admin/database/info|backup`, `POST /api/admin/database/restore` — keputusan rinci **§6.11**.
+- Tes: Seksi **8B** `api-test.mjs` (+5) dan Seksi **22** `ssr-test.mjs` (+1 → **47/47**); mutasi
+  "hapus `requireAdmin` di unduh cadangan" terbukti membuat tes gagal. `dist/` di-build ulang. `.github/workflows/`
+  tidak disentuh; `update-proxmox.sh` tidak dijalankan.
+- **Audit menyeluruh sebelum update Proxmox** (permintaan pemilik) menemukan & memperbaiki: (1) body JSON rusak /
+  > 5 MB dijawab **halaman HTML Express berisi stack trace** → kini error handler terpusat JSON Bahasa Indonesia
+  (400/413/500); (2) rute `/api/*` tak dikenal jatuh ke fallback SPA (**200 + index.html**) → kini **404 JSON**;
+  (3) unggahan pemulihan ditampung di RAM → streaming; (4) berkas sementara cadangan bocor saat koneksi putus →
+  `pipeline()`. Seksi **0B** `api-test.mjs` (+2 → **156/156**). Diperiksa & dinyatakan aman: skrip update
+  (tidak menyentuh `sebelum-pulihkan-*`), proteksi admin terakhir, template import, tidak ada URL localhost di
+  frontend, referensi aset `dist/index.html` lengkap.
+
 **Belum dikerjakan / kandidat sesi berikutnya:**
 
 0. Bon Teknisi: opsi **tambah barang ke bon yang sudah berjalan**, pembatasan teknisi hanya melihat/merealisasi bon sendiri,
@@ -657,6 +714,8 @@ di README, info versi build (`/api/version`,
      bila bukan WIB) di unit systemd.
 2. **Koreksi stempel waktu historis** yang masih UTC (pergeseran +7 jam untuk data sebelum PR #3)
    bila sewaktu-waktu dikehendaki pemilik pada database produksi.
+3. **Cadangan DB lanjutan** (belum diminta): pulihkan langsung dari daftar `data/backups/` tanpa unggah,
+   jadwal cadangan otomatis dari aplikasi (saat ini lewat cron README), dan pembersihan cadangan lama.
 
 ---
 
@@ -669,7 +728,7 @@ npm run dev                              # Vite di :3000, proxy /api → :3001
 
 # Uji
 PORT=3001 node server/index.js &         # server untuk pengujian
-npm test                                 # 149 tes API + 46 tes render
+npm test                                 # 156 tes API + 47 tes render
 npm run test:api ; npm run test:render   # terpisah
 
 # Produksi
