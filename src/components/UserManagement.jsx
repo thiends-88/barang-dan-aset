@@ -21,7 +21,7 @@ import {
   Loader2
 } from 'lucide-react';
 import { notify } from '../utils/notify';
-import { ROLE_LABELS, ROLE_DESCRIPTIONS } from '../utils/auth';
+import { ROLE_LABELS, ROLE_DESCRIPTIONS, getToken } from '../utils/auth';
 
 const ROLE_BADGE = {
   admin: 'bg-indigo-100 text-indigo-700 border-indigo-200',
@@ -97,33 +97,29 @@ export function DatabaseBackupPanel() {
     fetchInfo();
   }, [fetchInfo]);
 
-  const handleDownload = async () => {
-    setDownloading(true);
-    try {
-      const res = await fetch('/api/admin/database/backup');
-      if (!res.ok) {
-        let pesan = 'Gagal membuat cadangan';
-        try { pesan = (await res.json()).error || pesan; } catch { /* bukan JSON */ }
-        throw new Error(pesan);
-      }
-      const blob = await res.blob();
-      const disposition = res.headers.get('Content-Disposition') || '';
-      const match = /filename="?([^";]+)"?/.exec(disposition);
-      const filename = res.headers.get('X-Backup-Filename') || (match ? match[1] : 'sim-aset-cadangan.db');
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 10_000);
-      notify(`Cadangan ${filename} (${formatBytes(blob.size)}) berhasil diunduh`);
-    } catch (err) {
-      notify(err.message || 'Gagal mengunduh cadangan', 'error');
-    } finally {
-      setDownloading(false);
+  // Unduhan dipicu lewat tautan langsung (bukan fetch → blob → a.click()): browser
+  // memblokir unduhan yang dimulai SETELAH `await` karena gestur klik sudah kedaluwarsa
+  // (terutama di iframe lintas-origin seperti preview). Server menjawab dengan
+  // Content-Disposition: attachment, jadi halaman tidak berpindah. Token dikirim lewat
+  // query `_token` — saluran yang memang sudah dipakai semua request GET aplikasi ini.
+  const [backupHref, setBackupHref] = useState('');
+  useEffect(() => {
+    const token = getToken();
+    setBackupHref(token ? `/api/admin/database/backup?_token=${encodeURIComponent(token)}` : '');
+  }, []);
+
+  const handleDownloadClick = (e) => {
+    if (!backupHref) {
+      e.preventDefault();
+      notify('Sesi tidak ditemukan — silakan login ulang', 'error');
+      return;
     }
+    // Segarkan token tepat saat klik (bila sesi diperbarui sejak panel dibuka)
+    const token = getToken();
+    if (token) e.currentTarget.href = `/api/admin/database/backup?_token=${encodeURIComponent(token)}&t=${Date.now()}`;
+    setDownloading(true);
+    notify('Cadangan sedang disiapkan — berkas .db akan muncul di unduhan browser');
+    setTimeout(() => setDownloading(false), 4000);
   };
 
   const openConfirm = () => {
@@ -271,15 +267,17 @@ export function DatabaseBackupPanel() {
           <p className="text-[11px] text-slate-600 mt-1 mb-3">
             Membuat salinan konsisten database saat ini (aman walau aplikasi sedang dipakai) dan mengunduhnya sebagai berkas <span className="font-mono">.db</span>. Simpan di tempat aman secara berkala.
           </p>
-          <button
-            type="button"
-            onClick={handleDownload}
-            disabled={downloading}
-            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl flex items-center gap-2 shadow-sm transition disabled:opacity-50"
+          <a
+            href={backupHref || '#'}
+            download
+            onClick={handleDownloadClick}
+            aria-disabled={!backupHref}
+            className={`inline-flex px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl items-center gap-2 shadow-sm transition ${!backupHref ? 'opacity-50 pointer-events-none' : ''}`}
           >
             {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <HardDriveDownload className="w-4 h-4" />}
             {downloading ? 'Menyiapkan cadangan...' : 'Unduh Cadangan (.db)'}
-          </button>
+          </a>
+          <p className="text-[10px] text-slate-500 mt-2">Bila browser tidak menampilkan unduhan (mis. di jendela pratinjau tersemat), buka aplikasi di tab browser penuh lalu klik lagi.</p>
         </div>
 
         <div className="border border-rose-200 bg-rose-50/60 rounded-xl p-3.5">
