@@ -3,7 +3,8 @@ import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import db, { initDb } from './db.js';
+import db, { initDb, DB_PATH, BACKUP_DIR } from './db.js';
+import { DatabaseSync } from 'node:sqlite';
 import { seedData, seedUsers } from './seed.js';
 import { ROLES, hashPassword, verifyPassword, signToken, verifyToken } from './auth.js';
 import { getGitInfo, readPackageVersion, localStamp } from '../scripts/build-info.mjs';
@@ -67,6 +68,16 @@ app.use((req, res, next) => {
   next();
 });
 
+// Setelah pemulihan database, koneksi DB sudah ditutup & proses akan keluar —
+// tolak semua request API lain sementara (lihat blok CADANGAN & PEMULIHAN DATABASE).
+let serverRestarting = false;
+app.use((req, res, next) => {
+  if (serverRestarting && req.path.startsWith('/api/') && req.path !== '/api/health') {
+    return res.status(503).json({ success: false, error: 'Server sedang memulai ulang setelah pemulihan database. Coba lagi beberapa detik.' });
+  }
+  next();
+});
+
 // ==========================================
 // MIDDLEWARE OTENTIKASI & HIRARKI PERAN
 // ==========================================
@@ -106,6 +117,7 @@ app.get('/api/version', (req, res) => {
 const WRITE_RULES = [
   { pattern: /^\/api\/users(\/|$)/, roles: ['admin'] },
   { pattern: /^\/api\/reset-seed$/, roles: ['admin'] },
+  { pattern: /^\/api\/admin(\/|$)/, roles: ['admin'] },
   // Bon Teknisi: realisasi pemasangan boleh dicatat teknisi sendiri; bawa barang
   // (stok gudang keluar), pengembalian, dan pembatalan hanya admin/staff gudang.
   { pattern: /^\/api\/technician-loans\/\d+\/install$/, roles: ['admin', 'staff_gudang', 'teknisi'] },
@@ -3710,6 +3722,233 @@ app.post('/api/reset-seed', (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+// ==========================================
+// CADANGAN & PEMULIHAN DATABASE (khusus Administrator)
+// ==========================================
+// - GET  /api/admin/database/info     → ukuran DB, jumlah data per tabel, daftar cadangan, deteksi systemd
+// - GET  /api/admin/database/backup   → unduh salinan konsisten (VACUUM INTO + integrity_check)
+// - POST /api/admin/database/restore  → unggah berkas .db pengganti; DB lama dicadangkan dulu,
+//                                       lalu proses keluar agar systemd (Restart=always) memuat DB baru.
+//
+// Semua akses non-GET ke /api/admin/* sudah dibatasi WRITE_RULES ke peran admin;
+// endpoint GET di sini juga dicek eksplisit karena mengekspos seluruh isi database.
+
+const RESTORE_CONFIRM_WORD = 'PULIHKAN';
+const RESTORE_MAX_BYTES = 512 * 1024 * 1024; // 512 MB
+// Tabel inti yang wajib ada pada berkas yang dipulihkan (tabel baru seperti Bon
+// Teknisi akan dibuat otomatis oleh initDb() saat server menyala kembali).
+const RESTORE_REQUIRED_TABLES = ['categories', 'items', 'customers', 'customer_items', 'fo_sites', 'fo_items', 'tower_sites', 'tower_items', 'transactions', 'users'];
+const SQLITE_MAGIC = 'SQLite format 3\u0000';
+
+function requireAdmin(req, res) {
+  if (req.user?.role === 'admin') return true;
+  res.status(403).json({ success: false, error: 'Akses ditolak: hanya Administrator yang boleh mengelola cadangan database.' });
+  return false;
+}
+
+function stampForFile(d = new Date()) {
+  return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}-${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`;
+}
+
+function ensureBackupDir() {
+  if (!fs.existsSync(BACKUP_DIR)) fs.mkdirSync(BACKUP_DIR, { recursive: true });
+}
+
+/** Buat salinan konsisten DB aktif ke `target` (aman walau mode WAL), wajib lolos integrity_check. */
+function snapshotDatabase(target) {
+  if (fs.existsSync(target)) fs.unlinkSync(target);
+  db.exec(`VACUUM INTO '${target.replace(/'/g, "''")}'`);
+  const check = new DatabaseSync(target, { readOnly: true });
+  try {
+    const row = check.prepare('PRAGMA integrity_check').get();
+    const hasil = row ? Object.values(row)[0] : null;
+    if (hasil !== 'ok') throw new Error(`Salinan cadangan tidak lolos integrity_check: ${hasil}`);
+  } finally {
+    check.close();
+  }
+  return fs.statSync(target).size;
+}
+
+/** Daftar berkas cadangan di data/backups (terbaru dulu). */
+function listBackups() {
+  if (!fs.existsSync(BACKUP_DIR)) return [];
+  return fs.readdirSync(BACKUP_DIR)
+    .filter((f) => f.endsWith('.db'))
+    .map((f) => {
+      const st = fs.statSync(path.join(BACKUP_DIR, f));
+      return { nama: f, ukuran: st.size, dibuat: localStamp(st.mtime) };
+    })
+    .sort((a, b) => (a.dibuat < b.dibuat ? 1 : -1))
+    .slice(0, 20);
+}
+
+function countTables(conn) {
+  const counts = {};
+  for (const t of ['items', 'categories', 'customers', 'fo_sites', 'tower_sites', 'transactions', 'users', 'technicians', 'technician_loans']) {
+    try {
+      counts[t] = conn.prepare(`SELECT COUNT(*) AS c FROM ${t}`).get().c;
+    } catch {
+      counts[t] = null; // tabel belum ada (cadangan versi lama)
+    }
+  }
+  return counts;
+}
+
+/**
+ * Validasi berkas kandidat pemulihan. Mengembalikan { counts, adminAktif } bila sah,
+ * melempar Error berpesan Bahasa Indonesia bila tidak.
+ */
+function validateRestoreCandidate(filePath) {
+  const fd = fs.openSync(filePath, 'r');
+  const head = Buffer.alloc(16);
+  try {
+    fs.readSync(fd, head, 0, 16, 0);
+  } finally {
+    fs.closeSync(fd);
+  }
+  if (head.toString('latin1') !== SQLITE_MAGIC) {
+    throw new Error('Berkas yang diunggah bukan database SQLite (header tidak dikenali).');
+  }
+  const conn = new DatabaseSync(filePath, { readOnly: true });
+  try {
+    const row = conn.prepare('PRAGMA integrity_check').get();
+    const hasil = row ? Object.values(row)[0] : null;
+    if (hasil !== 'ok') throw new Error(`Berkas database rusak (integrity_check: ${hasil}).`);
+
+    const ada = new Set(conn.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((r) => r.name));
+    const hilang = RESTORE_REQUIRED_TABLES.filter((t) => !ada.has(t));
+    if (hilang.length) {
+      throw new Error(`Berkas bukan database SIM-ASET: tabel wajib tidak ditemukan (${hilang.join(', ')}).`);
+    }
+    const adminAktif = conn.prepare("SELECT COUNT(*) AS c FROM users WHERE role = 'admin' AND status = 'aktif'").get().c;
+    if (!adminAktif) {
+      throw new Error('Berkas ditolak: tidak ada akun Administrator aktif di dalamnya — pemulihan akan mengunci semua orang keluar.');
+    }
+    return { counts: countTables(conn), adminAktif };
+  } finally {
+    conn.close();
+  }
+}
+
+app.get('/api/admin/database/info', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const st = fs.existsSync(DB_PATH) ? fs.statSync(DB_PATH) : null;
+    const walPath = `${DB_PATH}-wal`;
+    const walSize = fs.existsSync(walPath) ? fs.statSync(walPath).size : 0;
+    const journal = db.prepare('PRAGMA journal_mode').get();
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({
+      success: true,
+      data: {
+        path: DB_PATH,
+        ukuran: st ? st.size : 0,
+        ukuranWal: walSize,
+        diubah: st ? localStamp(st.mtime) : null,
+        journalMode: journal ? Object.values(journal)[0] : null,
+        counts: countTables(db),
+        cadangan: listBackups(),
+        // systemd mengisi INVOCATION_ID untuk setiap layanan yang dijalankannya.
+        // Pemulihan hanya aman bila proses dihidupkan ulang otomatis (Restart=always).
+        systemd: Boolean(process.env.INVOCATION_ID),
+        kataKonfirmasi: RESTORE_CONFIRM_WORD,
+        batasUnggahBytes: RESTORE_MAX_BYTES
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/admin/database/backup', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const stamp = stampForFile();
+  const tmp = path.join(path.dirname(DB_PATH), `.backup-${stamp}-${process.pid}.db`);
+  try {
+    const size = snapshotDatabase(tmp);
+    const filename = `sim-aset-${stamp}.db`;
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Type', 'application/vnd.sqlite3');
+    res.setHeader('Content-Length', String(size));
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('X-Backup-Filename', filename);
+    const stream = fs.createReadStream(tmp);
+    const bersihkan = () => fs.rm(tmp, { force: true }, () => {});
+    stream.on('close', bersihkan);
+    stream.on('error', (err) => {
+      bersihkan();
+      if (!res.headersSent) res.status(500).json({ success: false, error: err.message });
+      else res.destroy(err);
+    });
+    stream.pipe(res);
+  } catch (err) {
+    fs.rm(tmp, { force: true }, () => {});
+    res.status(500).json({ success: false, error: `Gagal membuat cadangan: ${err.message}` });
+  }
+});
+
+app.post(
+  '/api/admin/database/restore',
+  express.raw({ type: () => true, limit: RESTORE_MAX_BYTES }),
+  (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const konfirmasi = String(req.query?.konfirmasi || req.headers['x-konfirmasi'] || '');
+    if (konfirmasi !== RESTORE_CONFIRM_WORD) {
+      return res.status(400).json({ success: false, error: `Pemulihan harus dikonfirmasi dengan kata ${RESTORE_CONFIRM_WORD}.` });
+    }
+    const body = Buffer.isBuffer(req.body) ? req.body : null;
+    if (!body || body.length < 1024) {
+      return res.status(400).json({ success: false, error: 'Berkas database tidak diterima atau terlalu kecil. Unggah berkas .db hasil Unduh Cadangan.' });
+    }
+
+    const stamp = stampForFile();
+    const dataDir = path.dirname(DB_PATH);
+    const kandidat = path.join(dataDir, `.restore-${stamp}-${process.pid}.db`);
+    const cadanganLama = path.join(BACKUP_DIR, `sebelum-pulihkan-${stamp}.db`);
+    try {
+      fs.writeFileSync(kandidat, body);
+      const info = validateRestoreCandidate(kandidat);
+
+      // 1) Amankan DB yang sedang berjalan ke data/backups
+      ensureBackupDir();
+      snapshotDatabase(cadanganLama);
+
+      // 2) Tutup koneksi, buang WAL/SHM lama, tukar berkas — mulai sekarang server
+      //    tidak melayani request lain (lihat middleware serverRestarting).
+      serverRestarting = true;
+      try { db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch { /* abaikan */ }
+      db.close();
+      for (const ext of ['-wal', '-shm', '-journal']) fs.rmSync(`${DB_PATH}${ext}`, { force: true });
+      fs.renameSync(kandidat, DB_PATH);
+
+      console.log(`[restore] Database dipulihkan oleh ${req.user.username} dari unggahan ${body.length} byte; DB lama disimpan di ${cadanganLama}. Proses keluar agar dimuat ulang oleh systemd.`);
+      res.json({
+        success: true,
+        message: 'Database berhasil dipulihkan. Server memulai ulang — halaman akan dimuat ulang otomatis.',
+        data: {
+          cadanganLama: path.basename(cadanganLama),
+          counts: info.counts,
+          restart: true,
+          systemd: Boolean(process.env.INVOCATION_ID)
+        }
+      });
+      // Beri waktu respons terkirim, lalu keluar. systemd (Restart=always) akan menyalakan
+      // ulang proses dengan DB baru; tanpa supervisor proses TIDAK hidup lagi dengan sendirinya.
+      setTimeout(() => process.exit(0), 700).unref();
+    } catch (err) {
+      fs.rmSync(kandidat, { force: true });
+      if (serverRestarting) {
+        // Gagal setelah koneksi ditutup — kondisi tidak bisa dilanjutkan, biarkan supervisor menyalakan ulang.
+        console.error('[restore] Gagal di tahap penukaran berkas:', err);
+        res.status(500).json({ success: false, error: `Pemulihan gagal di tahap akhir: ${err.message}. Server memulai ulang dengan DB lama/cadangan.` });
+        setTimeout(() => process.exit(1), 700).unref();
+        return;
+      }
+      res.status(400).json({ success: false, error: err.message });
+    }
+  }
+);
 
 // Serve frontend static build if available
 const distPath = path.join(__dirname, '..', 'dist');

@@ -19,6 +19,11 @@ if (!fs.existsSync(dataDir)) {
 const dbPath = path.join(dataDir, 'inventory.db');
 const db = new DatabaseSync(dbPath);
 
+// Lokasi berkas — dipakai endpoint Cadangan & Pemulihan Database (server/index.js)
+export const DB_PATH = dbPath;
+export const DATA_DIR = dataDir;
+export const BACKUP_DIR = path.join(dataDir, 'backups');
+
 // Enable foreign keys and WAL mode for maximum performance & reliability
 db.exec('PRAGMA foreign_keys = ON;');
 db.exec('PRAGMA journal_mode = WAL;');

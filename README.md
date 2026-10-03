@@ -105,6 +105,14 @@ Fitur pendukung: riwayat mutasi per bon & lintas bon (cari lewat No. Bon / SN / 
   - Ekspor data ke CSV / Excel.
   - Tampilan cetak resmi (Print / PDF) lengkap dengan kop dan lembar persetujuan.
 
+### 8. Cadangan & Pemulihan Database (Manajemen User, khusus Administrator)
+- **Unduh Cadangan (.db)**: membuat salinan konsisten seluruh database (SQLite `VACUUM INTO`, wajib lolos `integrity_check`) dan mengunduhnya sebagai `sim-aset-YYYYMMDD-HHMMSS.db` — aman dilakukan saat aplikasi sedang dipakai (mode WAL).
+- **Pulihkan Database**: unggah berkas `.db` hasil cadangan, ketik kata konfirmasi `PULIHKAN`. Server memvalidasi berkas (header SQLite, `integrity_check`, tabel wajib SIM-ASET, ada akun Administrator aktif), **mencadangkan database lama** ke `data/backups/sebelum-pulihkan-….db`, menukar berkas, lalu **keluar agar systemd menyalakan ulang** proses dengan database baru. Halaman menunggu server hidup kembali dan memuat ulang otomatis.
+- Panel juga menampilkan ukuran DB, jumlah data per tabel, daftar cadangan otomatis di `data/backups/`, dan apakah server terdeteksi berjalan di bawah systemd.
+- Endpoint: `GET /api/admin/database/info`, `GET /api/admin/database/backup`, `POST /api/admin/database/restore?konfirmasi=PULIHKAN` (body biner `.db`, maks 512 MB) — semuanya **hanya untuk peran admin**.
+
+> ⚠️ Pemulihan dari UI **hanya aman bila aplikasi dijalankan sebagai layanan systemd dengan `Restart=always`** (lihat bagian Deploy). Tanpa supervisor (mis. `npm start` manual), proses akan berhenti setelah pemulihan dan harus dinyalakan ulang sendiri — UI memberi peringatan bila systemd tidak terdeteksi.
+
 ---
 
 ## 🚀 Panduan Menjalankan Aplikasi
@@ -254,6 +262,7 @@ journalctl -u barang-dan-aset -f      # lihat log
   ```
   Menyalin `inventory.db` dengan `cp` saja **tidak cukup** saat aplikasi berjalan: data terbaru bisa masih berada di `inventory.db-wal`.
 - **Keamanan**: setelah instalasi pertama, **ganti password semua akun demo** (menu *Manajemen User*) dan set `AUTH_SECRET` di unit systemd.
+- **Cadangan dari UI**: Administrator dapat mengunduh cadangan `.db` dan memulihkan database dari menu *Manajemen User → Cadangan & Pemulihan Database*. Pemulihan mengandalkan `Restart=always` pada unit systemd di atas: setelah berkas ditukar, proses keluar dan systemd menyalakannya kembali dalam ±5 detik. Database lama selalu tersimpan di `data/backups/sebelum-pulihkan-YYYYMMDD-HHMMSS.db`.
 
 ---
 

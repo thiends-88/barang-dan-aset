@@ -473,6 +473,126 @@ if (createdUserId) {
   else bad('Proteksi: admin tidak bisa menghapus akun sendiri', `status=${del.status}`);
 }
 
+console.log('\n=== 8B. CADANGAN & PEMULIHAN DATABASE (khusus admin) ===');
+// Catatan: jalur pemulihan yang SUKSES sengaja tidak diuji di sini — server akan
+// keluar (process.exit) agar systemd Restart=always memuat DB baru, dan itu akan
+// mematikan server pengujian. Yang diuji: hak akses, cadangan valid, dan semua
+// penolakan pemulihan (DB aktif harus tetap utuh).
+{
+  const { writeFileSync, existsSync, readdirSync, rmSync } = await import('node:fs');
+  const os = await import('node:os');
+  const tmpDir = os.tmpdir();
+  const tmpFiles = [];
+  const tmpPath = (nama) => { const p = path.join(tmpDir, `sim-aset-uji-${process.pid}-${nama}`); tmpFiles.push(p); return p; };
+  const kirimRestore = async (buf, { konfirmasi = 'PULIHKAN', token = TOKEN } = {}) => {
+    const q = konfirmasi === null ? '' : `?konfirmasi=${encodeURIComponent(konfirmasi)}`;
+    const res = await fetch(`${API}/api/admin/database/restore${q}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream', Authorization: `Bearer ${token}` },
+      body: buf
+    });
+    let json = null; try { json = await res.json(); } catch { /* biarkan */ }
+    return { status: res.status, json };
+  };
+  const sidikJariDb = () => JSON.stringify({ items: allStocks(), cust: db.prepare('SELECT id, nama_pelanggan FROM customers ORDER BY id').all(), trx: maxTrxId() });
+  const sidikAwal = sidikJariDb();
+
+  // 1) Info database untuk admin
+  {
+    const r = await req('GET', '/api/admin/database/info');
+    const d = r.json?.data;
+    if (r.status === 200 && d && d.counts?.items === db.prepare('SELECT COUNT(*) c FROM items').get().c && d.kataKonfirmasi === 'PULIHKAN' && typeof d.systemd === 'boolean' && Array.isArray(d.cadangan)) {
+      ok('Info database (ukuran, jumlah data, daftar cadangan, deteksi systemd) tersedia untuk admin', `${d.counts.items} barang, journal=${d.journalMode}`);
+    } else {
+      bad('Info database tersedia untuk admin', `status=${r.status} ${JSON.stringify(r.json)?.slice(0, 160)}`);
+    }
+  }
+
+  // 2) Peran non-admin ditolak di ketiga endpoint (GET maupun POST)
+  {
+    const loginStaff = await req('POST', '/api/auth/login', { username: 'gudang', password: 'gudang123' }, { noAuth: true });
+    const staffToken = loginStaff.json?.data?.token;
+    const simpan = TOKEN; TOKEN = staffToken || '';
+    const info = await req('GET', '/api/admin/database/info');
+    const unduh = await fetch(`${API}/api/admin/database/backup`, { headers: { Authorization: `Bearer ${staffToken}` } });
+    TOKEN = simpan;
+    const pulih = await kirimRestore(Buffer.alloc(4096, 1), { token: staffToken });
+    if (staffToken && info.status === 403 && unduh.status === 403 && pulih.status === 403) {
+      ok('Staff gudang ditolak melihat info, mengunduh cadangan, dan memulihkan database (403)');
+    } else {
+      bad('Staff gudang ditolak mengelola cadangan database (403)', `info=${info.status} unduh=${unduh.status} pulih=${pulih.status}`);
+    }
+  }
+
+  // 3) Unduh cadangan: berkas SQLite valid, lolos integrity_check, isi sama dengan DB aktif
+  let cadanganBuf = null;
+  {
+    const res = await fetch(`${API}/api/admin/database/backup`, { headers: { Authorization: `Bearer ${TOKEN}` } });
+    const disp = res.headers.get('content-disposition') || '';
+    cadanganBuf = Buffer.from(await res.arrayBuffer());
+    const p = tmpPath('cadangan.db');
+    writeFileSync(p, cadanganBuf);
+    let integritas = null, jumlahItem = null, jumlahUser = null;
+    try {
+      const c = new DatabaseSync(p, { readOnly: true });
+      integritas = Object.values(c.prepare('PRAGMA integrity_check').get())[0];
+      jumlahItem = c.prepare('SELECT COUNT(*) c FROM items').get().c;
+      jumlahUser = c.prepare('SELECT COUNT(*) c FROM users').get().c;
+      c.close();
+    } catch (e) { integritas = `error: ${e.message}`; }
+    const itemAktif = db.prepare('SELECT COUNT(*) c FROM items').get().c;
+    const header = cadanganBuf.subarray(0, 15).toString('latin1') === 'SQLite format 3';
+    if (res.status === 200 && /attachment; filename="sim-aset-\d{8}-\d{6}\.db"/.test(disp) && header && integritas === 'ok' && jumlahItem === itemAktif && jumlahUser >= 4) {
+      ok('Unduh cadangan menghasilkan berkas SQLite utuh (integrity_check ok, isi = DB aktif)', `${cadanganBuf.length} byte, ${jumlahItem} barang`);
+    } else {
+      bad('Unduh cadangan menghasilkan berkas SQLite utuh', `status=${res.status} disp="${disp}" header=${header} integritas=${integritas} item=${jumlahItem}/${itemAktif}`);
+    }
+  }
+
+  // 4) Pemulihan ditolak tanpa kata konfirmasi & bila berkas bukan SQLite
+  {
+    const tanpaKonfirmasi = await kirimRestore(cadanganBuf, { konfirmasi: null });
+    const kataSalah = await kirimRestore(cadanganBuf, { konfirmasi: 'pulihkan' });
+    const bukanSqlite = await kirimRestore(Buffer.from('bukan database sama sekali '.repeat(100)));
+    const terlaluKecil = await kirimRestore(Buffer.from('SQLite format 3\u0000'));
+    if (tanpaKonfirmasi.status === 400 && kataSalah.status === 400 && bukanSqlite.status === 400 && terlaluKecil.status === 400
+      && /PULIHKAN/.test(tanpaKonfirmasi.json?.error || '') && /bukan database SQLite/i.test(bukanSqlite.json?.error || '')) {
+      ok('Pemulihan ditolak tanpa konfirmasi PULIHKAN, kata salah, berkas bukan SQLite, atau terlalu kecil (400)');
+    } else {
+      bad('Pemulihan ditolak tanpa konfirmasi / berkas bukan SQLite (400)', `tanpa=${tanpaKonfirmasi.status} salah=${kataSalah.status} bukan=${bukanSqlite.status} kecil=${terlaluKecil.status}`);
+    }
+  }
+
+  // 5) Pemulihan ditolak bila SQLite asing (tabel wajib hilang) atau tanpa admin aktif;
+  //    DB aktif tidak boleh berubah & tidak ada berkas sementara tertinggal
+  {
+    const asing = tmpPath('asing.db');
+    const a = new DatabaseSync(asing);
+    a.exec('CREATE TABLE catatan (isi TEXT)');
+    for (let i = 0; i < 200; i++) a.exec(`INSERT INTO catatan VALUES ('baris ${i}')`);
+    a.close();
+    const tanpaAdmin = tmpPath('tanpa-admin.db');
+    writeFileSync(tanpaAdmin, cadanganBuf);
+    const n = new DatabaseSync(tanpaAdmin);
+    n.exec("UPDATE users SET status = 'nonaktif' WHERE role = 'admin'");
+    n.close();
+
+    const rAsing = await kirimRestore(readFileSync(asing));
+    const rTanpaAdmin = await kirimRestore(readFileSync(tanpaAdmin));
+    const sisaTemp = readdirSync(path.dirname(DB_PATH)).filter((f) => f.startsWith('.restore-') || f.startsWith('.backup-'));
+    const serverMasihHidup = (await req('GET', '/api/health', undefined, { noAuth: true })).status === 200;
+    if (rAsing.status === 400 && /tabel wajib/i.test(rAsing.json?.error || '')
+      && rTanpaAdmin.status === 400 && /Administrator aktif/i.test(rTanpaAdmin.json?.error || '')
+      && sidikJariDb() === sidikAwal && sisaTemp.length === 0 && serverMasihHidup) {
+      ok('Pemulihan ditolak untuk SQLite asing (tabel wajib hilang) & cadangan tanpa admin aktif; DB aktif utuh, tanpa berkas sementara');
+    } else {
+      bad('Pemulihan ditolak untuk SQLite asing / tanpa admin aktif, DB aktif utuh', `asing=${rAsing.status} "${rAsing.json?.error || ''}" tanpaAdmin=${rTanpaAdmin.status} "${rTanpaAdmin.json?.error || ''}" utuh=${sidikJariDb() === sidikAwal} temp=${sisaTemp.join(',')} hidup=${serverMasihHidup}`);
+    }
+  }
+
+  for (const f of tmpFiles) { try { if (existsSync(f)) rmSync(f); } catch { /* abaikan */ } }
+}
+
 console.log('\n=== 6C. SCAN BARCODE → TRANSAKSI TERTAUT DIVISI (pasang & pengembalian) ===');
 {
   // Ambil pelanggan data contoh pertama
