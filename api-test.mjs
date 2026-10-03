@@ -496,6 +496,10 @@ console.log('\n=== 8B. CADANGAN & PEMULIHAN DATABASE (khusus admin) ===');
   };
   const sidikJariDb = () => JSON.stringify({ items: allStocks(), cust: db.prepare('SELECT id, nama_pelanggan FROM customers ORDER BY id').all(), trx: maxTrxId() });
   const sidikAwal = sidikJariDb();
+  // Berkas sementara (.backup-*/.restore-*) yang sudah ada sebelum seksi ini (mis. dari
+  // proses server lain) tidak dihitung — yang diuji adalah kebocoran dari langkah di sini.
+  const tempDiData = () => readdirSync(path.dirname(DB_PATH)).filter((f) => f.startsWith('.restore-') || f.startsWith('.backup-'));
+  const tempAwal = new Set(tempDiData());
 
   // 1) Info database untuk admin
   {
@@ -579,7 +583,7 @@ console.log('\n=== 8B. CADANGAN & PEMULIHAN DATABASE (khusus admin) ===');
 
     const rAsing = await kirimRestore(readFileSync(asing));
     const rTanpaAdmin = await kirimRestore(readFileSync(tanpaAdmin));
-    const sisaTemp = readdirSync(path.dirname(DB_PATH)).filter((f) => f.startsWith('.restore-') || f.startsWith('.backup-'));
+    const sisaTemp = tempDiData().filter((f) => !tempAwal.has(f));
     const serverMasihHidup = (await req('GET', '/api/health', undefined, { noAuth: true })).status === 200;
     if (rAsing.status === 400 && /tabel wajib/i.test(rAsing.json?.error || '')
       && rTanpaAdmin.status === 400 && /Administrator aktif/i.test(rTanpaAdmin.json?.error || '')

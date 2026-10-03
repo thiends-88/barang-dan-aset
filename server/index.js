@@ -5,6 +5,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import db, { initDb, DB_PATH, BACKUP_DIR } from './db.js';
 import { DatabaseSync } from 'node:sqlite';
+import { pipeline } from 'node:stream';
 import { seedData, seedUsers } from './seed.js';
 import { ROLES, hashPassword, verifyPassword, signToken, verifyToken } from './auth.js';
 import { getGitInfo, readPackageVersion, localStamp } from '../scripts/build-info.mjs';
@@ -3873,15 +3874,16 @@ app.get('/api/admin/database/backup', (req, res) => {
     res.setHeader('Content-Length', String(size));
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('X-Backup-Filename', filename);
-    const stream = fs.createReadStream(tmp);
-    const bersihkan = () => fs.rm(tmp, { force: true }, () => {});
-    stream.on('close', bersihkan);
-    stream.on('error', (err) => {
-      bersihkan();
-      if (!res.headersSent) res.status(500).json({ success: false, error: err.message });
-      else res.destroy(err);
+    // pipeline() menjamin callback terpanggil baik unduhan selesai maupun koneksi
+    // putus di tengah (proxy/browser menutup lebih dulu) — berkas sementara selalu dihapus.
+    // (stream.pipe() tidak menutup sumber bila tujuan ditutup lebih dulu → berkas bocor.)
+    pipeline(fs.createReadStream(tmp), res, (err) => {
+      fs.rm(tmp, { force: true }, () => {});
+      if (err && err.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+        console.error('[backup] Gagal mengirim cadangan:', err.message);
+        if (!res.headersSent) res.status(500).json({ success: false, error: err.message });
+      }
     });
-    stream.pipe(res);
   } catch (err) {
     fs.rm(tmp, { force: true }, () => {});
     res.status(500).json({ success: false, error: `Gagal membuat cadangan: ${err.message}` });
