@@ -627,12 +627,13 @@ export default function BarcodeScannerModal({ isOpen, onClose, onPrintBarcode, o
                     </div>
                   ) : (
                     <div className="overflow-x-auto max-h-52">
-                      <table className="w-full min-w-[640px] text-left text-xs">
+                      <table className="w-full min-w-[780px] text-left text-xs">
                         <thead className="bg-slate-50 text-slate-600 border-b border-slate-200 sticky top-0">
                           <tr>
                             <th className="py-2 px-3">Tanggal</th>
                             <th className="py-2 px-3">No Transaksi</th>
                             <th className="py-2 px-3">Tipe</th>
+                            <th className="py-2 px-3">Kategori Mutasi</th>
                             <th className="py-2 px-3">Divisi / Lokasi</th>
                             <th className="py-2 px-3 text-right">Jumlah</th>
                             <th className="py-2 px-3">Keterangan</th>
@@ -649,6 +650,11 @@ export default function BarcodeScannerModal({ isOpen, onClose, onPrintBarcode, o
                                 }`}>
                                   {tx.jenis === 'MASUK' ? <ArrowDownLeft className="w-3 h-3" /> : <ArrowUpRight className="w-3 h-3" />}
                                   {tx.jenis}
+                                </span>
+                              </td>
+                              <td className="py-2 px-3 whitespace-nowrap">
+                                <span className="inline-flex items-center px-2 py-0.5 rounded border border-slate-300 bg-slate-100 text-[10px] font-semibold text-slate-600">
+                                  {tx.kategori_transaksi || '-'}
                                 </span>
                               </td>
                               <td className="py-2 px-3 text-slate-700 whitespace-nowrap">
