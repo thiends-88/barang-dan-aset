@@ -206,6 +206,143 @@ console.log('\n=== 0B. KETAHANAN API: error selalu JSON, rute /api tak dikenal 4
   }
 }
 
+console.log('\n=== 0C. BATAS 5.000 BARIS & RINGKASAN SQL UTUH PADA GET /api/transactions ===');
+{
+  const penuh = await req('GET', '/api/transactions');
+  const potong = await req('GET', '/api/transactions?limit=5');
+  const batasMaks = await req('GET', '/api/transactions?limit=99999');
+  const sPenuh = penuh.json?.summary;
+  const sPotong = potong.json?.summary;
+  const masukDiPotong = (potong.json?.data || [])
+    .filter((t) => t.jenis === 'MASUK')
+    .reduce((a, t) => a + Number(t.jumlah), 0);
+
+  if (
+    penuh.status === 200 &&
+    sPenuh?.limit === 5000 &&
+    sPenuh?.terpotong === false &&
+    sPenuh?.total_transaksi === penuh.json?.data?.length &&
+    potong.status === 200 &&
+    potong.json?.data?.length === 5 &&
+    sPotong?.ditampilkan === 5 &&
+    sPotong?.limit === 5 &&
+    sPotong?.terpotong === true &&
+    sPotong?.truncated === true &&
+    sPotong?.total_transaksi === sPenuh?.total_transaksi &&
+    sPotong?.total_masuk_qty === sPenuh?.total_masuk_qty &&
+    sPotong?.total_masuk_nilai === sPenuh?.total_masuk_nilai &&
+    sPotong?.total_keluar_qty === sPenuh?.total_keluar_qty &&
+    sPotong?.total_keluar_nilai === sPenuh?.total_keluar_nilai &&
+    sPotong?.net_qty === sPenuh?.net_qty &&
+    sPotong?.net_nilai === sPenuh?.net_nilai &&
+    sPotong?.total_masuk_qty > masukDiPotong &&
+    batasMaks.status === 200 &&
+    batasMaks.json?.summary?.limit === 5000
+  ) {
+    ok(
+      'GET /api/transactions membatasi baris (maks 5.000) dengan ringkasan SQL utuh atas seluruh data',
+      `ditampilkan=${sPotong.ditampilkan}/${sPotong.total_transaksi}, terpotong=true, masuk=${sPotong.total_masuk_qty} unit`
+    );
+  } else {
+    bad(
+      'GET /api/transactions batas baris & ringkasan SQL utuh',
+      `penuh=${JSON.stringify(sPenuh)} potong=${JSON.stringify(sPotong)} maks=${batasMaks.json?.summary?.limit}`
+    );
+  }
+}
+
+console.log('\n=== 0D. VALIDASI INPUT: MASTER BARANG, TRANSAKSI & TANGGAL (anti data rusak) ===');
+{
+  // Barang uji sementara supaya data contoh tidak tercemar
+  const KODE_UJI = 'BRG-UJI-VALIDASI-01';
+  const buat = await req('POST', '/api/items', {
+    kode_barang: KODE_UJI, nama_barang: 'Barang Uji Validasi', satuan: 'unit',
+    jenis_barang: 'Kabel Jaringan', stok: 10, min_stok: 2, harga_barang: 10000
+  });
+  const itemValid = buat.json?.data;
+  const STOK_UJI = itemValid?.stok;
+
+  // 1. POST /api/items: stok negatif / bukan angka, nama objek, jenis kosong → 400 tanpa membuat barang
+  const tolakCreate = await Promise.all([
+    req('POST', '/api/items', { kode_barang: KODE_UJI + '-NEG', nama_barang: 'Negatif', jenis_barang: 'Kabel Jaringan', stok: -5 }),
+    req('POST', '/api/items', { kode_barang: KODE_UJI + '-NAN', nama_barang: 'Bukan Angka', jenis_barang: 'Kabel Jaringan', stok: 'abc' }),
+    req('POST', '/api/items', { kode_barang: KODE_UJI + '-OBJ', nama_barang: { a: 1 }, jenis_barang: 'Kabel Jaringan', stok: 1 }),
+    req('POST', '/api/items', { kode_barang: KODE_UJI + '-SP', nama_barang: 'Spasi', jenis_barang: '   ', stok: 1 }),
+  ]);
+  const dibuatTidakSengaja = db.prepare("SELECT COUNT(*) c FROM items WHERE kode_barang LIKE ?").get(KODE_UJI + '-%').c;
+  if (tolakCreate.every((r) => r.status === 400 && r.json?.success === false) && dibuatTidakSengaja === 0 && itemValid?.stok === 10) {
+    ok('POST /api/items: stok negatif/bukan angka, nama objek, dan jenis kosong ditolak 400 tanpa membuat barang');
+  } else {
+    bad('POST /api/items validasi input', `status=${tolakCreate.map((r) => r.status).join(',')} dibuat=${dibuatTidakSengaja}`);
+  }
+
+  // 2. PUT /api/items: angka negatif / stok bukan angka → 400, data lama tidak berubah
+  const putTolak = await req('PUT', `/api/items/${itemValid.id}`, { min_stok: -9, harga_barang: -1, stok: 'abc' });
+  const barisUji = db.prepare('SELECT * FROM items WHERE id = ?').get(itemValid.id);
+  if (putTolak.status === 400 && barisUji.stok === STOK_UJI && barisUji.min_stok === 2 && barisUji.harga_barang === 10000) {
+    ok('PUT /api/items: stok/min stok/harga negatif atau bukan angka ditolak 400 & data lama tetap utuh');
+  } else {
+    bad('PUT /api/items validasi angka', `HTTP ${putTolak.status} stok=${barisUji?.stok} min=${barisUji?.min_stok} harga=${barisUji?.harga_barang}`);
+  }
+
+  // 3. PUT /api/items: koreksi stok dari form edit WAJIB tercatat sebagai mutasi
+  const markKoreksi = maxTrxId();
+  const putStok = await req('PUT', `/api/items/${itemValid.id}`, { stok: STOK_UJI - 4 });
+  const trxKoreksi = trxSince(markKoreksi);
+  if (
+    putStok.status === 200 && stockOf(KODE_UJI) === STOK_UJI - 4 &&
+    trxKoreksi.length === 1 && trxKoreksi[0].jenis === 'KELUAR' &&
+    Number(trxKoreksi[0].jumlah) === 4 && trxKoreksi[0].kategori_transaksi === 'Koreksi Stok'
+  ) {
+    ok('PUT /api/items: koreksi stok dari form edit tercatat sebagai mutasi KELUAR "Koreksi Stok"');
+  } else {
+    bad('PUT /api/items koreksi stok tercatat', `HTTP ${putStok.status} stok=${stockOf(KODE_UJI)} trx=${JSON.stringify(trxKoreksi.map((t) => [t.jenis, t.jumlah, t.kategori_transaksi]))}`);
+  }
+
+  // 4. POST /api/transactions: jenis/jumlah/tanggal/divisi tidak valid → 400 ramah, stok aman
+  const stokSebelumTolak = stockOf(KODE_UJI);
+  const markTolak = maxTrxId();
+  const tolakTrx = await Promise.all([
+    req('POST', '/api/transactions', { jenis: 'XYZ', divisi: 'GUDANG', lokasi_penerima: 'Uji', kode_barang: KODE_UJI, jumlah: 1 }),
+    req('POST', '/api/transactions', { jenis: 'KELUAR', divisi: 'GUDANG', lokasi_penerima: 'Uji', kode_barang: KODE_UJI, jumlah: 'abc' }),
+    req('POST', '/api/transactions', { jenis: 'MASUK', divisi: 'GUDANG', lokasi_penerima: 'Uji', kode_barang: KODE_UJI, jumlah: 1, tanggal: '2026-13-45' }),
+    req('POST', '/api/transactions', { jenis: 'MASUK', divisi: 'GUDANG', lokasi_penerima: 'Uji', kode_barang: KODE_UJI, jumlah: 1, tanggal: '2026-02-30' }),
+    req('POST', '/api/transactions', { jenis: 'MASUK', divisi: 'PELANGGANXYZ', lokasi_penerima: 'Uji', kode_barang: KODE_UJI, jumlah: 1 }),
+  ]);
+  const pesanRamah = tolakTrx.every((r) => r.status === 400 && r.json?.success === false
+    && !/constraint failed|SQLITE|is not a function|undefined/i.test(r.json?.error || ''));
+  if (pesanRamah && stockOf(KODE_UJI) === stokSebelumTolak && trxSince(markTolak).length === 0) {
+    ok('POST /api/transactions: jenis/jumlah/tanggal/divisi tidak valid ditolak 400 (pesan ramah, stok & log utuh)');
+  } else {
+    bad('POST /api/transactions validasi input', `status=${tolakTrx.map((r) => r.status).join(',')} stok=${stockOf(KODE_UJI)}/${stokSebelumTolak} trx=${trxSince(markTolak).length} err=${tolakTrx.map((r) => r.json?.error).join(' | ')}`);
+  }
+
+  // 5. Kode barang pada transaksi manual tidak peka huruf besar/kecil
+  const rKecil = await req('POST', '/api/transactions', { jenis: 'MASUK', divisi: 'GUDANG', lokasi_penerima: 'Uji Kode Kecil', kode_barang: KODE_UJI.toLowerCase(), jumlah: 2 });
+  if (rKecil.status === 201 && stockOf(KODE_UJI) === stokSebelumTolak + 2) ok('POST /api/transactions: kode barang huruf kecil tetap dikenali');
+  else bad('POST /api/transactions kode huruf kecil', `HTTP ${rKecil.status} stok=${stockOf(KODE_UJI)}`);
+
+  // 6. Ganti kode barang saat terpasang → rujukan divisi ikut pindah (tidak jadi barang yatim)
+  const idPelUji = 'PLG-UJI-VALIDASI';
+  const buatPel = await req('POST', '/api/customers', {
+    id_pelanggan: idPelUji, nama_pelanggan: 'Pelanggan Uji Validasi', items: [{ kode_barang: KODE_UJI, jumlah: 1 }]
+  });
+  const pelUji = buatPel.json?.data;
+  const KODE_BARU = KODE_UJI + '-BARU';
+  const rRename = await req('PUT', `/api/items/${itemValid.id}`, { kode_barang: KODE_BARU });
+  const barisTerpasang = db.prepare('SELECT COUNT(*) c FROM customer_items WHERE customer_id = ? AND kode_barang = ?').get(pelUji?.id, KODE_BARU).c;
+  const barisYatim = db.prepare('SELECT COUNT(*) c FROM customer_items WHERE UPPER(kode_barang) = UPPER(?)').get(KODE_UJI).c;
+  // Bersihkan: hapus pelanggan (stok kembali), kembalikan kode, lalu hapus barang uji
+  if (pelUji?.id) await req('DELETE', `/api/customers/${pelUji.id}`);
+  await req('PUT', `/api/items/${itemValid.id}`, { kode_barang: KODE_UJI });
+  const hapusUji = await req('DELETE', `/api/items/${itemValid.id}`);
+  if (rRename.status === 200 && barisTerpasang === 1 && barisYatim === 0 && hapusUji.status === 200) {
+    ok('PUT /api/items: ganti kode barang ikut memindahkan rujukan barang terpasang (tanpa baris yatim)');
+  } else {
+    bad('PUT /api/items ganti kode', `rename=${rRename.status} barisBaru=${barisTerpasang} yatim=${barisYatim} hapus=${hapusUji.status}`);
+  }
+}
+
 console.log('\n=== 1. PEMASANGAN PELANGGAN (POST /api/customers) ===');
 let snap = allStocks();
 let mark = maxTrxId();

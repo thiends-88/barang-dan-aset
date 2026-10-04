@@ -145,13 +145,26 @@ Fitur pendukung: riwayat mutasi per bon & lintas bon (cari lewat No. Bon / SN / 
    Menguji alur pemasangan, pengeditan, dismantle, dan penghapusan barang untuk Pelanggan, Divisi FO, dan Divisi Tower, lalu memeriksa bahwa stok gudang tidak pernah minus dan **selalu cocok dengan riwayat mutasi**. Data contoh direset otomatis di awal dan di akhir pengujian. Menjalankan keduanya sekaligus: `npm test`.
 
 6. **CI (GitHub Actions)**:
-   Workflow CI sudah **aktif otomatis** di [`.github/workflows/ci.yml`](.github/workflows/ci.yml) (salinan rujukan di [`docs/ci.yml`](docs/ci.yml)) — menjalankan `npm ci` → server uji port 3001 → `npm test` (156 tes API + 47 tes render) → `npm run build` pada setiap push ke `main` dan setiap Pull Request, di lingkungan yang selalu bersih (database dibuat + diisi data contoh dari nol).
+   Workflow CI sudah **aktif otomatis** di [`.github/workflows/ci.yml`](.github/workflows/ci.yml) (salinan rujukan di [`docs/ci.yml`](docs/ci.yml)) — menjalankan `npm ci` → server uji port 3001 → `npm test` (163 tes API + 49 tes render) → `npm run build` pada setiap push ke `main` dan setiap Pull Request, di lingkungan yang selalu bersih (database dibuat + diisi data contoh dari nol).
 
 ---
 
 ## 🖥️ Deploy ke Proxmox (Production)
 
 Aplikasi ini sudah **siap jalan tanpa build** di server: hasil build frontend ikut tersimpan di folder `dist/`, dan server Express menyajikan `dist/` sekaligus API dari port yang sama (`PORT`, default `3000`).
+
+### Spesifikasi Server / Container LXC yang Disarankan
+
+| Komponen | Minimum (LXC Hemat) | Rekomendasi Produksi (Jangka Panjang) | Keterangan |
+|---|---|---|---|
+| **Tipe Virtualisasi** | Proxmox LXC Container (*unprivileged* boleh) | Proxmox LXC Container / VM KVM | Ubuntu 22.04 / 24.04 LTS atau Debian 12 |
+| **CPU** | 1 vCore | 2 vCore (`x86_64`) | Beban ringan; SQLite (`node:sqlite`) berjalan satu proses dengan kolom filter berindeks |
+| **RAM** | 512 MB (+ 512 MB swap) | 1 – 2 GB | Proses Node.js idle ±60–90 MB; unduh & pulihkan cadangan `.db` memakai *streaming* ke disk (tidak menampung berkas di RAM) |
+| **Penyimpanan (Disk)** | 8 GB SSD | 16 – 32 GB SSD / NVMe | OS + Node.js ±1,5 GB, aplikasi + `node_modules` ±150 MB, DB ratusan ribu mutasi ±50–200 MB, sisanya untuk `VACUUM INTO` & arsip `data/backups/` |
+| **Jaringan** | 1 NIC LAN (`vmbr0`) | 1 NIC LAN + Reverse Proxy HTTPS (Nginx/Caddy) | Port default `TCP 3000` |
+| **Runtime & Layanan** | Node.js 22+ LTS, `git`, `systemd` | Node.js 22+ LTS, `git`, `systemd` (`Restart=always`), `cron` | `Restart=always` **wajib** bila memakai fitur *Pulihkan Database* dari UI |
+
+> 💡 **Kapasitas multi-tahun**: 10.000 baris mutasi di SQLite hanya berukuran ±2–3 MB. Agar browser tetap cepat saat riwayat tumbuh puluhan ribu baris selama bertahun-tahun, `GET /api/transactions` membatasi rincian tabel maksimal **5.000 baris terbaru** per permintaan sementara angka rekapitulasi (total transaksi, barang masuk/keluar, dan saldo nilai) tetap dihitung **utuh di SQL** atas seluruh data yang cocok dengan filter.
 
 ### 1. Persiapan (sekali saja)
 
@@ -307,6 +320,9 @@ Seluruh perubahan stok divalidasi di sisi server:
 - **Pengeditan memakai penyesuaian selisih** — stok hanya berubah sebesar perbedaan pemasangan lama vs baru, dan setiap selisih otomatis tercatat sebagai mutasi masuk/keluar.
 - **Menghapus data Pelanggan / FO / Tower mengembalikan stok** barang yang masih terpasang beserta catatan mutasinya, sehingga tidak ada stok yang hilang.
 - **Bon Teknisi menjaga invarian stok** — hanya tahap *bawa* (KELUAR) dan *kembali* (MASUK) yang menyentuh stok gudang dan keduanya tercatat di riwayat mutasi; jumlah realisasi + pengembalian tidak bisa melebihi yang dibawa, dan SN yang sudah terpasang tidak bisa dipasang dua kali.
+- **Koreksi stok dari form Master Barang selalu tercatat** — mengubah kolom *Stok di Gudang* saat mengedit barang otomatis membuat mutasi **Koreksi Stok** (MASUK/KELUAR) sehingga tidak ada lagi perubahan stok diam-diam; stok, min. stok, dan harga tidak bisa diisi negatif atau bukan angka (ditolak **400** dengan pesan Bahasa Indonesia, bukan error database mentah).
+- **Ganti kode barang ikut memindahkan rujukan** — kode barang terpasang di Pelanggan/FO/Tower dan baris Bon Teknisi ikut diperbarui, sehingga laporan tidak lagi menampilkan barang "yatim" dan pengaman hapus tetap bekerja.
+- **Jenis transaksi dibatasi MASUK/KELUAR** dan **tanggal wajib `YYYY-MM-DD` yang benar-benar ada** — nilai seperti `jenis: "XYZ"` atau `tanggal: "2026-13-45"` ditolak **400**, sehingga rekap per tahun/bulan dan nomor transaksi tidak pernah rusak oleh data sampah.
 - **Sebelum berubah, semua operasi dibungkus transaksi database** — bila ada satu baris gagal, seluruh perubahan dibatalkan (rollback).
 
 ---
@@ -314,7 +330,10 @@ Seluruh perubahan stok divalidasi di sisi server:
 ## ⚡ Optimasi
 
 - **Pemuatan malas per halaman (code splitting)** — setiap tab utama (Master Barang, Pelanggan, FO, Tower, Transaksi, Laporan, Pengguna) menjadi chunk JS tersendiri yang baru diunduh saat tabnya dibuka. Library berat ikut tertunda: `html5-qrcode` (kamera) hanya diunduh saat pemindai dibuka, `jsbarcode` saat barcode/label pertama kali tampil, dan `xlsx` saat pratinjau import. Hasilnya **bundle awal turun dari ~947 kB menjadi ~273 kB** (gzip ~84 kB).
+- **Batas 5.000 baris mutasi + ringkasan SQL utuh** — `GET /api/transactions` membatasi rincian baris maksimal 5.000 terbaru per permintaan agar browser tidak membeku saat riwayat mutasi tumbuh puluhan ribu baris, sementara total transaksi, kuantitas masuk/keluar, dan nilai rupiah tetap dihitung utuh di SQL. Jika data terpotong, spanduk peringatan tampil di halaman *Keluar/Masuk Barang* dan *Laporan*. Pilihan tahun filter dibangkitkan secara dinamis mengikuti tahun berjalan.
 - **Indeks database** pada kolom yang sering difilter (`transactions.tanggal/jenis/divisi/kode_barang`, kolom kode barang, dan kolom relasi antar tabel) mempercepat laporan, pencarian, dan penghapusan berantai.
+- **Validasi input berlapis di server** — seluruh endpoint tulis menormalkan & memvalidasi tipe/rentang nilai (angka tidak negatif, tanggal benar-benar ada,
+  jenis transaksi & divisi dari daftar resmi, batas panjang teks). Input salah dijawab **400 dengan pesan Bahasa Indonesia**, bukan `500` atau pesan mentah SQLite.
 - **Notifikasi in-app** menggantikan `alert()` bawaan browser: pesan error panjang (mis. stok tidak mencukupi) tampil rapi, tidak memblokir, dan bertahan lebih lama.
 
 ---

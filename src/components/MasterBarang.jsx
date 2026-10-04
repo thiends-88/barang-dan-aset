@@ -797,10 +797,16 @@ export default function MasterBarang({
                   <input
                     type="number"
                     step="any"
+                    min="0"
                     value={formData.stok}
                     onChange={(e) => setFormData({ ...formData, stok: parseFloat(e.target.value) || 0 })}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-sm focus:bg-white focus:border-indigo-500 font-semibold"
                   />
+                  <p className="text-[10px] text-slate-400 mt-1 leading-snug">
+                    {editingItem
+                      ? 'Perubahan stok di sini otomatis tercatat sebagai mutasi "Koreksi Stok" di Keluar/Masuk Barang.'
+                      : 'Stok awal akan tercatat sebagai transaksi MASUK (Pembelian Supplier).'}
+                  </p>
                 </div>
 
                 {/* Min Stok Alert */}
@@ -811,6 +817,7 @@ export default function MasterBarang({
                   <input
                     type="number"
                     step="any"
+                    min="0"
                     value={formData.min_stok}
                     onChange={(e) => setFormData({ ...formData, min_stok: parseFloat(e.target.value) || 0 })}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-sm focus:bg-white focus:border-indigo-500"
@@ -825,6 +832,7 @@ export default function MasterBarang({
                   <input
                     type="number"
                     required
+                    min="0"
                     value={formData.harga_barang}
                     onChange={(e) => setFormData({ ...formData, harga_barang: parseFloat(e.target.value) || 0 })}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-sm focus:bg-white focus:border-indigo-500 font-bold text-indigo-700"

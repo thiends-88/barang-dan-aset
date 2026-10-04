@@ -22,7 +22,12 @@ import {
 import { formatRupiah, formatNumber, formatDate, exportToCSV, todayLocal } from '../utils/formatters';
 import { notify } from '../utils/notify';
 
-const YEARS = [2026, 2025, 2024];
+const CURRENT_YEAR = Number(todayLocal().slice(0, 4)) || new Date().getFullYear();
+const START_YEAR = 2024;
+const YEARS = Array.from(
+  { length: Math.max(CURRENT_YEAR, START_YEAR) - START_YEAR + 1 },
+  (_, i) => Math.max(CURRENT_YEAR, START_YEAR) - i
+);
 const MONTHS = [
   { val: '', label: 'Semua Bulan' },
   { val: '1', label: '01 - Januari' },
@@ -39,17 +44,17 @@ const MONTHS = [
   { val: '12', label: '12 - Desember' }
 ];
 
-export default function Laporan({ onRefreshData }) {
+export default function Laporan({ onRefreshData, initialSummary = null }) {
   const [activeTab, setActiveTab] = useState('mutasi'); // 'mutasi' | 'sebaran' | 'valuasi'
 
   // Mutasi Report State
   const [txData, setTxData] = useState([]);
-  const [txSummary, setTxSummary] = useState(null);
+  const [txSummary, setTxSummary] = useState(initialSummary);
   const [txLoading, setTxLoading] = useState(false);
 
   // Filters for Mutasi & Gudang Logistik Report
   const [filterType, setFilterType] = useState('bulanan'); // 'mingguan' | 'bulanan' | 'tahunan' | 'kustom'
-  const [year, setYear] = useState('2026');
+  const [year, setYear] = useState(String(CURRENT_YEAR));
   const [month, setMonth] = useState('');
   const [week, setWeek] = useState('');
   const [customStart, setCustomStart] = useState('');
@@ -1070,6 +1075,19 @@ export default function Laporan({ onRefreshData }) {
                 </div>
               )}
 
+              {/* Spanduk peringatan bila jumlah baris melebihi batas 5.000 transaksi */}
+              {(txSummary?.terpotong || txSummary?.truncated || (txSummary?.total_transaksi > txData.length && txData.length > 0)) && (
+                <div className="no-print p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-start gap-2.5">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-bold">
+                      Menampilkan {formatNumber(txSummary?.ditampilkan || txData.length || txSummary?.limit || 5000)} transaksi terbaru dari total {formatNumber(txSummary?.total_transaksi || 0)} transaksi.
+                    </span>{' '}
+                    Rekapitulasi total transaksi, barang masuk, barang keluar, dan saldo mutasi di atas tetap dihitung utuh dari seluruh {formatNumber(txSummary?.total_transaksi || 0)} transaksi pada periode ini. Persempit filter periode atau divisi bila ingin mencetak atau mengekspor rincian per bagian.
+                  </div>
+                </div>
+              )}
+
               {/* Table - Mutasi Mode */}
               <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
                 <div className="p-4 border-b border-slate-200 flex items-center justify-between">
@@ -1082,7 +1100,9 @@ export default function Laporan({ onRefreshData }) {
                     </p>
                   </div>
                   <span className="text-xs font-semibold text-slate-500">
-                    {txData.length} Catatan Ditemukan
+                    {txSummary?.terpotong || txSummary?.truncated
+                      ? `${formatNumber(txSummary?.ditampilkan || txData.length)} dari ${formatNumber(txSummary?.total_transaksi || txData.length)} Catatan Ditampilkan`
+                      : `${formatNumber(txData.length)} Catatan Ditemukan`}
                   </span>
                 </div>
 
