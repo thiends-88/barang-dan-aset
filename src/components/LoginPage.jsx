@@ -56,10 +56,9 @@ export default function LoginPage({ onLogin, notice = '' }) {
       {/* Top bar slim (desktop) */}
       <header className="relative z-10 hidden lg:flex items-center justify-between px-8 py-5 max-w-[1280px] w-full mx-auto">
         <div className="flex items-center gap-3">
-          <span className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-blue-500 flex items-center justify-center shadow-lg shadow-indigo-500/20">
-            <Layers className="w-5 h-5 text-white" />
-          </span>
+          <img src="/logo-cmn-icon.png" alt="CinoxMediaNet" className="w-9 h-9 object-contain bg-white rounded-xl p-1 shadow-md" />
           <span className="font-black text-white tracking-tight">SIM-ASET</span>
+          <span className="hidden sm:inline text-[10px] font-semibold text-indigo-200 border border-white/10 bg-white/10 px-2 py-0.5 rounded-full">CinoxMediaNet</span>
           <span className="hidden xl:inline-flex ml-2 px-2.5 py-1 rounded-full bg-white/10 border border-white/10 text-[11px] font-semibold text-indigo-200 backdrop-blur">ISP • Solok • v1.0</span>
         </div>
         <div className="flex items-center gap-2 text-xs text-slate-400">
@@ -76,6 +75,7 @@ export default function LoginPage({ onLogin, notice = '' }) {
           <div className="relative order-2 lg:order-1">
             {/* Mobile compact hero */}
             <div className="lg:hidden text-center mb-6">
+              <img src="/logo-cmn.png" alt="CinoxMediaNet" className="h-12 w-auto object-contain mx-auto mb-4 bg-white rounded-2xl p-2 shadow-lg" />
               <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 border border-white/15 text-indigo-200 text-xs font-semibold backdrop-blur">
                 <Sparkles className="w-3.5 h-3.5 text-indigo-300" />
                 Sistem Terintegrasi untuk ISP Modern
@@ -93,6 +93,7 @@ export default function LoginPage({ onLogin, notice = '' }) {
 
               <div className="relative p-8 lg:p-9">
                 {/* Badge */}
+                <img src="/logo-cmn.png" alt="CinoxMediaNet" className="hidden lg:block h-14 w-auto object-contain mb-4 bg-white rounded-2xl p-2 shadow-lg" />
                 <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/15 border border-indigo-400/20 text-indigo-200 text-xs font-semibold">
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                   Live Stock • Realtime Presisi
@@ -195,12 +196,10 @@ export default function LoginPage({ onLogin, notice = '' }) {
               <div className="px-6 sm:px-8 pt-7 pb-6">
                 {/* header inside card (also for mobile brand) */}
                 <div className="flex items-center gap-3">
-                  <span className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-blue-500 flex items-center justify-center shadow-md shadow-indigo-500/20">
-                    <Layers className="w-5 h-5 text-white" />
-                  </span>
-                  <div>
+                  <img src="/logo-cmn.png" alt="CinoxMediaNet" className="h-10 w-auto object-contain" />
+                  <div className="ml-1">
                     <div className="text-[15px] font-black text-slate-900 tracking-tight leading-none">SIM-ASET</div>
-                    <div className="text-[11px] font-semibold text-indigo-600">Masuk untuk melanjutkan</div>
+                    <div className="text-[11px] font-semibold text-indigo-600">CinoxMediaNet • Masuk untuk melanjutkan</div>
                   </div>
                   <span className="ml-auto hidden sm:inline-flex px-2.5 py-1 rounded-full bg-slate-900 text-white text-[11px] font-bold">v1.0 • Aman</span>
                 </div>
