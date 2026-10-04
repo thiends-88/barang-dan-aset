@@ -69,6 +69,7 @@ export const MENU_ACCESS = {
   tower: ['admin', 'staff_gudang', 'teknisi', 'viewer'],
   transaksi: ['admin', 'staff_gudang'],
   bonteknisi: ['admin', 'staff_gudang', 'teknisi', 'viewer'],
+  rusak: ['admin', 'staff_gudang', 'teknisi', 'viewer'],
   laporan: ['admin', 'staff_gudang', 'teknisi', 'viewer'],
   users: ['admin']
 };

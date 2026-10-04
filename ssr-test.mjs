@@ -167,14 +167,14 @@ if (navFlexCount === 1 && navHiddenCount === 1) {
 const menuItems = [...navbarSrc.matchAll(/\{ id: '([a-z]+)', label: '([^']+)', short: '([^']+)'/g)]
   .map((m) => ({ id: m[1], label: m[2], short: m[3] }));
 const itemProblems = [];
-if (menuItems.length !== 9) itemProblems.push(`jumlah menu ${menuItems.length} ≠ 9`);
+if (menuItems.length !== 10) itemProblems.push(`jumlah menu ${menuItems.length} ≠ 10`);
 for (const it of menuItems) {
   if (!it.label || !it.short) itemProblems.push(`${it.id} tidak punya label/short`);
   else if (it.short.length > 10) itemProblems.push(`${it.id} short "${it.short}" ${it.short.length} karakter (>10)`);
   else if (it.label.length < it.short.length) itemProblems.push(`${it.id} short "${it.short}" lebih panjang dari label`);
 }
 if (itemProblems.length === 0) {
-  sectionOk(`19.4 9 menu punya label + short ringkas (terpanjang: "${menuItems.map((i) => i.short).sort((a, b) => b.length - a.length)[0]}")`);
+  sectionOk(`19.4 10 menu punya label + short ringkas (terpanjang: "${menuItems.map((i) => i.short).sort((a, b) => b.length - a.length)[0]}")`);
 } else {
   sectionBad(`19.4 ${itemProblems.join('; ')}`);
 }
@@ -194,7 +194,7 @@ const renderNav = (role) => renderToString(React.createElement(Navbar, {
 }));
 const countLabel = (html, label) => html.split(`title="${label}"`).length - 1;
 
-const EXPECT = { admin: 9, staff_gudang: 8, teknisi: 7, viewer: 7 };
+const EXPECT = { admin: 10, staff_gudang: 9, teknisi: 8, viewer: 8 };
 for (const [role, expected] of Object.entries(EXPECT)) {
   const html = renderNav(role);
   // Atribut `title` hanya dipakai menu utama, jadi jumlahnya = jumlah menu peran tsb
