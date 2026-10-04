@@ -62,6 +62,7 @@ export default function Dashboard({
     <div className="space-y-6">
       {/* Hero Executive Valuation Card */}
       <div className="relative overflow-hidden bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white p-6 sm:p-8 rounded-3xl shadow-xl border border-indigo-900">
+        <img src="/logo-cmn.png" alt="CinoxMediaNet" className="absolute top-4 right-4 h-10 w-auto object-contain opacity-20 hidden sm:block pointer-events-none" />
         <div className="absolute top-0 right-0 -mr-16 -mt-16 w-80 h-80 bg-indigo-600/10 rounded-full blur-3xl pointer-events-none" />
         <div className="absolute bottom-0 left-1/3 -mb-20 w-72 h-72 bg-emerald-600/10 rounded-full blur-3xl pointer-events-none" />
 

@@ -344,7 +344,8 @@ export default function App() {
       <footer className="no-print bg-white border-t border-slate-200 py-5 sm:py-6 text-xs text-slate-500 mt-auto">
         <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-2 sm:gap-3 text-center sm:text-left">
           <div className="flex items-center gap-2">
-            <span className="font-bold text-slate-800">SIM-ASET ISP</span>
+            <img src="/logo-cmn-icon.png" alt="CinoxMediaNet" className="h-5 w-5 object-contain" />
+            <span className="font-bold text-slate-800">SIM-ASET • CinoxMediaNet</span>
             <span>•</span>
             <span>Sistem Terintegrasi Pelanggan, Divisi FO, Divisi Tower & Barcode Scanner</span>
           </div>
