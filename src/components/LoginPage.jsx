@@ -43,11 +43,9 @@ export default function LoginPage({ onLogin, notice = '' }) {
 
   return (
     <div className="min-h-screen bg-[#020617] flex flex-col font-sans antialiased selection:bg-indigo-500 selection:text-white">
-      {/* Background ornaments */}
+      {/* Background ornaments — gradient halus + aura blur tanpa grid */}
       <div className="pointer-events-none fixed inset-0 overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-br from-slate-950 via-[#0f172a] to-indigo-950" />
-        {/* grid pattern */}
-        <div className="absolute inset-0 opacity-[0.04]" style={{ backgroundImage: `linear-gradient(to right, white 1px, transparent 1px), linear-gradient(to bottom, white 1px, transparent 1px)`, backgroundSize: '40px 40px' }} />
         <div className="absolute -top-40 -left-40 w-[700px] h-[700px] bg-indigo-600/25 rounded-full blur-[120px]" />
         <div className="absolute -bottom-40 right-0 w-[600px] h-[600px] bg-blue-600/20 rounded-full blur-[120px]" />
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[900px] h-[900px] bg-violet-600/10 rounded-full blur-[140px]" />
@@ -56,7 +54,7 @@ export default function LoginPage({ onLogin, notice = '' }) {
       {/* Top bar slim (desktop) */}
       <header className="relative z-10 hidden lg:flex items-center justify-between px-8 py-5 max-w-[1280px] w-full mx-auto">
         <div className="flex items-center gap-3">
-          <img src="/logo-cmn-icon.png" alt="CinoxMediaNet" className="w-9 h-9 object-contain bg-white rounded-xl p-1 shadow-md" />
+          <img src="/logo-cmn-icon.png" alt="CinoxMediaNet" className="w-9 h-9 object-contain drop-shadow-sm" />
           <span className="font-black text-white tracking-tight">SIM-ASET</span>
           <span className="hidden sm:inline text-[10px] font-semibold text-indigo-200 border border-white/10 bg-white/10 px-2 py-0.5 rounded-full">CinoxMediaNet</span>
           <span className="hidden xl:inline-flex ml-2 px-2.5 py-1 rounded-full bg-white/10 border border-white/10 text-[11px] font-semibold text-indigo-200 backdrop-blur">ISP • Solok • v1.0</span>
@@ -73,9 +71,9 @@ export default function LoginPage({ onLogin, notice = '' }) {
 
           {/* LEFT — Hero (hidden on small, compact on mobile) */}
           <div className="relative order-2 lg:order-1">
-            {/* Mobile compact hero */}
+            {/* Mobile compact hero — logo transparan tanpa badge putih */}
             <div className="lg:hidden text-center mb-6">
-              <img src="/logo-cmn.png" alt="CinoxMediaNet" className="h-12 w-auto object-contain mx-auto mb-4 bg-white rounded-2xl p-2 shadow-lg" />
+              <img src="/logo-cmn.png" alt="CinoxMediaNet" className="h-12 w-auto object-contain mx-auto mb-4 drop-shadow-[0_2px_8px_rgba(0,0,0,0.5)]" />
               <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 border border-white/15 text-indigo-200 text-xs font-semibold backdrop-blur">
                 <Sparkles className="w-3.5 h-3.5 text-indigo-300" />
                 Sistem Terintegrasi untuk ISP Modern
@@ -92,8 +90,8 @@ export default function LoginPage({ onLogin, notice = '' }) {
               <div className="absolute -top-24 -right-24 w-72 h-72 bg-indigo-500/20 rounded-full blur-3xl pointer-events-none" />
 
               <div className="relative p-8 lg:p-9">
-                {/* Badge */}
-                <img src="/logo-cmn.png" alt="CinoxMediaNet" className="hidden lg:block h-14 w-auto object-contain mb-4 bg-white rounded-2xl p-2 shadow-lg" />
+                {/* Logo transparan — tanpa badge putih, menyatu dengan glass */}
+                <img src="/logo-cmn.png" alt="CinoxMediaNet" className="hidden lg:block h-14 w-auto object-contain mb-4 drop-shadow-sm" />
                 <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/15 border border-indigo-400/20 text-indigo-200 text-xs font-semibold">
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                   Live Stock • Realtime Presisi
