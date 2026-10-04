@@ -42,7 +42,7 @@ export default function LoginPage({ onLogin, notice = '' }) {
   };
 
   return (
-    <div className="min-h-screen bg-[#020617] flex flex-col font-sans antialiased selection:bg-indigo-500 selection:text-white">
+    <div className="min-h-[100dvh] bg-[#020617] flex flex-col font-sans antialiased selection:bg-indigo-500 selection:text-white overflow-y-auto">
       {/* Background ornaments — gradient + blur tanpa grid (grid dihapus agar tidak tebal di screenshot) */}
       <div className="pointer-events-none fixed inset-0 overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-br from-slate-950 via-[#0f172a] to-indigo-950" />
@@ -66,9 +66,9 @@ export default function LoginPage({ onLogin, notice = '' }) {
         </div>
       </header>
 
-      {/* Main split */}
-      <div className="relative z-10 flex-1 flex items-center justify-center p-4 sm:p-6 lg:p-8">
-        <div className="w-full max-w-[1120px] grid grid-cols-1 lg:grid-cols-[1.05fr_0.95fr] gap-6 lg:gap-8 items-center">
+      {/* Main split — pakai items-start di mobile agar card tidak terpotong saat viewport pendek, my-auto untuk tetap center */}
+      <div className="relative z-10 flex-1 flex items-start lg:items-center justify-center p-4 sm:p-6 lg:p-8 overflow-y-auto">
+        <div className="w-full max-w-[1120px] my-auto grid grid-cols-1 lg:grid-cols-[1.05fr_0.95fr] gap-6 lg:gap-8 items-center">
 
           {/* LEFT — Hero (hidden on small, compact on mobile) */}
           <div className="relative order-2 lg:order-1">
