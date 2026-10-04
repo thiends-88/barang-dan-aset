@@ -126,9 +126,10 @@ export default function Navbar({
             aria-label="SIM-ASET — kembali ke Dashboard"
             className="flex items-center gap-2 shrink-0 min-w-0 cursor-pointer"
           >
-            <img src="/logo-cmn-icon.png" alt="CinoxMediaNet" className="w-8 h-8 sm:w-9 sm:h-9 object-contain shrink-0 drop-shadow-sm" />
+            <span className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-blue-500 flex items-center justify-center text-white shadow-md shadow-indigo-500/20 shrink-0">
+              <Layers className="w-4 h-4 sm:w-5 sm:h-5" />
+            </span>
             <span className="font-black text-sm sm:text-base tracking-tight text-white whitespace-nowrap">SIM-ASET</span>
-            <span className="hidden sm:inline text-[10px] font-semibold text-indigo-300 border border-indigo-400/20 bg-indigo-500/10 px-2 py-0.5 rounded-full">CinoxMediaNet</span>
           </button>
 
           {/* Menu utama (>= 1100px): satu baris, tidak pernah membungkus.
