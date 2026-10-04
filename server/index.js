@@ -414,6 +414,50 @@ function todayLocal() {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
 
+/**
+ * Validasi tanggal "YYYY-MM-DD" yang benar-benar ada di kalender.
+ * Mencegah kolom tanggal berisi nilai sampah (mis. "2026-13-45") yang membuat
+ * rekap per tahun/bulan (strftime) diam-diam kosong dan nomor transaksi ngawur.
+ */
+function isTanggalValid(v) {
+  if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  const [y, m, d] = v.split('-').map(Number);
+  if (y < 1900 || y > 2200 || m < 1 || m > 12 || d < 1) return false;
+  const kabisat = (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+  const maxHari = [31, kabisat ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1];
+  return d <= maxHari;
+}
+
+/** Tanggal opsional dari klien → string valid, null bila kosong, atau melempar Error Bahasa Indonesia. */
+function tanggalOpsional(nilai, label) {
+  const s = String(nilai ?? '').trim();
+  if (!s) return null;
+  if (!isTanggalValid(s)) throw new Error(`${label} harus berformat YYYY-MM-DD yang valid (diterima: "${s}")`);
+  return s;
+}
+
+/**
+ * Angka finite >= 0 dari klien — menolak nilai negatif / bukan angka.
+ * Dipakai field stok, min_stok, dan harga_barang pada Master Barang agar
+ * stok gudang tidak pernah bisa dibuat minus dari input yang salah.
+ */
+function angkaNonNegatif(nilai, label) {
+  const num = toNonNegNumber(nilai);
+  if (num === null) throw new Error(`${label} harus berupa angka 0 atau lebih (diterima: "${nilai}")`);
+  return num;
+}
+
+/**
+ * Field teks dari klien — menolak objek/array/boolean agar nilai seperti
+ * `{a:1}` tidak diam-diam tersimpan sebagai "[object Object]".
+ */
+function teksBody(nilai, label) {
+  if (nilai === undefined || nilai === null) return '';
+  const t = typeof nilai;
+  if (t !== 'string' && t !== 'number') throw new Error(`${label} harus berupa teks`);
+  return String(nilai).trim();
+}
+
 const hasTrxNoStmt = db.prepare('SELECT 1 FROM transactions WHERE no_transaksi = ?');
 let trxFallbackSeq = 10000;
 
@@ -790,24 +834,37 @@ app.get('/api/items/:id', (req, res) => {
 // Create item
 app.post('/api/items', (req, res) => {
   try {
-    const {
-      kode_barang,
-      nama_barang,
-      satuan = 'unit',
-      jenis_barang,
-      stok = 0,
-      min_stok = 5,
-      harga_barang = 0,
-      referensi_suplayer = '',
-      catatan = ''
-    } = req.body;
+    const body = req.body || {};
+    // Semua field dinormalisasi lebih dulu; nilai non-string (mis. objek) tidak
+    // boleh menabrak .trim() sehingga menjawab 500, dan angka negatif / bukan
+    // angka (mis. stok "-5" atau "abc") ditolak 400 — bukan disimpan apa adanya.
+    let kode_barang, nama_barang, satuan, jenis_barang, referensi_suplayer, catatan;
+    let stok, min_stok, harga_barang;
+    try {
+      kode_barang = teksBody(body.kode_barang, 'Kode barang').toUpperCase();
+      nama_barang = teksBody(body.nama_barang, 'Nama barang');
+      satuan = teksBody(body.satuan, 'Satuan') || 'unit';
+      jenis_barang = teksBody(body.jenis_barang, 'Jenis / kategori barang');
+      referensi_suplayer = teksBody(body.referensi_suplayer, 'Referensi suplayer');
+      catatan = teksBody(body.catatan, 'Catatan');
 
-    if (!kode_barang || !nama_barang || !jenis_barang) {
-      return res.status(400).json({ success: false, error: 'Kode, nama, dan jenis barang wajib diisi' });
+      if (!kode_barang || !nama_barang || !jenis_barang) {
+        throw new Error('Kode, nama, dan jenis barang wajib diisi');
+      }
+      if (kode_barang.length > 60) throw new Error('Kode barang maksimal 60 karakter');
+      if (nama_barang.length > 200) throw new Error('Nama barang maksimal 200 karakter');
+      if (jenis_barang.length > 100) throw new Error('Jenis / kategori barang maksimal 100 karakter');
+      if (satuan.length > 30) throw new Error('Satuan maksimal 30 karakter');
+
+      stok = angkaNonNegatif(body.stok ?? 0, 'Stok awal');
+      min_stok = angkaNonNegatif(body.min_stok ?? 5, 'Batas min. stok');
+      harga_barang = angkaNonNegatif(body.harga_barang ?? 0, 'Harga barang');
+    } catch (err) {
+      return res.status(400).json({ success: false, error: err.message });
     }
 
     // Check duplicate code
-    const existing = db.prepare('SELECT id FROM items WHERE LOWER(kode_barang) = LOWER(?)').get(kode_barang.trim());
+    const existing = db.prepare('SELECT id FROM items WHERE LOWER(kode_barang) = LOWER(?)').get(kode_barang);
     if (existing) {
       return res.status(400).json({ success: false, error: `Kode barang "${kode_barang}" sudah digunakan` });
     }
@@ -819,26 +876,26 @@ app.post('/api/items', (req, res) => {
       `);
 
       const result = insert.run(
-        kode_barang.trim().toUpperCase(),
-        nama_barang.trim(),
-        satuan.trim(),
-        jenis_barang.trim(),
-        Number(stok) || 0,
-        Number(min_stok) || 0,
-        Number(harga_barang) || 0,
-        referensi_suplayer.trim(),
-        catatan.trim()
+        kode_barang,
+        nama_barang,
+        satuan,
+        jenis_barang,
+        stok,
+        min_stok,
+        harga_barang,
+        referensi_suplayer,
+        catatan
       );
 
       const newItemId = result.lastInsertRowid;
 
       // Auto-register category into categories table if new
       try {
-        db.prepare('INSERT OR IGNORE INTO categories (nama_kategori) VALUES (?)').run(jenis_barang.trim());
+        db.prepare('INSERT OR IGNORE INTO categories (nama_kategori) VALUES (?)').run(jenis_barang);
       } catch {}
 
       // Log stock-in transaction if initial stock > 0
-      if (Number(stok) > 0) {
+      if (stok > 0) {
         const now = new Date();
         const tanggal = todayLocal();
         const waktu = now.toTimeString().split(' ')[0];
@@ -856,12 +913,12 @@ app.post('/api/items', (req, res) => {
           'GUDANG',
           newItemId,
           referensi_suplayer || 'Stok Awal Master',
-          kode_barang.trim().toUpperCase(),
-          nama_barang.trim(),
-          satuan.trim(),
-          Number(stok),
-          Number(harga_barang) || 0,
-          (Number(stok) * Number(harga_barang)) || 0,
+          kode_barang,
+          nama_barang,
+          satuan,
+          stok,
+          harga_barang,
+          stok * harga_barang,
           'Input Master Barang Baru (Stok Awal)'
         );
       }
@@ -878,31 +935,60 @@ app.post('/api/items', (req, res) => {
 });
 
 // Update item
+//
+// Perubahan stok lewat form edit WAJIB tercatat sebagai mutasi "Koreksi Stok"
+// (dulu kolom stok bisa diubah diam-diam tanpa jejak transaksi sehingga invarian
+// "stok = snapshot + Σ(transactions)" rusak dan stok bisa menjadi minus).
+// Perubahan kode barang juga disinkronkan ke seluruh rujukan barang terpasang
+// agar laporan & pengaman hapus tetap mengenali barang yang sama.
 app.put('/api/items/:id', (req, res) => {
-  try {
+  const updateItem = db.transaction(() => {
     const { id } = req.params;
-    const {
-      kode_barang,
-      nama_barang,
-      satuan,
-      jenis_barang,
-      stok,
-      min_stok,
-      harga_barang,
-      referensi_suplayer,
-      catatan
-    } = req.body;
+    const body = req.body || {};
 
     const current = db.prepare('SELECT * FROM items WHERE id = ?').get(id);
     if (!current) {
-      return res.status(404).json({ success: false, error: 'Barang tidak ditemukan' });
+      const e = new Error('Barang tidak ditemukan');
+      e.statusCode = 404;
+      throw e;
     }
 
+    const kode_barang = body.kode_barang !== undefined
+      ? teksBody(body.kode_barang, 'Kode barang').toUpperCase()
+      : current.kode_barang;
+    const nama_barang = body.nama_barang !== undefined
+      ? teksBody(body.nama_barang, 'Nama barang')
+      : current.nama_barang;
+    const satuan = body.satuan !== undefined
+      ? (teksBody(body.satuan, 'Satuan') || current.satuan)
+      : current.satuan;
+    const jenis_barang = body.jenis_barang !== undefined
+      ? teksBody(body.jenis_barang, 'Jenis / kategori barang')
+      : current.jenis_barang;
+    const referensi_suplayer = body.referensi_suplayer !== undefined
+      ? teksBody(body.referensi_suplayer, 'Referensi suplayer')
+      : current.referensi_suplayer;
+    const catatan = body.catatan !== undefined
+      ? teksBody(body.catatan, 'Catatan')
+      : current.catatan;
+
+    if (!kode_barang) throw new Error('Kode barang tidak boleh kosong');
+    if (!nama_barang) throw new Error('Nama barang tidak boleh kosong');
+    if (!jenis_barang) throw new Error('Jenis / kategori barang tidak boleh kosong');
+    if (kode_barang.length > 60) throw new Error('Kode barang maksimal 60 karakter');
+    if (nama_barang.length > 200) throw new Error('Nama barang maksimal 200 karakter');
+    if (jenis_barang.length > 100) throw new Error('Jenis / kategori barang maksimal 100 karakter');
+    if (satuan.length > 30) throw new Error('Satuan maksimal 30 karakter');
+
+    const stok = body.stok !== undefined ? angkaNonNegatif(body.stok, 'Stok') : current.stok;
+    const min_stok = body.min_stok !== undefined ? angkaNonNegatif(body.min_stok, 'Batas min. stok') : current.min_stok;
+    const harga_barang = body.harga_barang !== undefined ? angkaNonNegatif(body.harga_barang, 'Harga barang') : current.harga_barang;
+
     // Check duplicate code if changed
-    if (kode_barang && kode_barang.toUpperCase() !== current.kode_barang) {
-      const dup = db.prepare('SELECT id FROM items WHERE LOWER(kode_barang) = LOWER(?) AND id != ?').get(kode_barang.trim(), id);
+    if (kode_barang !== current.kode_barang) {
+      const dup = db.prepare('SELECT id FROM items WHERE LOWER(kode_barang) = LOWER(?) AND id != ?').get(kode_barang, id);
       if (dup) {
-        return res.status(400).json({ success: false, error: `Kode barang "${kode_barang}" sudah digunakan` });
+        throw new Error(`Kode barang "${kode_barang}" sudah digunakan`);
       }
     }
 
@@ -920,29 +1006,53 @@ app.put('/api/items/:id', (req, res) => {
           updated_at = datetime('now', 'localtime')
       WHERE id = ?
     `).run(
-      kode_barang ? kode_barang.trim().toUpperCase() : current.kode_barang,
-      nama_barang ? nama_barang.trim() : current.nama_barang,
-      satuan ? satuan.trim() : current.satuan,
-      jenis_barang ? jenis_barang.trim() : current.jenis_barang,
-      stok !== undefined ? Number(stok) : current.stok,
-      min_stok !== undefined ? Number(min_stok) : current.min_stok,
-      harga_barang !== undefined ? Number(harga_barang) : current.harga_barang,
-      referensi_suplayer !== undefined ? referensi_suplayer.trim() : current.referensi_suplayer,
-      catatan !== undefined ? catatan.trim() : current.catatan,
-      id
+      kode_barang,
+      nama_barang,
+      satuan,
+      jenis_barang,
+      stok,
+      min_stok,
+      harga_barang,
+      referensi_suplayer,
+      catatan,
+      current.id
     );
 
     // Auto-register category into categories table if new
-    if (jenis_barang) {
-      try {
-        db.prepare('INSERT OR IGNORE INTO categories (nama_kategori) VALUES (?)').run(jenis_barang.trim());
-      } catch {}
+    try {
+      db.prepare('INSERT OR IGNORE INTO categories (nama_kategori) VALUES (?)').run(jenis_barang);
+    } catch {}
+
+    // Perubahan angka stok dari form edit → catat mutasi koreksi agar jejak audit utuh
+    const selisih = round3(stok - Number(current.stok));
+    if (selisih !== 0) {
+      logStockMutation({
+        jenis: selisih > 0 ? 'MASUK' : 'KELUAR',
+        kategori: 'Koreksi Stok',
+        divisi: 'GUDANG',
+        refId: current.id,
+        lokasi: 'Koreksi Master Barang',
+        item: { ...current, kode_barang, nama_barang, satuan, harga_barang },
+        jumlah: Math.abs(selisih),
+        harga_satuan: harga_barang,
+        keterangan: `Koreksi stok manual Master Barang ${kode_barang}: ${current.stok} → ${stok} ${satuan}`
+      });
     }
 
-    const updated = db.prepare('SELECT * FROM items WHERE id = ?').get(id);
-    res.json({ success: true, data: updated });
+    // Ganti kode barang → seluruh rujukan barang terpasang ikut diperbarui
+    if (kode_barang !== current.kode_barang) {
+      for (const tbl of ['customer_items', 'fo_items', 'tower_items', 'technician_loan_items']) {
+        db.prepare(`UPDATE ${tbl} SET kode_barang = ? WHERE UPPER(kode_barang) = UPPER(?)`).run(kode_barang, current.kode_barang);
+      }
+    }
+
+    return db.prepare('SELECT * FROM items WHERE id = ?').get(current.id);
+  });
+
+  try {
+    res.json({ success: true, data: updateItem() });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.statusCode || 400).json({ success: false, error: err.message });
   }
 });
 
@@ -1233,7 +1343,7 @@ app.post('/api/customers/import', (req, res) => {
       if (!PAKET_OPTIONS.includes(paket)) return fail(`Paket "${paket}" tidak dikenal (${PAKET_OPTIONS.join('/')}) [${idPel}]`);
       if (!KATEGORI_OPTIONS.includes(kategori)) return fail(`Kategori "${kategori}" tidak dikenal (${KATEGORI_OPTIONS.join('/')}) [${idPel}]`);
       if (!STATUS_OPTIONS.includes(status)) return fail(`Status "${status}" tidak dikenal (${STATUS_OPTIONS.join('/')}) [${idPel}]`);
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(tanggal)) return fail(`Tanggal pasang "${tanggal}" tidak valid, gunakan format YYYY-MM-DD [${idPel}]`);
+      if (!isTanggalValid(tanggal)) return fail(`Tanggal pasang "${tanggal}" tidak valid, gunakan format YYYY-MM-DD yang benar [${idPel}]`);
 
       const existing = db.prepare('SELECT id FROM customers WHERE LOWER(id_pelanggan) = LOWER(?)').get(idPel);
       if (existing) {
@@ -1273,6 +1383,12 @@ app.post('/api/items/:id/stock-adjust', (req, res) => {
     const qty = Number(jumlah);
     if (isNaN(qty) || qty <= 0) {
       return res.status(400).json({ success: false, error: 'Jumlah harus lebih besar dari 0' });
+    }
+
+    // Jenis harus jelas: sebelumnya nilai tak dikenal (mis. "xyz") diperlakukan
+    // sebagai KELUAR sehingga stok bisa berkurang tanpa disadari operator.
+    if (jenis !== 'MASUK' && jenis !== 'KELUAR') {
+      return res.status(400).json({ success: false, error: 'Jenis penyesuaian harus MASUK atau KELUAR' });
     }
 
     let newStock = item.stok;
@@ -1396,7 +1512,7 @@ app.post('/api/customers', (req, res) => {
       throw new Error(`ID Pelanggan "${id_pelanggan}" sudah digunakan`);
     }
 
-    const installDate = tanggal_pasang || todayLocal();
+    const installDate = tanggalOpsional(tanggal_pasang, 'Tanggal pasang') || todayLocal();
 
     // Validasi barang terpasang & pastikan stok gudang mencukupi
     const { validated: validatedItems, totalHarga } = validateInstalledItems(items, installDate);
@@ -1525,10 +1641,11 @@ app.put('/api/customers/:id', (req, res) => {
       }
     }
 
+    const tanggalPasang = tanggalOpsional(tanggal_pasang, 'Tanggal pasang') || current.tanggal_pasang;
     let totalHarga = current.total_harga;
     if (Array.isArray(items)) {
       const oldItems = db.prepare('SELECT * FROM customer_items WHERE customer_id = ?').all(id);
-      const installDate = tanggal_pasang || current.tanggal_pasang;
+      const installDate = tanggalPasang;
       const { validated, totalHarga: totalBaru } = validateInstalledItems(items, installDate);
       assertStockAvailable(sumQtyByCode(validated), sumQtyByCode(oldItems));
 
@@ -1572,7 +1689,7 @@ app.put('/api/customers/:id', (req, res) => {
       status || current.status,
       alamat !== undefined ? alamat.trim() : current.alamat,
       telepon !== undefined ? telepon.trim() : current.telepon,
-      tanggal_pasang || current.tanggal_pasang,
+      tanggalPasang,
       totalHarga,
       catatan !== undefined ? catatan.trim() : current.catatan,
       id
@@ -1746,7 +1863,7 @@ app.post('/api/fo', (req, res) => {
       throw new Error('Daerah / Lokasi FO wajib diisi');
     }
 
-    const installDate = tanggal_pasang || todayLocal();
+    const installDate = tanggalOpsional(tanggal_pasang, 'Tanggal pasang') || todayLocal();
 
     // Validasi barang terpasang & pastikan stok gudang mencukupi
     const { validated: validatedItems, totalHarga } = validateInstalledItems(items, installDate);
@@ -1855,10 +1972,11 @@ app.put('/api/fo/:id', (req, res) => {
       throw new Error('Titik FO tidak ditemukan');
     }
 
+    const tanggalPasang = tanggalOpsional(tanggal_pasang, 'Tanggal pasang') || current.tanggal_pasang;
     let totalHarga = current.total_harga;
     if (Array.isArray(items)) {
       const oldItems = db.prepare('SELECT * FROM fo_items WHERE fo_id = ?').all(id);
-      const installDate = tanggal_pasang || current.tanggal_pasang;
+      const installDate = tanggalPasang;
       const { validated, totalHarga: totalBaru } = validateInstalledItems(items, installDate);
       assertStockAvailable(sumQtyByCode(validated), sumQtyByCode(oldItems));
 
@@ -1890,7 +2008,7 @@ app.put('/api/fo/:id', (req, res) => {
       daerah_lokasi ? daerah_lokasi.trim() : current.daerah_lokasi,
       tipe_lokasi || current.tipe_lokasi,
       pic_teknisi !== undefined ? pic_teknisi.trim() : current.pic_teknisi,
-      tanggal_pasang || current.tanggal_pasang,
+      tanggalPasang,
       totalHarga,
       catatan !== undefined ? catatan.trim() : current.catatan,
       id
@@ -1997,7 +2115,7 @@ app.post('/api/tower', (req, res) => {
       throw new Error('Daerah / Lokasi Tower wajib diisi');
     }
 
-    const installDate = tanggal_pasang || todayLocal();
+    const installDate = tanggalOpsional(tanggal_pasang, 'Tanggal pasang') || todayLocal();
 
     // Validasi barang terpasang & pastikan stok gudang mencukupi
     const { validated: validatedItems, totalHarga } = validateInstalledItems(items, installDate);
@@ -2112,10 +2230,11 @@ app.put('/api/tower/:id', (req, res) => {
       throw new Error('Site Tower tidak ditemukan');
     }
 
+    const tanggalPasang = tanggalOpsional(tanggal_pasang, 'Tanggal pasang') || current.tanggal_pasang;
     let totalHarga = current.total_harga;
     if (Array.isArray(items)) {
       const oldItems = db.prepare('SELECT * FROM tower_items WHERE tower_id = ?').all(id);
-      const installDate = tanggal_pasang || current.tanggal_pasang;
+      const installDate = tanggalPasang;
       const { validated, totalHarga: totalBaru } = validateInstalledItems(items, installDate);
       assertStockAvailable(sumQtyByCode(validated), sumQtyByCode(oldItems));
 
@@ -2153,7 +2272,7 @@ app.put('/api/tower/:id', (req, res) => {
       ketinggian ? ketinggian.trim() : current.ketinggian,
       kepemilikan ? kepemilikan.trim() : current.kepemilikan,
       pic_teknisi !== undefined ? pic_teknisi.trim() : current.pic_teknisi,
-      tanggal_pasang || current.tanggal_pasang,
+      tanggalPasang,
       totalHarga,
       catatan !== undefined ? catatan.trim() : current.catatan,
       id
@@ -2376,23 +2495,45 @@ app.post('/api/transactions', (req, res) => {
       throw new Error('Jenis transaksi, kode barang, dan jumlah wajib diisi');
     }
 
-    const item = db.prepare('SELECT * FROM items WHERE kode_barang = ?').get(kode_barang.trim());
+    // Validasi ketat: nilai tak dikenal tidak boleh lolos menjadi data rusak
+    // (dulu jenis "XYZ" tersimpan 201 tanpa dihitung MASUK/KELUAR oleh ringkasan,
+    // jumlah "abc" menabrak constraint SQL dengan pesan mentah, dan tanggal
+    // sembarang merusak rekap per tahun/bulan).
+    const jenisBersih = String(jenis).trim().toUpperCase();
+    if (jenisBersih !== 'MASUK' && jenisBersih !== 'KELUAR') {
+      throw new Error('Jenis transaksi harus MASUK atau KELUAR');
+    }
+    const qty = Number(jumlah);
+    if (!Number.isFinite(qty) || qty <= 0) {
+      throw new Error('Jumlah harus berupa angka lebih dari 0');
+    }
+    const tanggalValid = tanggal === undefined || tanggal === null || String(tanggal).trim() === ''
+      ? null
+      : tanggalOpsional(String(tanggal).trim(), 'Tanggal transaksi');
+
+    const item = getMasterItem(kode_barang);
     if (!item) {
       throw new Error(`Barang dengan kode "${kode_barang}" tidak ditemukan`);
     }
 
-    const qty = Number(jumlah);
-    if (qty <= 0) {
-      throw new Error('Jumlah harus lebih dari 0');
+    // Divisi dibatasi ke daftar resmi agar rekap per divisi tidak terpecah
+    // oleh nilai ketik-salah (mis. "PELANGGAN " atau "pelanggan").
+    const DIVISI_SAH = ['GUDANG', 'PELANGGAN', 'DIVISI FO', 'DIVISI TOWER'];
+    const divisiBersih = String(divisi ?? 'GUDANG').trim().toUpperCase() || 'GUDANG';
+    if (!DIVISI_SAH.includes(divisiBersih)) {
+      throw new Error(`Divisi harus salah satu dari: ${DIVISI_SAH.join(', ')}`);
     }
+    const keteranganBersih = teksBody(keterangan, 'Keterangan');
+    const kategoriBersih = teksBody(kategori_transaksi, 'Kategori transaksi');
+    const lokasiBersih = teksBody(lokasi_penerima, 'Lokasi / penerima / suplayer');
 
     const now = new Date();
-    const tgl = tanggal || todayLocal();
+    const tgl = tanggalValid || todayLocal();
     const waktu = now.toTimeString().split(' ')[0];
-    const isMasuk = jenis === 'MASUK';
-    const sn = (serial_number || '').toString().trim();
+    const isMasuk = jenisBersih === 'MASUK';
+    const sn = teksBody(serial_number, 'Serial number').slice(0, 100);
 
-    const linkCfg = LINKED_DIVISI[divisi] || null;
+    const linkCfg = LINKED_DIVISI[divisiBersih] || null;
     const isLinked = !!linkCfg && !!tujuan_id;
 
     const insertTrxFull = db.prepare(`
@@ -2440,11 +2581,11 @@ app.post('/api/transactions', (req, res) => {
         const trxNo = generateTrxNumber('MASUK', tgl);
         insertTrxFull.run(
           trxNo, tgl, waktu, 'MASUK',
-          kategori_transaksi || `Pengembalian ${linkCfg.label}`,
-          divisi, owner.id, ownerName,
+          kategoriBersih || `Pengembalian ${linkCfg.label}`,
+          divisiBersih, owner.id, ownerName,
           item.kode_barang, item.nama_barang, item.satuan, qty,
           item.harga_barang, qty * item.harga_barang, sn,
-          keterangan.trim() || `Pengembalian dari ${linkCfg.label.toLowerCase()} ${ownerName}`
+          keteranganBersih || `Pengembalian dari ${linkCfg.label.toLowerCase()} ${ownerName}`
         );
         var hasilTrx = { trxNo, item, qty, isMasuk, terhubung: `${linkCfg.label} — ${ownerName}` };
       } else {
@@ -2476,11 +2617,11 @@ app.post('/api/transactions', (req, res) => {
         const trxNo = generateTrxNumber('KELUAR', tgl);
         insertTrxFull.run(
           trxNo, tgl, waktu, 'KELUAR',
-          kategori_transaksi || `Pemasangan ${linkCfg.label}`,
-          divisi, owner.id, ownerName,
+          kategoriBersih || `Pemasangan ${linkCfg.label}`,
+          divisiBersih, owner.id, ownerName,
           item.kode_barang, item.nama_barang, item.satuan, qty,
           item.harga_barang, qty * item.harga_barang, sn,
-          keterangan.trim() || `Pemasangan di ${linkCfg.label.toLowerCase()} ${ownerName}`
+          keteranganBersih || `Pemasangan di ${linkCfg.label.toLowerCase()} ${ownerName}`
         );
         var hasilTrx = { trxNo, item, qty, isMasuk, terhubung: `${linkCfg.label} — ${ownerName}` };
       }
@@ -2499,7 +2640,7 @@ app.post('/api/transactions', (req, res) => {
     // ============================================================
     // MODE MANUAL GUDANG (perilaku lama — tidak berubah)
     // ============================================================
-    if (!lokasi_penerima) {
+    if (!lokasiBersih) {
       throw new Error('Lokasi / penerima / suplayer wajib diisi');
     }
 
@@ -2522,10 +2663,10 @@ app.post('/api/transactions', (req, res) => {
       tgl,
       waktu,
       isMasuk ? 'MASUK' : 'KELUAR',
-      kategori_transaksi || (isMasuk ? 'Pembelian Supplier' : 'Mutasi'),
-      divisi,
+      kategoriBersih || (isMasuk ? 'Pembelian Supplier' : 'Mutasi'),
+      divisiBersih,
       item.id,
-      lokasi_penerima.trim(),
+      lokasiBersih,
       item.kode_barang,
       item.nama_barang,
       item.satuan,
@@ -2533,7 +2674,7 @@ app.post('/api/transactions', (req, res) => {
       item.harga_barang,
       subtotal,
       sn,
-      keterangan.trim()
+      keteranganBersih
     );
 
     return { trxNo, item, qty, isMasuk };
@@ -2568,7 +2709,7 @@ app.post('/api/transactions', (req, res) => {
 const TEKNISI_DIVISI = 'TEKNISI';
 const LOAN_OPEN_STATUSES = ['AKTIF', 'SEBAGIAN'];
 const round3 = (n) => Math.round(Number(n || 0) * 1000) / 1000;
-const isDateStr = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+const isDateStr = (v) => typeof v === 'string' && isTanggalValid(v.trim());
 const loanItemSisa = (li) => round3(Number(li.jumlah_dibawa) - Number(li.jumlah_terpasang) - Number(li.jumlah_kembali));
 
 /** No. Bon berurutan per bulan: BON-YYYYMM-NNNN (dijamin unik). */

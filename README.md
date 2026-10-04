@@ -145,7 +145,7 @@ Fitur pendukung: riwayat mutasi per bon & lintas bon (cari lewat No. Bon / SN / 
    Menguji alur pemasangan, pengeditan, dismantle, dan penghapusan barang untuk Pelanggan, Divisi FO, dan Divisi Tower, lalu memeriksa bahwa stok gudang tidak pernah minus dan **selalu cocok dengan riwayat mutasi**. Data contoh direset otomatis di awal dan di akhir pengujian. Menjalankan keduanya sekaligus: `npm test`.
 
 6. **CI (GitHub Actions)**:
-   Workflow CI sudah **aktif otomatis** di [`.github/workflows/ci.yml`](.github/workflows/ci.yml) (salinan rujukan di [`docs/ci.yml`](docs/ci.yml)) — menjalankan `npm ci` → server uji port 3001 → `npm test` (157 tes API + 48 tes render) → `npm run build` pada setiap push ke `main` dan setiap Pull Request, di lingkungan yang selalu bersih (database dibuat + diisi data contoh dari nol).
+   Workflow CI sudah **aktif otomatis** di [`.github/workflows/ci.yml`](.github/workflows/ci.yml) (salinan rujukan di [`docs/ci.yml`](docs/ci.yml)) — menjalankan `npm ci` → server uji port 3001 → `npm test` (163 tes API + 49 tes render) → `npm run build` pada setiap push ke `main` dan setiap Pull Request, di lingkungan yang selalu bersih (database dibuat + diisi data contoh dari nol).
 
 ---
 
@@ -320,6 +320,9 @@ Seluruh perubahan stok divalidasi di sisi server:
 - **Pengeditan memakai penyesuaian selisih** — stok hanya berubah sebesar perbedaan pemasangan lama vs baru, dan setiap selisih otomatis tercatat sebagai mutasi masuk/keluar.
 - **Menghapus data Pelanggan / FO / Tower mengembalikan stok** barang yang masih terpasang beserta catatan mutasinya, sehingga tidak ada stok yang hilang.
 - **Bon Teknisi menjaga invarian stok** — hanya tahap *bawa* (KELUAR) dan *kembali* (MASUK) yang menyentuh stok gudang dan keduanya tercatat di riwayat mutasi; jumlah realisasi + pengembalian tidak bisa melebihi yang dibawa, dan SN yang sudah terpasang tidak bisa dipasang dua kali.
+- **Koreksi stok dari form Master Barang selalu tercatat** — mengubah kolom *Stok di Gudang* saat mengedit barang otomatis membuat mutasi **Koreksi Stok** (MASUK/KELUAR) sehingga tidak ada lagi perubahan stok diam-diam; stok, min. stok, dan harga tidak bisa diisi negatif atau bukan angka (ditolak **400** dengan pesan Bahasa Indonesia, bukan error database mentah).
+- **Ganti kode barang ikut memindahkan rujukan** — kode barang terpasang di Pelanggan/FO/Tower dan baris Bon Teknisi ikut diperbarui, sehingga laporan tidak lagi menampilkan barang "yatim" dan pengaman hapus tetap bekerja.
+- **Jenis transaksi dibatasi MASUK/KELUAR** dan **tanggal wajib `YYYY-MM-DD` yang benar-benar ada** — nilai seperti `jenis: "XYZ"` atau `tanggal: "2026-13-45"` ditolak **400**, sehingga rekap per tahun/bulan dan nomor transaksi tidak pernah rusak oleh data sampah.
 - **Sebelum berubah, semua operasi dibungkus transaksi database** — bila ada satu baris gagal, seluruh perubahan dibatalkan (rollback).
 
 ---
@@ -329,6 +332,8 @@ Seluruh perubahan stok divalidasi di sisi server:
 - **Pemuatan malas per halaman (code splitting)** — setiap tab utama (Master Barang, Pelanggan, FO, Tower, Transaksi, Laporan, Pengguna) menjadi chunk JS tersendiri yang baru diunduh saat tabnya dibuka. Library berat ikut tertunda: `html5-qrcode` (kamera) hanya diunduh saat pemindai dibuka, `jsbarcode` saat barcode/label pertama kali tampil, dan `xlsx` saat pratinjau import. Hasilnya **bundle awal turun dari ~947 kB menjadi ~273 kB** (gzip ~84 kB).
 - **Batas 5.000 baris mutasi + ringkasan SQL utuh** — `GET /api/transactions` membatasi rincian baris maksimal 5.000 terbaru per permintaan agar browser tidak membeku saat riwayat mutasi tumbuh puluhan ribu baris, sementara total transaksi, kuantitas masuk/keluar, dan nilai rupiah tetap dihitung utuh di SQL. Jika data terpotong, spanduk peringatan tampil di halaman *Keluar/Masuk Barang* dan *Laporan*. Pilihan tahun filter dibangkitkan secara dinamis mengikuti tahun berjalan.
 - **Indeks database** pada kolom yang sering difilter (`transactions.tanggal/jenis/divisi/kode_barang`, kolom kode barang, dan kolom relasi antar tabel) mempercepat laporan, pencarian, dan penghapusan berantai.
+- **Validasi input berlapis di server** — seluruh endpoint tulis menormalkan & memvalidasi tipe/rentang nilai (angka tidak negatif, tanggal benar-benar ada,
+  jenis transaksi & divisi dari daftar resmi, batas panjang teks). Input salah dijawab **400 dengan pesan Bahasa Indonesia**, bukan `500` atau pesan mentah SQLite.
 - **Notifikasi in-app** menggantikan `alert()` bawaan browser: pesan error panjang (mis. stok tidak mencukupi) tampil rapi, tidak memblokir, dan bertahan lebih lama.
 
 ---

@@ -5,7 +5,7 @@
 > pernah kena, dan hal-hal yang belum selesai — supaya sesi baru tidak mengulang debat yang
 > sama atau merusak hal yang sudah disepakati.
 >
-> Terakhir diperbarui: **3 Oktober 2026** · basis commit: `65b32cd` (merge PR #14)
+> Terakhir diperbarui: **4 Oktober 2026** · basis commit: `0a04408` (PR #15 — §6.12 + audit validasi §6.13)
 > Repo: <https://github.com/thiends-88/barang-dan-aset> · Branch kerja sesi terakhir: `arena/01a1013f-barang-dan-aset`
 > Sesi baru cukup diminta: *"Baca docs/HANDOFF-ARENA.md lalu lanjutkan dari §12."*
 
@@ -101,8 +101,8 @@ update-proxmox.sh      → skrip update server: cadangkan DB → reset --hard �
 .github/workflows/ci.yml → workflow CI GitHub Actions (AKTIF — JANGAN diubah commit App Arena, lihat §11)
 docs/ci.yml              → salinan rujukan workflow CI (tempat aman bila sesi Arena perlu mengusulkan edit CI)
 
-api-test.mjs       → 157 tes integrasi API (integritas stok, auth, peran, waktu, scan tertaut, import massal, versi, bon teknisi, cadangan DB, batas 5.000 transaksi)
-ssr-test.mjs       → 48 tes render (18 smoke + 11 regresi Navbar + Seksi 20/21/22/23), data asli API
+api-test.mjs       → 163 tes integrasi API (integritas stok, auth, peran, waktu, scan tertaut, import massal, versi, bon teknisi, cadangan DB, batas 5.000 transaksi, validasi input §6.13)
+ssr-test.mjs       → 49 tes render (18 smoke + 11 regresi Navbar + Seksi 20/21/22/23/24), data asli API
 contoh-import/     → barang.csv, pelanggan.csv (contoh file import)
 data/inventory.db  → database (TIDAK dilacak git sejak PR #5 — lihat §7)
 data/backups/      → cadangan otomatis dari update-proxmox.sh (diabaikan git)
@@ -147,8 +147,8 @@ reverse proxy) ada di `README.md` bagian **Deploy ke Proxmox**.
 ```bash
 PORT=3001 node server/index.js &     # siapkan server untuk pengujian
 npm test                             # = api-test.mjs && ssr-test.mjs
-npm run test:api                     # 157 tes integrasi API
-npm run test:render                  # 48 tes render (18 smoke + 11 regresi Navbar + 1 Seksi 20 + 16 Seksi 21 Bon Teknisi + 1 Seksi 22 Cadangan DB + 1 Seksi 23 Batas 5.000 Transaksi & Tahun Dinamis)
+npm run test:api                     # 163 tes integrasi API
+npm run test:render                  # 49 tes render (18 smoke + 11 regresi Navbar + Seksi 20/21/22/23 + 1 Seksi 24 Validasi Input & Koreksi Stok)
 ```
 
 > Hasil terakhir (sesi `arena/01a0edc1`, 29 Sep 2026): **API 78/78 lolos, SSR 29/29 lolos**
@@ -475,6 +475,41 @@ itu wajar karena perbedaan versi toolchain, bukan bug.
 
 ---
 
+### 6.13 Audit Menyeluruh & Pengetatan Validasi Input (sesi `arena/01a1013f`)
+
+Audit "apa masih ada bug?" menemukan celah integritas stok & data yang lolos dari 157 tes lama,
+lalu diperbaiki di ronde yang sama (semua bukti perilaku ditambahkan sebagai tes baru):
+
+- **Koreksi stok diam-diam (bug paling serius)** — `PUT /api/items/:id` dulu menerima `stok` apa pun
+  (termasuk negatif / bukan angka) **tanpa mencatat transaksi**, padahal form edit Master Barang memang
+  mengirim kolom stok → invarian *"stok = snapshot + Σ(transactions)"* rusak dan stok bisa minus.
+  Kini handler dibungkus `db.transaction`, angka divalidasi `angkaNonNegatif()`, dan setiap selisih stok
+  otomatis dicatat sebagai mutasi **Koreksi Stok** (MASUK/KELUAR) sehingga jejak audit utuh.
+- **Stok awal minus lewat `POST /api/items`** — input `stok: -5` / `"abc"` dulu tersimpan apa adanya.
+  Kini ditolak **400** (`angkaNonNegatif`), termasuk `min_stok` & `harga_barang`; nilai objek
+  (mis. `nama_barang: {a:1}`) dijawab *"harus berupa teks"* alih-alih `500 "...trim is not a function"`
+  atau tersimpan `"[object Object]"`.
+- **Ganti kode barang meninggalkan barang yatim** — `PUT /api/items/:id` mengganti `kode_barang` di tabel
+  `items` saja; rujukan di `customer_items`/`fo_items`/`tower_items`/`technician_loan_items` tetap memakai
+  kode lama sehingga laporan menampilkan 0 unit terpasang padahal pengaman hapus masih menolak.
+  Kini seluruh rujukan ikut dipindahkan dalam transaksi yang sama.
+- **`POST /api/transactions` menerima `jenis` tak dikenal** (mis. `"XYZ"` → tersimpan 201 dan stok
+  berkurang, tetapi tidak pernah dihitung MASUK/KELUAR oleh ringkasan SQL), `jumlah: "abc"`
+  (NaN menabrak constraint → pesan mentah `NOT NULL constraint failed: items.stok`), `tanggal` sampah
+  (`"2026-13-45"`, `"bukan-tanggal"` → `strftime` menghasilkan bucket `NULL`), dan `divisi` ketik-salah.
+  Kini semuanya divalidasi: `jenis ∈ {MASUK, KELUAR}`, jumlah finite > 0, tanggal `YYYY-MM-DD` kalender
+  via `isTanggalValid()`, divisi dari daftar resmi; kode barang juga tidak lagi peka huruf besar/kecil.
+- **Tanggal pada divisi & Bon Teknisi** — `POST/PUT` pelanggan/FO/Tower dan input tanggal bon kini
+  memakai `tanggalOpsional()` / `isDateStr()` versi kalender, sehingga `"2026-02-30"` tidak bisa lagi
+  merusak rekap bulanan atau nomor transaksi (`TRX-IN-000000-...`).
+- **Transparansi UI** — form Master Barang menampilkan keterangan bahwa perubahan stok tercatat sebagai
+  mutasi *Koreksi Stok* (atau stok awal menjadi transaksi MASUK), dan input stok/min stok/harga memakai `min="0"`.
+- **Tes**: Seksi **0D** `api-test.mjs` (+6 → **163/163**) dan Seksi **24** `ssr-test.mjs` (+1 → **49/49**);
+  audit ini juga memverifikasi ulang alur Bon Teknisi, otentikasi/peran, cadangan DB, dan filter transaksi
+  (tidak ditemukan bug tambahan di area tersebut).
+
+---
+
 ## 7. Database & data
 
 - Tabel: `categories`, `items`, `customers`, `customer_items`, `fo_sites`, `fo_items`,
@@ -545,8 +580,8 @@ itu wajar karena perbedaan versi toolchain, bukan bug.
 1. `npm install` (bila `package.json` berubah) —
    dependensi baru wajib tercermin di `package-lock.json`.
 2. Jalankan server di 3001, lalu:
-   - `npm run test:api` → harapan **157/157 lolos**
-   - `npm run test:render` → harapan **48/48 lolos**
+   - `npm run test:api` → harapan **163/163 lolos**
+   - `npm run test:render` → harapan **49/49 lolos**
    - bila menambah fitur, **tambahkan seksi tesnya** di `api-test.mjs` / `ssr-test.mjs`
      mengikuti gaya yang ada (fungsi `ok()` / `bad()`, judul seksi `=== N. ... ===`).
 3. `npm run build` bila menyentuh frontend; pastikan `dist/` ter-commit.
@@ -734,6 +769,7 @@ di README, info versi build (`/api/version`,
   3. Daftar tahun filter di `KeluarMasukBarang.jsx` dan `Laporan.jsx` dibangkitkan dinamis dari `todayLocal()` (`CURRENT_YEAR` mundur ke `2024`).
   4. Tabel spesifikasi server Proxmox LXC/VM ditambahkan di `README.md`.
   5. Tes: Seksi **0C** `api-test.mjs` (+1 → **157/157 lolos**) dan Seksi **23** `ssr-test.mjs` (+1 → **48/48 lolos**), `dist/` di-build ulang.
+- Ronde lanjutan (pertanyaan pemilik *"apa tidak ada bug lagi dari keseluruhan aplikasi?"*): audit kode server + uji langsung API dengan input aneh menemukan & memperbaiki celah integritas stok (**§6.13**) — koreksi stok tak tercatat, stok awal minus, kode barang yatim, jenis/tanggal/divisi tidak tervalidasi. Tes naik ke **163 API + 49 render** (Seksi **0D** & **24**).
 
 **Belum dikerjakan / kandidat sesi berikutnya:**
 
@@ -760,7 +796,7 @@ npm run dev                              # Vite di :3000, proxy /api → :3001
 
 # Uji
 PORT=3001 node server/index.js &         # server untuk pengujian
-npm test                                 # 157 tes API + 48 tes render
+npm test                                 # 163 tes API + 49 tes render
 npm run test:api ; npm run test:render   # terpisah
 
 # Produksi

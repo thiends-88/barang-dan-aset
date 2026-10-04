@@ -392,6 +392,39 @@ console.log('\n=== 23. Batas 5.000 Baris Transaksi (Spanduk UI) & Tahun Dinamis 
   }
 }
 
+// ============================================================
+// 24. VALIDASI INPUT SERVER & TRANSPARANSI KOREKSI STOK
+// ============================================================
+// Bug yang ditutup: stok bisa dibuat minus lewat POST/PUT /api/items, koreksi
+// stok dari form edit tidak tercatat sebagai mutasi, jenis transaksi tak dikenal
+// ("XYZ") tersimpan 201, dan tanggal sampah ("2026-13-45") merusak rekap bulanan.
+console.log('\n=== 24. Validasi Input Server & Transparansi Koreksi Stok ===');
+{
+  try {
+    const srvSrc = fs.readFileSync('server/index.js', 'utf-8');
+    const mbSrc = fs.readFileSync('src/components/MasterBarang.jsx', 'utf-8');
+    const mb = (await vite.ssrLoadModule('/src/components/MasterBarang.jsx')).default;
+
+    const validasiAda = srvSrc.includes('function isTanggalValid(')
+      && srvSrc.includes('function angkaNonNegatif(')
+      && srvSrc.includes('function teksBody(')
+      && srvSrc.includes("'Jenis transaksi harus MASUK atau KELUAR'")
+      && srvSrc.includes("kategori: 'Koreksi Stok'")
+      && srvSrc.includes('UPDATE ${tbl} SET kode_barang = ?');
+
+    const htmlBaru = renderToString(React.createElement(mb, { items, onRefresh() {}, onOpenBarcodeModal() {}, onOpenScanner() {} }));
+    const petunjukTampil = mbSrc.includes('Koreksi Stok') && mbSrc.includes('min="0"') && htmlBaru.length > 200;
+
+    if (validasiAda && petunjukTampil) {
+      sectionOk('24.1 Validasi server (stok/tanggal/jenis) + petunjuk UI bahwa koreksi stok tercatat sebagai mutasi');
+    } else {
+      sectionBad(`24.1 validasiAda=${validasiAda} petunjukTampil=${petunjukTampil}`);
+    }
+  } catch (e) {
+    sectionBad(`24.1 render validasi & transparansi gagal: ${String(e.message).split('\n')[0]}`);
+  }
+}
+
 await vite.close();
 console.log(`\nHasil: ${pass} lolos, ${fail} gagal`);
 process.exit(fail ? 1 : 0);
