@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Layers, User, Lock, Eye, EyeOff, LogIn, AlertTriangle, RefreshCw, ShieldCheck, Package, Users, Radio, Network, ArrowRight, Sparkles, CheckCircle2 } from 'lucide-react';
+import { formatNumber, formatRupiah } from '../utils/formatters';
 
 /**
  * Halaman login SIM-ASET — premium split-screen.
@@ -13,6 +14,54 @@ export default function LoginPage({ onLogin, notice = '' }) {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [summary, setSummary] = useState({
+    masuk: 0,
+    keluar: 0,
+    aset: 0,
+    sku: 0,
+    pelanggan: 0,
+    fo: 0,
+    tower: 0,
+    stok_gudang: 0
+  });
+
+  useEffect(() => {
+    let mounted = true;
+    let loading = false;
+
+    const loadSummary = async () => {
+      if (loading) return;
+      loading = true;
+      try {
+        const res = await fetch('/api/public/summary', { cache: 'no-store' });
+        const payload = await res.json();
+        const data = payload?.data ?? payload;
+        if (!res.ok || payload?.success === false || !data || !mounted) return;
+        const numberOrZero = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
+        setSummary({
+          masuk: numberOrZero(data.masuk),
+          keluar: numberOrZero(data.keluar),
+          aset: numberOrZero(data.aset),
+          sku: numberOrZero(data.sku),
+          pelanggan: numberOrZero(data.pelanggan),
+          fo: numberOrZero(data.fo),
+          tower: numberOrZero(data.tower),
+          stok_gudang: numberOrZero(data.stok_gudang)
+        });
+      } catch {
+        // Halaman login tetap bisa dipakai walau API ringkasan sedang tidak tersedia.
+      } finally {
+        loading = false;
+      }
+    };
+
+    void loadSummary();
+    const timer = setInterval(() => { void loadSummary(); }, 15_000);
+    return () => {
+      mounted = false;
+      clearInterval(timer);
+    };
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -107,10 +156,10 @@ export default function LoginPage({ onLogin, notice = '' }) {
                 {/* Feature pills */}
                 <div className="mt-6 flex flex-wrap gap-2">
                   {[
-                    { icon: Package, label: '1800+ SKU' },
-                    { icon: Users, label: 'Pelanggan Terhubung' },
-                    { icon: Network, label: 'Jalur FO Live' },
-                    { icon: Radio, label: 'Site Tower' },
+                    { icon: Package, label: `${formatNumber(summary.sku)} SKU` },
+                    { icon: Users, label: `${formatNumber(summary.pelanggan)} pelanggan` },
+                    { icon: Network, label: `${formatNumber(summary.fo)} jalur FO` },
+                    { icon: Radio, label: `${formatNumber(summary.tower)} site Tower` },
                   ].map((f) => (
                     <span key={f.label} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/10 border border-white/10 text-white text-xs font-semibold backdrop-blur">
                       <f.icon className="w-3.5 h-3.5 text-indigo-300" />
@@ -128,28 +177,28 @@ export default function LoginPage({ onLogin, notice = '' }) {
                         <span className="w-2 h-2 rounded-full bg-emerald-500" />
                         Ringkasan Live
                       </div>
-                      <span className="text-[11px] font-semibold text-slate-400">hari ini • WIB</span>
+                      <span className="text-[11px] font-semibold text-slate-400">seluruh data • live</span>
                     </div>
                     <div className="mt-4 grid grid-cols-3 gap-3">
                       <div className="rounded-xl bg-slate-50 border border-slate-200 p-3">
                         <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Masuk</div>
-                        <div className="mt-1 text-lg font-black text-emerald-700">+248</div>
+                        <div className="mt-1 text-lg font-black text-emerald-700">+{formatNumber(summary.masuk)}</div>
                         <div className="text-[11px] text-slate-400">unit</div>
                       </div>
                       <div className="rounded-xl bg-slate-50 border border-slate-200 p-3">
                         <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Keluar</div>
-                        <div className="mt-1 text-lg font-black text-rose-700">−176</div>
+                        <div className="mt-1 text-lg font-black text-rose-700">−{formatNumber(summary.keluar)}</div>
                         <div className="text-[11px] text-slate-400">unit</div>
                       </div>
                       <div className="rounded-xl bg-indigo-50 border border-indigo-200 p-3">
                         <div className="text-[11px] font-semibold text-indigo-700 uppercase tracking-wide">Aset</div>
-                        <div className="mt-1 text-sm font-black text-indigo-900">Rp 1,2M</div>
+                        <div className="mt-1 text-sm font-black text-indigo-900">{formatRupiah(summary.aset)}</div>
                         <div className="text-[11px] text-indigo-600">valuasi</div>
                       </div>
                     </div>
                     <div className="mt-3 flex items-center gap-1.5 text-[11px] text-slate-500">
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                      Sinkron Gudang ↔ Pelanggan ↔ FO ↔ Tower • Barcode ready
+                      Stok gudang {formatNumber(summary.stok_gudang)} unit • Sinkron Pelanggan ↔ FO ↔ Tower • Barcode ready
                     </div>
                   </div>
                 </div>

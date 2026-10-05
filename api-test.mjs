@@ -12,7 +12,7 @@
  */
 import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
 const API = 'http://127.0.0.1:3001';
 const DB_PATH = path.join(process.cwd(), 'data', 'inventory.db');
@@ -1330,11 +1330,87 @@ console.log('\n=== 6G. DATA TEKNISI & DIVISI PADA BON (pilih divisi → nama tek
   if (sisa === 0) ok('Teknisi uji dibersihkan setelah tes'); else bad('Teknisi uji dibersihkan', `${sisa} tersisa`);
 }
 
-console.log('\n=== PEMBERSIHAN: reset ke data contoh ===');
-await req('POST', '/api/reset-seed');
-const setelahReset = db.prepare('SELECT COUNT(*) AS c FROM customers').get().c;
-if (setelahReset > 0) ok('Data contoh berhasil dipulihkan', `${setelahReset} pelanggan`);
-else bad('Data contoh berhasil dipulihkan', 'database kosong');
+console.log('\n=== PEMBERSIHAN: ringkasan publik, kosongkan data & pulihkan seed ===');
+{
+  const adminToken = TOKEN;
+  const usersSebelum = db.prepare('SELECT COUNT(*) AS c FROM users').get().c;
+  const markerPath = path.join(process.cwd(), 'data', '.cleared');
+  const summaryBeforeRes = await req('GET', '/api/public/summary', undefined, { noAuth: true });
+  const summaryBefore = summaryBeforeRes.json?.data;
+  const tanpaAuth = await req('POST', '/api/admin/database/clear', { konfirmasi: 'KOSONGKAN' }, { noAuth: true });
+  const loginStaff = await req('POST', '/api/auth/login', { username: 'gudang', password: 'gudang123' }, { noAuth: true });
+  let nonAdmin = { status: 0 };
+  if (loginStaff.status === 200 && loginStaff.json?.data?.token) {
+    TOKEN = loginStaff.json.data.token;
+    nonAdmin = await req('POST', '/api/admin/database/clear', { konfirmasi: 'KOSONGKAN' });
+  }
+  TOKEN = adminToken;
+  const konfirmasiSalah = await req('POST', '/api/admin/database/clear', { konfirmasi: 'SALAH' });
+  const clear = await req('POST', '/api/admin/database/clear', { konfirmasi: 'KOSONGKAN' });
+  const summaryEmptyRes = await req('GET', '/api/public/summary', undefined, { noAuth: true });
+  const summaryEmpty = summaryEmptyRes.json?.data;
+  const usersSesudah = db.prepare('SELECT COUNT(*) AS c FROM users').get().c;
+  let backupValid = false;
+  const backupPath = clear.json?.data?.backup
+    ? path.join(process.cwd(), 'data', 'backups', clear.json.data.backup)
+    : '';
+  if (backupPath && existsSync(backupPath)) {
+    try {
+      const backup = new DatabaseSync(backupPath, { readOnly: true });
+      const integrity = Object.values(backup.prepare('PRAGMA integrity_check').get())[0];
+      const customers = backup.prepare('SELECT COUNT(*) AS c FROM customers').get().c;
+      backup.close();
+      backupValid = integrity === 'ok' && customers > 0;
+    } catch { /* kegagalan validasi membuat tes ini gagal di bawah */ }
+  }
+  const semuaNol = summaryEmptyRes.status === 200 && summaryEmpty
+    && ['masuk', 'keluar', 'aset', 'sku', 'pelanggan', 'fo', 'tower', 'stok_gudang']
+      .every((key) => Number(summaryEmpty[key]) === 0);
+  const markerAda = existsSync(markerPath);
+  const reset = await req('POST', '/api/reset-seed');
+  const summaryRestoreRes = await req('GET', '/api/public/summary', undefined, { noAuth: true });
+  const summaryRestore = summaryRestoreRes.json?.data;
+  const markerTerhapus = !existsSync(markerPath);
+  const dataSeedKembali = reset.status === 200 && markerTerhapus
+    && summaryRestoreRes.status === 200
+    && Number(summaryRestore?.masuk) === 1349
+    && Number(summaryRestore?.keluar) === 470
+    && Math.floor(Number(summaryRestore?.aset) / 1_000_000) === 189;
+
+  if (summaryBeforeRes.status === 200
+    && Number(summaryBefore?.masuk) === 1349
+    && Number(summaryBefore?.keluar) === 470
+    && Math.floor(Number(summaryBefore?.aset) / 1_000_000) === 189
+    && tanpaAuth.status === 401
+    && nonAdmin.status === 403
+    && konfirmasiSalah.status === 400
+    && clear.status === 200
+    && backupValid
+    && markerAda
+    && semuaNol
+    && usersSesudah === usersSebelum
+    && dataSeedKembali) {
+    ok('Ringkasan publik live, clear admin-only + backup/marker, semua angka 0, users tetap, reset-seed memulihkan 1349/470/Rp189M');
+  } else {
+    bad('Ringkasan publik & siklus kosongkan/pulihkan data', JSON.stringify({
+      summaryBeforeRes: summaryBeforeRes.status,
+      summaryBefore,
+      tanpaAuth: tanpaAuth.status,
+      nonAdmin: nonAdmin.status,
+      konfirmasiSalah: konfirmasiSalah.status,
+      clear: clear.status,
+      backupValid,
+      markerAda,
+      summaryEmptyRes: summaryEmptyRes.status,
+      summaryEmpty,
+      usersSebelum,
+      usersSesudah,
+      reset: reset.status,
+      markerTerhapus,
+      summaryRestore
+    }));
+  }
+}
 
 db.close();
 console.log(`\n========== HASIL: ${pass} lolos, ${fail} gagal ==========`);
