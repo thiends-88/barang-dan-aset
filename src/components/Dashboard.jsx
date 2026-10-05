@@ -17,7 +17,8 @@ import {
   Clock, 
   RefreshCw,
   ChevronRight,
-  Wrench
+  Wrench,
+  PackageX
 } from 'lucide-react';
 import { formatRupiah, formatNumber, formatDate } from '../utils/formatters';
 
@@ -218,6 +219,44 @@ export default function Dashboard({
             <div>
               <div className="text-lg font-black text-slate-900">{data.teknisi.bon_berjalan}</div>
               <div className="text-slate-500">bon berjalan</div>
+            </div>
+            <ChevronRight className="w-4 h-4 text-slate-400" />
+          </div>
+        </div>
+      )}
+
+      {/* Gudang Barang Rusak / Afkir KPI */}
+      {data.damaged && (
+        <div
+          onClick={() => onNavigate('rusak')}
+          className="bg-white px-5 py-4 rounded-2xl border border-rose-200/80 shadow-sm hover:shadow-md transition cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-rose-50 flex items-center justify-center text-rose-600 shrink-0">
+              <PackageX className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="text-xs font-bold uppercase tracking-wider text-rose-700">Gudang Barang Rusak / Afkir</div>
+              <div className="text-xs text-slate-500 mt-0.5">
+                Barang kondisi rusak tidak masuk stok siap pakai — tercatat terpisah untuk perbaikan atau pemusnahan
+              </div>
+              {data.damaged.per_kondisi && data.damaged.per_kondisi.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-1.5">
+                  {data.damaged.per_kondisi.map(k => (
+                    <span key={k.kondisi} className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">{k.kondisi}: {k.total_qty} unit</span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-5 text-xs sm:text-right">
+            <div>
+              <div className="text-lg font-black text-rose-900">{formatRupiah(data.damaged.total_nilai)}</div>
+              <div className="text-slate-500">nilai tertampung</div>
+            </div>
+            <div>
+              <div className="text-lg font-black text-slate-900">{data.damaged.total_qty}</div>
+              <div className="text-slate-500">unit • {data.damaged.total_entri} entri</div>
             </div>
             <ChevronRight className="w-4 h-4 text-slate-400" />
           </div>

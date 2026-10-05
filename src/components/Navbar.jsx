@@ -12,7 +12,8 @@ import {
   Layers,
   ShieldCheck,
   LogOut,
-  Wrench
+  Wrench,
+  PackageX
 } from 'lucide-react';
 import { canAccessMenu, ROLE_LABELS } from '../utils/auth';
 
@@ -29,6 +30,7 @@ const ALL_NAV_ITEMS = [
   { id: 'tower', label: 'Divisi Tower', short: 'Tower', icon: Radio },
   { id: 'transaksi', label: 'Keluar / Masuk', short: 'Mutasi', icon: ArrowLeftRight },
   { id: 'bonteknisi', label: 'Bon Teknisi', short: 'Bon', icon: Wrench },
+  { id: 'rusak', label: 'Barang Rusak', short: 'Rusak', icon: PackageX },
   { id: 'laporan', label: 'Laporan Terpadu', short: 'Laporan', icon: FileText },
   { id: 'users', label: 'Manajemen User', short: 'User', icon: ShieldCheck }
 ];

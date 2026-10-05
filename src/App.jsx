@@ -28,6 +28,7 @@ const DivisiTower = lazy(() => import('./components/DivisiTower'));
 const KeluarMasukBarang = lazy(() => import('./components/KeluarMasukBarang'));
 const Laporan = lazy(() => import('./components/Laporan'));
 const BonTeknisi = lazy(() => import('./components/BonTeknisi'));
+const BarangRusak = lazy(() => import('./components/BarangRusak'));
 const UserManagement = lazy(() => import('./components/UserManagement'));
 
 // Modal label barcode menarik jsbarcode (via BarcodeRenderer) — cukup besar,
@@ -320,6 +321,10 @@ export default function App() {
                 canInstall={canInstallFromBon(userRole)}
                 currentUser={session.user}
               />
+            )}
+
+            {currentTab === 'rusak' && (
+              <BarangRusak items={items} />
             )}
 
             {currentTab === 'laporan' && (

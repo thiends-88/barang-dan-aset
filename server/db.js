@@ -250,6 +250,34 @@ export function initDb() {
       created_at TEXT DEFAULT (datetime('now', 'localtime'))
     );
 
+    -- Gudang Barang Rusak / Afkir (ledger kerusakan)
+    CREATE TABLE IF NOT EXISTS damaged_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      kode_barang TEXT NOT NULL,
+      nama_barang TEXT NOT NULL,
+      jenis_barang TEXT NOT NULL DEFAULT '',
+      satuan TEXT NOT NULL,
+      harga_barang REAL NOT NULL DEFAULT 0,
+      jumlah REAL NOT NULL,
+      jumlah_awal REAL NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'DITAMPUNG', -- 'DITAMPUNG' | 'DIPERBAIKI' | 'DIMUSNAHKAN'
+      kondisi TEXT NOT NULL DEFAULT 'Rusak Berat', -- 'Rusak Ringan' | 'Rusak Berat' | 'Afkir'
+      sumber TEXT DEFAULT '',
+      sumber_id INTEGER DEFAULT NULL,
+      sumber_nama TEXT DEFAULT '',
+      no_transaksi TEXT DEFAULT '',
+      keterangan TEXT DEFAULT '',
+      tanggal TEXT NOT NULL,
+      waktu TEXT NOT NULL,
+      dibuat_oleh TEXT DEFAULT '',
+      diperbaiki_oleh TEXT DEFAULT '',
+      dimusnahkan_oleh TEXT DEFAULT '',
+      tanggal_perbaiki TEXT DEFAULT NULL,
+      tanggal_musnah TEXT DEFAULT NULL,
+      created_at TEXT DEFAULT (datetime('now', 'localtime')),
+      updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+    );
+
     -- Pengguna Aplikasi (login & hirarki peran)
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -270,6 +298,8 @@ export function initDb() {
     "ALTER TABLE fo_items ADD COLUMN serial_number TEXT DEFAULT ''",
     "ALTER TABLE tower_items ADD COLUMN serial_number TEXT DEFAULT ''",
     "ALTER TABLE transactions ADD COLUMN serial_number TEXT DEFAULT ''",
+    "ALTER TABLE transactions ADD COLUMN kondisi TEXT DEFAULT 'Baik'",
+    "ALTER TABLE technician_loan_movements ADD COLUMN kondisi TEXT DEFAULT 'Baik'",
     // Jejak teknisi pemasang & No. Bon asal pada barang terpasang di tiap divisi
     "ALTER TABLE customer_items ADD COLUMN dipasang_oleh TEXT DEFAULT ''",
     "ALTER TABLE customer_items ADD COLUMN no_bon TEXT DEFAULT ''",
@@ -296,6 +326,8 @@ export function initDb() {
     'CREATE INDEX IF NOT EXISTS idx_trx_jenis ON transactions (jenis)',
     'CREATE INDEX IF NOT EXISTS idx_trx_divisi ON transactions (divisi)',
     'CREATE INDEX IF NOT EXISTS idx_trx_kode_barang ON transactions (kode_barang)',
+    'CREATE INDEX IF NOT EXISTS idx_trx_kategori ON transactions (kategori_transaksi)',
+    'CREATE INDEX IF NOT EXISTS idx_trx_kondisi ON transactions (kondisi)',
     'CREATE INDEX IF NOT EXISTS idx_items_jenis ON items (jenis_barang)',
     'CREATE INDEX IF NOT EXISTS idx_customer_items_customer ON customer_items (customer_id)',
     'CREATE INDEX IF NOT EXISTS idx_customer_items_kode ON customer_items (kode_barang)',
@@ -310,7 +342,11 @@ export function initDb() {
     'CREATE INDEX IF NOT EXISTS idx_tloan_items_loan ON technician_loan_items (loan_id)',
     'CREATE INDEX IF NOT EXISTS idx_tloan_items_kode ON technician_loan_items (kode_barang)',
     'CREATE INDEX IF NOT EXISTS idx_tloan_mov_loan ON technician_loan_movements (loan_id)',
-    'CREATE INDEX IF NOT EXISTS idx_tloan_mov_tanggal ON technician_loan_movements (tanggal)'
+    'CREATE INDEX IF NOT EXISTS idx_tloan_mov_tanggal ON technician_loan_movements (tanggal)',
+    'CREATE INDEX IF NOT EXISTS idx_damaged_kode ON damaged_items (kode_barang)',
+    'CREATE INDEX IF NOT EXISTS idx_damaged_status ON damaged_items (status)',
+    'CREATE INDEX IF NOT EXISTS idx_damaged_tanggal ON damaged_items (tanggal)',
+    'CREATE INDEX IF NOT EXISTS idx_damaged_kondisi ON damaged_items (kondisi)'
   ];
 
   for (const sql of indexes) {

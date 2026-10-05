@@ -312,17 +312,24 @@ export default function DivisiPelanggan({
     }
   };
 
-  // Dismantle customer items
-  const handleDismantle = async (cust) => {
-    if (!window.confirm(`Yakin ingin melakukan dismantle perangkat pada pelanggan "${cust.nama_pelanggan}"? Semua barang terpasang akan dikembalikan ke stok gudang dan status pelanggan akan diubah ke "Putus".`)) {
-      return;
-    }
+  const [dismantleTarget, setDismantleTarget] = useState(null);
+  const [dismantleKondisi, setDismantleKondisi] = useState('Baik');
+  const [dismantleSubmitting, setDismantleSubmitting] = useState(false);
 
+  const openDismantle = (cust) => {
+    setDismantleTarget(cust);
+    setDismantleKondisi('Baik');
+  };
+
+  const confirmDismantle = async () => {
+    if (!dismantleTarget) return;
+    const cust = dismantleTarget;
+    setDismantleSubmitting(true);
     try {
       const res = await fetch(`/api/customers/${cust.id}/dismantle`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keterangan: `Dismantle penarikan aset dari ${cust.nama_pelanggan}` })
+        body: JSON.stringify({ keterangan: `Dismantle penarikan aset dari ${cust.nama_pelanggan}`, kondisi: dismantleKondisi })
       });
 
       const data = await res.json();
@@ -334,9 +341,12 @@ export default function DivisiPelanggan({
       if (selectedCustDetail && selectedCustDetail.id === cust.id) {
         setSelectedCustDetail(null);
       }
+      setDismantleTarget(null);
       onRefresh();
     } catch (err) {
       notify(err.message, 'error');
+    } finally {
+      setDismantleSubmitting(false);
     }
   };
 
@@ -611,7 +621,7 @@ export default function DivisiPelanggan({
 
                               {itemsCount > 0 && cust.status !== 'putus' && (
                                 <button
-                                  onClick={() => handleDismantle(cust)}
+                                  onClick={() => openDismantle(cust)}
                                   title="Bongkar / Dismantle Barang (Tarik ke Gudang)"
                                   className="p-1.5 rounded-lg text-amber-600 hover:bg-amber-50 hover:text-amber-700 transition"
                                 >
@@ -758,7 +768,7 @@ export default function DivisiPelanggan({
             <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
               {selectedCustDetail.status !== 'putus' && selectedCustDetail.items?.length > 0 && (
                 <button
-                  onClick={() => handleDismantle(selectedCustDetail)}
+                  onClick={() => openDismantle(selectedCustDetail)}
                   className="px-4 py-2 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-semibold rounded-xl flex items-center gap-1.5 transition"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
@@ -1191,6 +1201,37 @@ export default function DivisiPelanggan({
         type="customers"
         onImported={onRefresh}
       />
+
+      {/* Modal Dismantle — pilih kondisi pengembalian */}
+      {dismantleTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60">
+          <div className="w-full max-w-md bg-white rounded-2xl shadow-xl overflow-hidden">
+            <div className="px-5 py-4 bg-amber-600 text-white flex justify-between items-center">
+              <h3 className="font-bold text-sm">Dismantle — Pilih Kondisi Pengembalian</h3>
+              <button onClick={() => setDismantleTarget(null)} className="text-white/80 hover:text-white">✕</button>
+            </div>
+            <div className="p-5 space-y-3">
+              <p className="text-xs text-slate-600">Pelanggan: <strong>{dismantleTarget.nama_pelanggan}</strong> ({dismantleTarget.id_pelanggan}) — semua barang terpasang akan ditarik. Pilih kondisi barang saat ditarik:</p>
+              <div>
+                <label className="block text-xs font-semibold mb-1">Kondisi Pengembalian *</label>
+                <select value={dismantleKondisi} onChange={(e) => setDismantleKondisi(e.target.value)} className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold">
+                  <option value="Baik">Baik — kembali ke stok siap pakai</option>
+                  <option value="Rusak Ringan">Rusak Ringan — masuk gudang rusak</option>
+                  <option value="Rusak Berat">Rusak Berat — masuk gudang rusak</option>
+                  <option value="Afkir">Afkir — masuk gudang rusak (afkir)</option>
+                </select>
+                {dismantleKondisi !== 'Baik' && (
+                  <p className="text-[11px] text-amber-700 mt-1 bg-amber-50 p-2 rounded-lg border border-amber-200">Barang dengan kondisi rusak tidak menambah stok siap pakai — tercatat di Gudang Barang Rusak / Afkir dan mutasi kategori “Barang Rusak”.</p>
+                )}
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button onClick={() => setDismantleTarget(null)} className="px-4 py-2 text-xs font-medium">Batal</button>
+                <button onClick={confirmDismantle} disabled={dismantleSubmitting} className="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold disabled:opacity-50">{dismantleSubmitting ? 'Memproses...' : 'Konfirmasi Dismantle'}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

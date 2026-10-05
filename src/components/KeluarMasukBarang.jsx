@@ -24,6 +24,7 @@ import { formatRupiah, formatNumber, formatDate, exportToCSV, todayLocal } from 
 import { notify } from '../utils/notify';
 
 const DIVISI_OPTIONS = ['SEMUA', 'PELANGGAN', 'DIVISI FO', 'DIVISI TOWER', 'GUDANG', 'TEKNISI']; // TEKNISI = mutasi Bon Teknisi (dibawa / dikembalikan)
+const KONDISI_LIST = ['Baik', 'Rusak Ringan', 'Rusak Berat', 'Afkir'];
 const CURRENT_YEAR = Number(todayLocal().slice(0, 4)) || new Date().getFullYear();
 const START_YEAR = 2024;
 const YEARS = Array.from(
@@ -55,6 +56,8 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
   const [search, setSearch] = useState('');
   const [selectedDivisi, setSelectedDivisi] = useState('SEMUA');
   const [selectedJenis, setSelectedJenis] = useState(''); // '' | 'MASUK' | 'KELUAR'
+  const [kategoriOptions, setKategoriOptions] = useState([]);
+  const [selectedKategori, setSelectedKategori] = useState('');
   const [filterMode, setFilterMode] = useState('period'); // 'period' | 'custom_range'
   const [selectedYear, setSelectedYear] = useState(String(CURRENT_YEAR));
   const [selectedMonth, setSelectedMonth] = useState('');
@@ -72,7 +75,8 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
     kode_barang: '',
     jumlah: 1,
     tanggal: todayLocal(),
-    keterangan: ''
+    keterangan: '',
+    kondisi: 'Baik'
   });
   const [modalError, setModalError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -149,6 +153,13 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
     }
   };
 
+  // Fetch daftar kategori tersedia untuk dropdown
+  useEffect(() => {
+    fetch('/api/transaction-categories').then(r => r.json()).then(j => {
+      if (j.success && Array.isArray(j.data)) setKategoriOptions(j.data);
+    }).catch(() => {});
+  }, []);
+
   // Fetch transactions based on filters
   const fetchTransactions = async () => {
     setLoading(true);
@@ -157,6 +168,7 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
       if (search) params.append('search', search);
       if (selectedDivisi && selectedDivisi !== 'SEMUA') params.append('divisi', selectedDivisi);
       if (selectedJenis) params.append('jenis', selectedJenis);
+      if (selectedKategori) params.append('kategori_transaksi', selectedKategori);
 
       if (filterMode === 'period') {
         if (selectedYear) params.append('year', selectedYear);
@@ -208,6 +220,7 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
     search, 
     selectedDivisi, 
     selectedJenis, 
+    selectedKategori,
     filterMode, 
     selectedYear, 
     selectedMonth, 
@@ -226,6 +239,7 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
       'No Transaksi': t.no_transaksi,
       Jenis: t.jenis,
       Kategori: t.kategori_transaksi,
+      Kondisi: t.kondisi || 'Baik',
       Divisi: t.divisi,
       'Lokasi / Penerima / Suplayer': t.lokasi_penerima,
       'Kode Barang': t.kode_barang,
@@ -236,6 +250,14 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
       'Total Nilai (Rp)': t.total_harga,
       Keterangan: t.keterangan
     }));
+    // Tambahkan baris rekap per kategori di akhir CSV (jika ada)
+    if (summary && Array.isArray(summary.per_kategori) && summary.per_kategori.length) {
+      rows.push({});
+      rows.push({ No: 'REKAP PER KATEGORI' });
+      for (const k of summary.per_kategori) {
+        rows.push({ No: k.kategori_transaksi, 'No Transaksi': `${k.total_transaksi} trx`, Qty: `${k.total_qty} unit`, 'Total Nilai (Rp)': k.total_nilai });
+      }
+    }
     exportToCSV(`Laporan_Keluar_Masuk_Barang_${Date.now()}.csv`, rows);
   };
 
@@ -255,7 +277,8 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
       tanggal: todayLocal(),
       keterangan: '',
       tujuan_id: '',
-      serial_number: ''
+      serial_number: '',
+      kondisi: 'Baik'
     });
     setScanInput('');
     setModalError('');
@@ -294,7 +317,8 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
         jumlah: modalData.jumlah,
         tanggal: modalData.tanggal,
         keterangan: modalData.keterangan,
-        serial_number: modalData.serial_number || ''
+        serial_number: modalData.serial_number || '',
+        kondisi: modalData.kondisi || 'Baik'
       };
       if (isLinkedMode) {
         payload.tujuan_id = Number(modalData.tujuan_id);
@@ -403,6 +427,38 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
         </div>
       </div>
 
+      {/* Rekap per Kategori */}
+      {summary && Array.isArray(summary.per_kategori) && summary.per_kategori.length > 0 && (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">Rekap per Kategori Mutasi</h3>
+            <span className="text-[11px] text-slate-500">Dihitung utuh dari seluruh {formatNumber(summary.total_transaksi)} transaksi (tidak terpotong 5000)</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50 text-slate-600 border-b font-semibold">
+                <tr>
+                  <th className="py-2 px-4">Kategori</th>
+                  <th className="py-2 px-4 text-right">Jumlah Transaksi</th>
+                  <th className="py-2 px-4 text-right">Total Qty</th>
+                  <th className="py-2 px-4 text-right">Total Nilai (Rp)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {summary.per_kategori.map((k) => (
+                  <tr key={k.kategori_transaksi} className="hover:bg-slate-50">
+                    <td className="py-2 px-4 font-semibold text-slate-800">{k.kategori_transaksi}</td>
+                    <td className="py-2 px-4 text-right">{formatNumber(k.total_transaksi)}</td>
+                    <td className="py-2 px-4 text-right font-bold">{formatNumber(k.total_qty)}</td>
+                    <td className="py-2 px-4 text-right font-bold text-indigo-700">{formatRupiah(k.total_nilai)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Main Table & Filter Container */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         {/* Advanced Filter Toolbar */}
@@ -412,7 +468,7 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
             <div className="relative flex-1 max-w-md">
               <input
                 type="text"
-                placeholder="Cari kode, nama barang, no transaksi, penerima/suplayer..."
+                placeholder="Cari kode, nama, no transaksi, kategori, kondisi, penerima..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-300 focus:bg-white focus:border-indigo-500 rounded-xl text-sm transition"
@@ -460,6 +516,21 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
 
           {/* Bottom row: specific dropdown filters */}
           <div className="flex flex-wrap items-center gap-3 pt-3 border-t border-slate-100 text-xs">
+            {/* Kategori Filter */}
+            <div className="flex items-center gap-1.5">
+              <span className="font-semibold text-slate-600">Kategori:</span>
+              <select
+                value={selectedKategori}
+                onChange={(e) => setSelectedKategori(e.target.value)}
+                className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-700 font-medium focus:bg-white"
+              >
+                <option value="">Semua Kategori</option>
+                {kategoriOptions.map((k) => (
+                  <option key={k} value={k}>{k}</option>
+                ))}
+              </select>
+            </div>
+
             {/* Divisi Filter */}
             <div className="flex items-center gap-1.5">
               <span className="font-semibold text-slate-600">Divisi:</span>
@@ -566,6 +637,7 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
                 setSearch('');
                 setSelectedDivisi('SEMUA');
                 setSelectedJenis('');
+                setSelectedKategori('');
                 setSelectedYear(String(CURRENT_YEAR));
                 setSelectedMonth('');
                 setSelectedWeek('');
@@ -601,6 +673,7 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
                 <th className="py-3 px-4">No Transaksi</th>
                 <th className="py-3 px-4">Jenis</th>
                 <th className="py-3 px-4">Kategori Mutasi</th>
+                <th className="py-3 px-4">Kondisi</th>
                 <th className="py-3 px-4">Divisi & Lokasi / Penerima</th>
                 <th className="py-3 px-4">Kode & Nama Barang</th>
                 <th className="py-3 px-4 text-right">Jumlah (Qty)</th>
@@ -612,14 +685,14 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
             <tbody className="divide-y divide-slate-100">
               {loading ? (
                 <tr>
-                  <td colSpan="10" className="py-12 text-center text-slate-400">
+                  <td colSpan="11" className="py-12 text-center text-slate-400">
                     <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-indigo-500" />
                     <span>Memuat data mutasi barang...</span>
                   </td>
                 </tr>
               ) : transactions.length === 0 ? (
                 <tr>
-                  <td colSpan="10" className="py-12 text-center text-slate-400">
+                  <td colSpan="11" className="py-12 text-center text-slate-400">
                     <ArrowLeftRight className="w-10 h-10 mx-auto mb-2 text-slate-300" />
                     <p className="font-semibold text-slate-700">Tidak ada transaksi ditemukan</p>
                     <p className="text-[11px] text-slate-400">Silakan sesuaikan filter tanggal, minggu, atau divisi di atas.</p>
@@ -654,6 +727,11 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
                     {/* Kategori Transaksi */}
                     <td className="py-3 px-4 whitespace-nowrap">
                       <span className="font-medium text-slate-800">{tx.kategori_transaksi}</span>
+                    </td>
+
+                    {/* Kondisi */}
+                    <td className="py-3 px-4 whitespace-nowrap">
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${!tx.kondisi || tx.kondisi === 'Baik' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : tx.kondisi === 'Afkir' ? 'bg-slate-800 text-white' : 'bg-amber-100 text-amber-800 border border-amber-200'}`}>{tx.kondisi || 'Baik'}</span>
                     </td>
 
                     {/* Divisi & Lokasi / Penerima */}
@@ -938,7 +1016,7 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
                 )}
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Jumlah (Qty) *
@@ -953,6 +1031,21 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
                     onChange={(e) => setModalData({ ...modalData, jumlah: parseFloat(e.target.value) || 0 })}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-base font-bold focus:bg-white"
                   />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Kondisi *
+                  </label>
+                  <select
+                    value={modalData.kondisi}
+                    onChange={(e) => setModalData({ ...modalData, kondisi: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:bg-white font-semibold"
+                  >
+                    {KONDISI_LIST.map(k => <option key={k} value={k}>{k}</option>)}
+                  </select>
+                  {modalData.kondisi !== 'Baik' && modalData.jenis === 'MASUK' && (
+                    <p className="text-[10px] text-amber-700 mt-1">Barang rusak tidak menambah stok siap pakai — masuk gudang rusak.</p>
+                  )}
                 </div>
 
                 {isLinkedMode ? (

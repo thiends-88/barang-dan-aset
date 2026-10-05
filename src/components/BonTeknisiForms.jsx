@@ -692,6 +692,8 @@ export function RealisasiModal({ onClose, loan, customers, foSites, towerSites, 
 export function PengembalianModal({ onClose, loan, onSaved }) {
   const available = useMemo(() => (loan?.items || []).filter((li) => Number(li.jumlah_sisa) > 0), [loan]);
   const [qty, setQty] = useState(() => Object.fromEntries(available.map((li) => [li.id, ''])));
+  const [kondisi, setKondisi] = useState(() => Object.fromEntries(available.map((li) => [li.id, 'Baik'])));
+  const [kondisiGlobal, setKondisiGlobal] = useState('Baik');
   const [tanggal, setTanggal] = useState(todayLocal());
   const [pengembali, setPengembali] = useState(loan?.teknisi_nama || '');
   const [keterangan, setKeterangan] = useState('');
@@ -699,10 +701,14 @@ export function PengembalianModal({ onClose, loan, onSaved }) {
   const [saving, setSaving] = useState(false);
 
   const isiSemua = () => setQty(Object.fromEntries(available.map((li) => [li.id, String(li.jumlah_sisa)])));
+  const samakanKondisi = (k) => {
+    setKondisiGlobal(k);
+    setKondisi(Object.fromEntries(available.map((li) => [li.id, k])));
+  };
 
   const submit = async (e) => {
     e.preventDefault();
-    const rows = available.filter((li) => Number(qty[li.id]) > 0).map((li) => ({ loan_item_id: li.id, jumlah: Number(qty[li.id]) }));
+    const rows = available.filter((li) => Number(qty[li.id]) > 0).map((li) => ({ loan_item_id: li.id, jumlah: Number(qty[li.id]), kondisi: kondisi[li.id] || kondisiGlobal || 'Baik' }));
     if (rows.length === 0) { setError('Isi jumlah yang dikembalikan minimal pada satu barang'); return; }
     for (const li of available) {
       if (Number(qty[li.id]) > Number(li.jumlah_sisa)) { setError(`Jumlah ${li.nama_barang} melebihi sisa yang dibawa teknisi (${formatNumber(li.jumlah_sisa)} ${li.satuan})`); return; }
@@ -711,7 +717,7 @@ export function PengembalianModal({ onClose, loan, onSaved }) {
     setError('');
     try {
       const json = await postJson(`/api/technician-loans/${loan.id}/return`, {
-        tanggal, dikembalikan_oleh: pengembali.trim(), keterangan: keterangan.trim(), items: rows
+        tanggal, dikembalikan_oleh: pengembali.trim(), keterangan: keterangan.trim(), items: rows, kondisi: kondisiGlobal
       });
       notify(json.message, 'success');
       onSaved(json.data);
@@ -757,6 +763,22 @@ export function PengembalianModal({ onClose, loan, onSaved }) {
           </div>
         </div>
 
+        <div className="p-3 rounded-xl border border-amber-200 bg-amber-50">
+          <label className={labelCls}>Kondisi Barang Saat Dikembalikan</label>
+          <div className="flex flex-wrap items-center gap-2">
+            <select value={kondisiGlobal} onChange={(e) => samakanKondisi(e.target.value)} className={inputCls + ' max-w-[220px] font-semibold'}>
+              <option value="Baik">Baik — kembali ke stok siap pakai</option>
+              <option value="Rusak Ringan">Rusak Ringan — masuk gudang rusak</option>
+              <option value="Rusak Berat">Rusak Berat — masuk gudang rusak</option>
+              <option value="Afkir">Afkir — masuk gudang rusak</option>
+            </select>
+            <span className="text-[11px] text-amber-800">Pilih kondisi, atau ubah per baris di tabel.</span>
+          </div>
+          {kondisiGlobal !== 'Baik' && (
+            <p className="text-[11px] text-amber-800 mt-2">Barang rusak tidak menambah stok siap pakai — tercatat di Gudang Barang Rusak / Afkir. Mutasi tetap tercatat.</p>
+          )}
+        </div>
+
         <div className="flex items-center justify-between">
           <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700">Sisa yang Dibawa Teknisi</h4>
           <button type="button" onClick={isiSemua} className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200">
@@ -764,13 +786,14 @@ export function PengembalianModal({ onClose, loan, onSaved }) {
           </button>
         </div>
         <div className="border border-slate-200 rounded-xl overflow-x-auto">
-          <table className="w-full text-xs min-w-[460px]">
+          <table className="w-full text-xs min-w-[640px]">
             <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] tracking-wider">
               <tr>
                 <th className="text-left px-3 py-2">Barang</th>
                 <th className="text-right px-3 py-2">Dibawa</th>
                 <th className="text-right px-3 py-2">Terpasang</th>
                 <th className="text-right px-3 py-2">Sisa</th>
+                <th className="text-left px-3 py-2">Kondisi</th>
                 <th className="text-right px-3 py-2 w-32">Dikembalikan</th>
               </tr>
             </thead>
@@ -784,6 +807,14 @@ export function PengembalianModal({ onClose, loan, onSaved }) {
                   <td className="px-3 py-2 text-right">{formatNumber(li.jumlah_dibawa)}</td>
                   <td className="px-3 py-2 text-right">{formatNumber(li.jumlah_terpasang)}</td>
                   <td className="px-3 py-2 text-right font-bold text-amber-700">{formatNumber(li.jumlah_sisa)} {li.satuan}</td>
+                  <td className="px-3 py-2">
+                    <select value={kondisi[li.id] || 'Baik'} onChange={(e) => setKondisi((c) => ({ ...c, [li.id]: e.target.value }))} className={`${inputCls} text-xs font-semibold`}>
+                      <option value="Baik">Baik</option>
+                      <option value="Rusak Ringan">Rusak Ringan</option>
+                      <option value="Rusak Berat">Rusak Berat</option>
+                      <option value="Afkir">Afkir</option>
+                    </select>
+                  </td>
                   <td className="px-3 py-2">
                     <input type="number" min="0" max={li.jumlah_sisa} step="any" value={qty[li.id] ?? ''} onChange={(e) => setQty((q) => ({ ...q, [li.id]: e.target.value }))} placeholder="0" className={`${inputCls} text-right font-bold`} aria-label={`Jumlah kembali ${li.nama_barang}`} />
                   </td>

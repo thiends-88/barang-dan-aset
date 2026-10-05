@@ -62,6 +62,8 @@ export default function Laporan({ onRefreshData, initialSummary = null }) {
   const [divisiFilter, setDivisiFilter] = useState('SEMUA');
   // jenisFilter: '' | 'MASUK' | 'KELUAR' | 'STOK_TERSEDIA' | 'STOK_MENIPIS'
   const [jenisFilter, setJenisFilter] = useState('');
+  const [kategoriOptions, setKategoriOptions] = useState([]);
+  const [kategoriFilter, setKategoriFilter] = useState('');
 
   // Warehouse Stock Report State (Stok Gudang Keseluruhan yang Tersedia & Barang Stok Menipis)
   const [stockData, setStockData] = useState([]);
@@ -91,6 +93,7 @@ export default function Laporan({ onRefreshData, initialSummary = null }) {
       if (jenisFilter === 'MASUK' || jenisFilter === 'KELUAR') {
         params.append('jenis', jenisFilter);
       }
+      if (kategoriFilter) params.append('kategori_transaksi', kategoriFilter);
 
       if (filterType === 'tahunan') {
         params.append('year', year);
@@ -117,7 +120,7 @@ export default function Laporan({ onRefreshData, initialSummary = null }) {
     } finally {
       setTxLoading(false);
     }
-  }, [filterType, year, month, week, customStart, customEnd, divisiFilter, jenisFilter]);
+  }, [filterType, year, month, week, customStart, customEnd, divisiFilter, jenisFilter, kategoriFilter]);
 
   // Fetch Warehouse Stock Report (Stok Gudang Keseluruhan yang Tersedia / Barang Stok Menipis)
   const fetchWarehouseStockReport = useCallback(async () => {
@@ -163,6 +166,13 @@ export default function Laporan({ onRefreshData, initialSummary = null }) {
       setInstalledLoading(false);
     }
   }, [installedSearch, installedDivFilter]);
+
+  // Fetch kategori transaksi untuk dropdown
+  useEffect(() => {
+    fetch('/api/transaction-categories').then(r => r.json()).then(j => {
+      if (j.success && Array.isArray(j.data)) setKategoriOptions(j.data);
+    }).catch(() => {});
+  }, []);
 
   // Fetch Valuation
   const fetchValuation = useCallback(async () => {
@@ -266,6 +276,7 @@ export default function Laporan({ onRefreshData, initialSummary = null }) {
       'No Transaksi': t.no_transaksi,
       Jenis: t.jenis,
       Kategori: t.kategori_transaksi,
+      Kondisi: t.kondisi || 'Baik',
       Divisi: t.divisi,
       'Penerima / Lokasi': t.lokasi_penerima,
       'Kode Barang': t.kode_barang,
@@ -276,6 +287,13 @@ export default function Laporan({ onRefreshData, initialSummary = null }) {
       'Total Nilai (Rp)': t.total_harga,
       Keterangan: t.keterangan
     }));
+    if (txSummary && Array.isArray(txSummary.per_kategori) && txSummary.per_kategori.length) {
+      rows.push({});
+      rows.push({ No: 'REKAP PER KATEGORI' });
+      for (const k of txSummary.per_kategori) {
+        rows.push({ No: k.kategori_transaksi, 'No Transaksi': `${k.total_transaksi} trx`, Qty: `${k.total_qty} unit`, 'Total Nilai (Rp)': k.total_nilai });
+      }
+    }
     exportToCSV(`Laporan_Barang_Masuk_Keluar_${filterType}_${year}.csv`, rows);
   };
 
@@ -519,6 +537,18 @@ export default function Laporan({ onRefreshData, initialSummary = null }) {
                   <option value="STOK_TERSEDIA">Stok Gudang Keseluruhan yang Tersedia</option>
                   <option value="STOK_MENIPIS">Barang Stok Menipis</option>
                 </select>
+
+                {!isWarehouseStockMode && (
+                  <select
+                    aria-label="Filter Kategori Mutasi"
+                    value={kategoriFilter}
+                    onChange={(e) => setKategoriFilter(e.target.value)}
+                    className="px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-medium text-slate-700 max-w-[200px]"
+                  >
+                    <option value="">Semua Kategori</option>
+                    {kategoriOptions.map(k => <option key={k} value={k}>{k}</option>)}
+                  </select>
+                )}
               </div>
             </div>
 
@@ -868,13 +898,13 @@ export default function Laporan({ onRefreshData, initialSummary = null }) {
                     <tbody className="divide-y divide-slate-100">
                       {stockLoading ? (
                         <tr>
-                          <td colSpan="10" className="py-8 text-center text-slate-400">
+                          <td colSpan="12" className="py-8 text-center text-slate-400">
                             Memuat data stok gudang logistik...
                           </td>
                         </tr>
                       ) : stockData.length === 0 ? (
                         <tr>
-                          <td colSpan="10" className="py-10 text-center text-slate-500">
+                          <td colSpan="12" className="py-10 text-center text-slate-500">
                             {stockSearch || stockCategoryFilter ? (
                               <div className="space-y-2">
                                 <div className="font-bold text-slate-700 text-sm">
@@ -1034,6 +1064,25 @@ export default function Laporan({ onRefreshData, initialSummary = null }) {
                 </div>
               </div>
 
+              {/* Rekap per Kategori */}
+              {txSummary && Array.isArray(txSummary.per_kategori) && txSummary.per_kategori.length > 0 && (
+                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-3">Rekap per Kategori Mutasi <span className="normal-case font-normal text-slate-400">— dihitung utuh dari seluruh transaksi (tidak terpotong)</span></h4>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-slate-50 text-slate-600 border-b font-semibold">
+                        <tr><th className="py-2 px-3">Kategori</th><th className="py-2 px-3 text-right">Transaksi</th><th className="py-2 px-3 text-right">Total Qty</th><th className="py-2 px-3 text-right">Total Nilai</th></tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {txSummary.per_kategori.map(k => (
+                          <tr key={k.kategori_transaksi} className="hover:bg-slate-50"><td className="py-2 px-3 font-semibold">{k.kategori_transaksi}</td><td className="py-2 px-3 text-right">{formatNumber(k.total_transaksi)}</td><td className="py-2 px-3 text-right font-bold">{formatNumber(k.total_qty)}</td><td className="py-2 px-3 text-right font-bold text-indigo-700">{formatRupiah(k.total_nilai)}</td></tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
               {/* Visual Ratio & Division Breakdown Bar */}
               {txSummary && (txSummary.total_masuk_qty > 0 || txSummary.total_keluar_qty > 0) && (
                 <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-3">
@@ -1113,6 +1162,8 @@ export default function Laporan({ onRefreshData, initialSummary = null }) {
                         <th className="py-2.5 px-3">Tanggal</th>
                         <th className="py-2.5 px-3">No Transaksi</th>
                         <th className="py-2.5 px-3">Tipe</th>
+                        <th className="py-2.5 px-3">Kategori</th>
+                        <th className="py-2.5 px-3">Kondisi</th>
                         <th className="py-2.5 px-3">Divisi</th>
                         <th className="py-2.5 px-3">Penerima / Lokasi Terkait</th>
                         <th className="py-2.5 px-3">Kode & Nama Barang</th>
@@ -1125,13 +1176,13 @@ export default function Laporan({ onRefreshData, initialSummary = null }) {
                     <tbody className="divide-y divide-slate-100">
                       {txLoading ? (
                         <tr>
-                          <td colSpan="10" className="py-8 text-center text-slate-400">
+                          <td colSpan="12" className="py-8 text-center text-slate-400">
                             Memuat data laporan...
                           </td>
                         </tr>
                       ) : txData.length === 0 ? (
                         <tr>
-                          <td colSpan="10" className="py-8 text-center text-slate-400">
+                          <td colSpan="12" className="py-8 text-center text-slate-400">
                             Tidak ada transaksi mutasi pada periode yang dipilih.
                           </td>
                         </tr>
@@ -1147,6 +1198,8 @@ export default function Laporan({ onRefreshData, initialSummary = null }) {
                                 {t.jenis}
                               </span>
                             </td>
+                            <td className="py-2.5 px-3 whitespace-nowrap text-slate-700">{t.kategori_transaksi}</td>
+                            <td className="py-2.5 px-3 whitespace-nowrap"><span className={`px-2 py-0.5 rounded text-[10px] font-bold ${!t.kondisi || t.kondisi === 'Baik' ? 'bg-emerald-50 text-emerald-700' : t.kondisi === 'Afkir' ? 'bg-slate-800 text-white' : 'bg-amber-100 text-amber-800'}`}>{t.kondisi || 'Baik'}</span></td>
                             <td className="py-2.5 px-3 whitespace-nowrap font-medium text-slate-700">{t.divisi}</td>
                             <td className="py-2.5 px-3 font-medium text-slate-900 truncate max-w-xs">{t.lokasi_penerima}</td>
                             <td className="py-2.5 px-3">
