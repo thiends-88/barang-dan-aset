@@ -55,6 +55,19 @@ async function check(name, path, props) {
     const html = renderToString(React.createElement(Comp, props || {}));
     // Pastikan ada isi, bukan render kosong
     if (!html || html.length < 50) throw new Error('render terlalu pendek / kosong');
+    if (name === 'LoginPage') {
+      const loginSource = fs.readFileSync(path.slice(1), 'utf-8');
+      const liveSummary = loginSource.includes("'/api/public/summary'")
+        && loginSource.includes('useEffect')
+        && loginSource.includes('15_000')
+        && loginSource.includes('formatNumber(summary.masuk)')
+        && loginSource.includes('formatNumber(summary.keluar)')
+        && loginSource.includes('formatRupiah(summary.aset)')
+        && !loginSource.includes('+248')
+        && !loginSource.includes('−176')
+        && !loginSource.includes('Rp 1,2M');
+      if (!liveSummary) throw new Error('ringkasan login harus berasal dari API dan polling 15 detik, bukan angka hard-code');
+    }
     console.log(`OK   ${name} (${html.length} karakter HTML)`);
     pass++;
   } catch (e) {

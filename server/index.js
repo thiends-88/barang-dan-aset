@@ -3,7 +3,7 @@ import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import db, { initDb, DB_PATH, BACKUP_DIR } from './db.js';
+import db, { initDb, DB_PATH, DATA_DIR, BACKUP_DIR } from './db.js';
 import { DatabaseSync } from 'node:sqlite';
 import { pipeline, Transform } from 'node:stream';
 import { seedData, seedUsers } from './seed.js';
@@ -13,9 +13,16 @@ import { getGitInfo, readPackageVersion, localStamp } from '../scripts/build-inf
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Initialize DB and Seed data
+const CLEARED_MARKER_PATH = path.join(DATA_DIR, '.cleared');
+
+// Initialize DB and Seed data. Marker ini membedakan database produksi yang sengaja
+// dikosongkan dari database baru yang memang perlu diisi data contoh.
 initDb();
-seedData();
+if (fs.existsSync(CLEARED_MARKER_PATH)) {
+  console.log('[seed] dilewati — marker data/.cleared ditemukan');
+} else {
+  seedData();
+}
 seedUsers();
 
 // Paksa semua perubahan seed masuk ke file .db utama (bukan hanya WAL),
@@ -88,6 +95,7 @@ const PUBLIC_PATHS = [
   /^\/api\/auth\/login$/,
   /^\/api\/health$/, // diagnostik waktu server — berguna cek sinkron jam
   /^\/api\/version$/, // info versi terpasang — dipakai skrip update & VersionBadge
+  /^\/api\/public\//, // ringkasan aman untuk halaman login sebelum pengguna masuk
   /^\/api\/import\/template\// // template file statis, aman diumumkan
 ];
 
@@ -172,6 +180,65 @@ app.use((req, res, next) => {
     }
   }
   next();
+});
+
+// Ringkasan publik untuk halaman login. Hanya angka agregat yang dibuka; tidak ada
+// nama pelanggan, detail transaksi, ataupun informasi akun yang ikut terekspos.
+app.get('/api/public/summary', (req, res) => {
+  try {
+    const transaksi = db.prepare(`
+      SELECT
+        COALESCE(SUM(CASE WHEN jenis = 'MASUK' THEN jumlah ELSE 0 END), 0) AS masuk,
+        COALESCE(SUM(CASE WHEN jenis = 'KELUAR' THEN jumlah ELSE 0 END), 0) AS keluar
+      FROM transactions
+    `).get();
+    const gudang = db.prepare(`
+      SELECT COUNT(*) AS sku,
+             COALESCE(SUM(stok), 0) AS stok_gudang,
+             COALESCE(SUM(stok * harga_barang), 0) AS nilai_gudang
+      FROM items
+    `).get();
+    const pelanggan = db.prepare(`
+      SELECT COUNT(*) AS jumlah, COALESCE(SUM(total_harga), 0) AS nilai
+      FROM customers
+    `).get();
+    const fo = db.prepare(`
+      SELECT COUNT(*) AS jumlah, COALESCE(SUM(total_harga), 0) AS nilai
+      FROM fo_sites
+    `).get();
+    const tower = db.prepare(`
+      SELECT COUNT(*) AS jumlah, COALESCE(SUM(total_harga), 0) AS nilai
+      FROM tower_sites
+    `).get();
+    const transit = db.prepare(`
+      SELECT COALESCE(SUM(
+        (li.jumlah_dibawa - li.jumlah_terpasang - li.jumlah_kembali) * li.harga_barang
+      ), 0) AS nilai
+      FROM technician_loans l
+      JOIN technician_loan_items li ON li.loan_id = l.id
+      WHERE l.status IN ('AKTIF', 'SEBAGIAN')
+    `).get();
+
+    const summary = {
+      masuk: Number(transaksi.masuk || 0),
+      keluar: Number(transaksi.keluar || 0),
+      aset: Number(gudang.nilai_gudang || 0)
+        + Number(pelanggan.nilai || 0)
+        + Number(fo.nilai || 0)
+        + Number(tower.nilai || 0)
+        + Number(transit.nilai || 0),
+      sku: Number(gudang.sku || 0),
+      pelanggan: Number(pelanggan.jumlah || 0),
+      fo: Number(fo.jumlah || 0),
+      tower: Number(tower.jumlah || 0),
+      stok_gudang: Number(gudang.stok_gudang || 0)
+    };
+
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ success: true, data: summary });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // ==========================================
@@ -4340,6 +4407,9 @@ app.post('/api/reset-seed', (req, res) => {
       seedData();
     });
     resetTx();
+    // Reset seed adalah tindakan eksplisit untuk mengembalikan data contoh,
+    // jadi marker pengosongan harus ikut dihapus agar restart berikutnya normal.
+    fs.rmSync(CLEARED_MARKER_PATH, { force: true });
     res.json({ success: true, message: 'Data berhasil direset dan diisi ulang dengan data simulasi ISP' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -4358,7 +4428,24 @@ app.post('/api/reset-seed', (req, res) => {
 // endpoint GET di sini juga dicek eksplisit karena mengekspos seluruh isi database.
 
 const RESTORE_CONFIRM_WORD = 'PULIHKAN';
+const CLEAR_CONFIRM_WORD = 'KOSONGKAN';
 const RESTORE_MAX_BYTES = 512 * 1024 * 1024; // 512 MB
+const CLEAR_DATA_TABLES = [
+  'technician_loan_movements',
+  'technician_loan_items',
+  'technician_loans',
+  'technicians',
+  'customer_items',
+  'customers',
+  'fo_items',
+  'fo_sites',
+  'tower_items',
+  'tower_sites',
+  'transactions',
+  'damaged_items',
+  'items',
+  'categories'
+];
 // Tabel inti yang wajib ada pada berkas yang dipulihkan (tabel baru seperti Bon
 // Teknisi akan dibuat otomatis oleh initDb() saat server menyala kembali).
 const RESTORE_REQUIRED_TABLES = ['categories', 'items', 'customers', 'customer_items', 'fo_sites', 'fo_items', 'tower_sites', 'tower_items', 'transactions', 'users'];
@@ -4368,6 +4455,17 @@ function requireAdmin(req, res) {
   if (req.user?.role === 'admin') return true;
   res.status(403).json({ success: false, error: 'Akses ditolak: hanya Administrator yang boleh mengelola cadangan database.' });
   return false;
+}
+
+/** Tulis marker secara atomik agar server tidak pernah melihat berkas setengah jadi. */
+function writeClearedMarker(contents) {
+  const temporary = `${CLEARED_MARKER_PATH}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(temporary, contents, 'utf8');
+    fs.renameSync(temporary, CLEARED_MARKER_PATH);
+  } finally {
+    fs.rmSync(temporary, { force: true });
+  }
 }
 
 function stampForFile(d = new Date()) {
@@ -4423,6 +4521,79 @@ function countTables(conn) {
   }
   return counts;
 }
+
+app.post('/api/admin/database/clear', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const konfirmasi = String(req.body?.konfirmasi || req.query?.konfirmasi || req.headers['x-konfirmasi'] || '');
+  if (konfirmasi !== CLEAR_CONFIRM_WORD) {
+    return res.status(400).json({
+      success: false,
+      error: `Pengosongan database harus dikonfirmasi dengan kata ${CLEAR_CONFIRM_WORD}.`
+    });
+  }
+
+  let markerSebelumnya = null;
+  let markerAdaSebelumnya = false;
+  let backupPath = '';
+  try {
+    // Backup konsisten harus selesai sebelum ada data yang dihapus (DB memakai WAL).
+    ensureBackupDir();
+    const stem = `sebelum-kosongkan-${stampForFile()}`;
+    backupPath = path.join(BACKUP_DIR, `${stem}.db`);
+    let suffix = 1;
+    while (fs.existsSync(backupPath)) {
+      backupPath = path.join(BACKUP_DIR, `${stem}-${suffix}.db`);
+      suffix++;
+    }
+    const ukuranBackup = snapshotDatabase(backupPath);
+
+    markerAdaSebelumnya = fs.existsSync(CLEARED_MARKER_PATH);
+    if (markerAdaSebelumnya) markerSebelumnya = fs.readFileSync(CLEARED_MARKER_PATH);
+    const markerIsi = `${JSON.stringify({
+      clearedAt: localStamp(new Date()),
+      clearedBy: req.user.username,
+      backup: path.basename(backupPath)
+    }, null, 2)}\n`;
+
+    // Pasang marker SEBELUM transaksi hapus. Bila proses mati sesudah commit tetapi
+    // sebelum restart, seed tidak akan mengisi ulang database yang sengaja dikosongkan.
+    writeClearedMarker(markerIsi);
+
+    try {
+      const clear = db.transaction(() => {
+        for (const table of CLEAR_DATA_TABLES) {
+          db.prepare(`DELETE FROM ${table}`).run();
+        }
+      });
+      clear();
+    } catch (clearError) {
+      // Jika transaksi gagal, pulihkan keadaan marker sebelumnya bersama database.
+      try {
+        if (markerAdaSebelumnya) writeClearedMarker(markerSebelumnya);
+        else fs.rmSync(CLEARED_MARKER_PATH, { force: true });
+      } catch (markerError) {
+        console.error('[clear] Gagal memulihkan marker pengosongan:', markerError.message);
+      }
+      throw clearError;
+    }
+
+    try { db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch { /* WAL tetap aman bila checkpoint tertunda */ }
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({
+      success: true,
+      message: 'Semua data operasional berhasil dikosongkan. Akun pengguna tetap dipertahankan.',
+      data: {
+        backup: path.basename(backupPath),
+        ukuranBackup,
+        counts: countTables(db),
+        usersDipertahankan: db.prepare('SELECT COUNT(*) AS c FROM users').get().c,
+        marker: path.basename(CLEARED_MARKER_PATH)
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: `Gagal mengosongkan database: ${err.message}` });
+  }
+});
 
 /**
  * Validasi berkas kandidat pemulihan. Mengembalikan { counts, adminAktif } bila sah,

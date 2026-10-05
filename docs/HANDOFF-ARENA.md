@@ -5,7 +5,7 @@
 > pernah kena, dan hal-hal yang belum selesai — supaya sesi baru tidak mengulang debat yang
 > sama atau merusak hal yang sudah disepakati.
 >
-> Terakhir diperbarui: **4 Oktober 2026** · basis commit: `0a04408` (PR #15 — §6.12 + audit validasi §6.13)
+> Terakhir diperbarui: **5 Oktober 2026** · basis commit: `5ea18ec` (PR #16; keputusan fitur baru di §6.14)
 > Repo: <https://github.com/thiends-88/barang-dan-aset> · Branch kerja sesi terakhir: `arena/01a1013f-barang-dan-aset`
 > Sesi baru cukup diminta: *"Baca docs/HANDOFF-ARENA.md lalu lanjutkan dari §12."*
 
@@ -357,11 +357,15 @@ itu wajar karena perbedaan versi toolchain, bukan bug.
 ### 6.8 Data & seed
 - `seedData()` **idempoten** (hanya mengisi bila tabel kosong), `seedUsers()` mengisi 4 akun demo.
 - `POST /api/reset-seed` (khusus `admin`, tombol "Reset Data Contoh" di navbar) menghapus data
-  operasional (bukan user) dan mengisi ulang dataset demo ISP.
+  operasional (bukan user), mengisi ulang dataset demo ISP, lalu menghapus marker `data/.cleared`.
+- Saat startup, marker `data/.cleared` membuat `seedData()` dilewati (log `[seed] dilewati`), tetapi
+  `seedUsers()` tetap berjalan agar akun tidak hilang. Ini mencegah database yang sengaja dikosongkan
+  terisi kembali dengan data contoh setelah proses restart.
 - `PRAGMA wal_checkpoint(TRUNCATE)` dijalankan saat start supaya data benar-benar tertulis ke
   berkas `.db` utama (bukan hanya WAL) — penting agar snapshot workspace tidak kehilangan data.
 - DB **tidak dilacak git**. Clone baru / workspace yang kehilangan DB cukup menjalankan server:
-  `initDb()` membuat skema, `seedData()` + `seedUsers()` mengisi data contoh & 4 akun demo.
+  `initDb()` membuat skema, `seedData()` + `seedUsers()` mengisi data contoh & 4 akun demo, kecuali
+  bila marker `data/.cleared` memang ada.
 
 ### 6.9 Info versi (PR #5)
 - `GET /api/version` **publik** (tanpa login, `Cache-Control: no-store`):
@@ -508,6 +512,25 @@ lalu diperbaiki di ronde yang sama (semua bukti perilaku ditambahkan sebagai tes
   audit ini juga memverifikasi ulang alur Bon Teknisi, otentikasi/peran, cadangan DB, dan filter transaksi
   (tidak ditemukan bug tambahan di area tersebut).
 
+### 6.14 Kosongkan semua data & Ringkasan Live halaman login (sesi 5 Oktober 2026)
+- `POST /api/admin/database/clear` khusus `admin` dan wajib dikonfirmasi dengan `KOSONGKAN`.
+  Sebelum menghapus, server membuat cadangan konsisten `data/backups/sebelum-kosongkan-*.db`
+  menggunakan `VACUUM INTO` + `integrity_check`; penghapusan transaksi menghapus semua tabel
+  operasional/master kecuali `users`.
+- Marker `data/.cleared` ditulis secara atomik sebelum transaksi hapus. Startup melewati `seedData()`
+  selama marker ada; `seedUsers()` tetap dijalankan. Karena itu kondisi 0 data bertahan setelah restart.
+  `POST /api/reset-seed` adalah tindakan eksplisit untuk mengisi ulang data contoh dan menghapus marker.
+- `.gitignore` mengabaikan `data/.cleared`; marker dan DB tidak boleh masuk Git.
+- `GET /api/public/summary` publik hanya mengembalikan agregat `{masuk, keluar, aset, sku, pelanggan,
+  fo, tower, stok_gudang}`. `masuk/keluar` adalah jumlah unit mutasi seumur database; `aset` memakai
+  valuasi total yang sama dengan Dashboard. Dataset contoh menghasilkan 1349 / 470 / Rp189.928.500;
+  selepas clear semua nilai agregat 0.
+- `LoginPage.jsx` mengambil ringkasan saat dibuka dan polling setiap 15 detik; pills dan kartu MASUK /
+  KELUAR / ASET seluruhnya memakai data API + `formatNumber` / `formatRupiah`, tanpa angka demo hard-coded.
+- Verifikasi siklus: backup valid → clear menghasilkan 0 → restart tetap 0 (`[seed] dilewati`) →
+  `reset-seed` menghapus marker dan mengembalikan 1349 / 470 / Rp189.928.500. `npm test`: **163 API +
+  49 render**, `npm run build` sukses.
+
 ---
 
 ## 7. Database & data
@@ -526,8 +549,8 @@ lalu diperbaiki di ronde yang sama (semua bukti perilaku ditambahkan sebagai tes
 - **`data/inventory.db` TIDAK dilacak git (sejak PR #5).** `.gitignore` memuat `data/*.db`,
   berkas WAL/SHM/journal, dan `data/backups/`. Alasannya: dulu `git pull` di server **menimpa**
   database produksi dengan data contoh.
-- Server membuat & mengisi DB contoh otomatis bila berkas belum ada (lihat §6.8), jadi clone
-  baru tetap langsung bisa dipakai.
+- Server membuat skema & mengisi DB contoh otomatis bila berkas belum ada (lihat §6.8), jadi clone
+  baru tetap langsung bisa dipakai; bila `data/.cleared` ada, seed operasional sengaja dilewati.
 - **Update server wajib lewat `./update-proxmox.sh`** (dry-run dulu). Pada update PERTAMA setelah
   PR #5, `git reset --hard` akan *menghapus* `data/inventory.db` (karena berkas itu keluar dari
   index); skrip mencadangkannya dulu (`VACUUM INTO`, lolos `integrity_check`) lalu memulihkannya
@@ -770,6 +793,12 @@ di README, info versi build (`/api/version`,
   4. Tabel spesifikasi server Proxmox LXC/VM ditambahkan di `README.md`.
   5. Tes: Seksi **0C** `api-test.mjs` (+1 → **157/157 lolos**) dan Seksi **23** `ssr-test.mjs` (+1 → **48/48 lolos**), `dist/` di-build ulang.
 - Ronde lanjutan (pertanyaan pemilik *"apa tidak ada bug lagi dari keseluruhan aplikasi?"*): audit kode server + uji langsung API dengan input aneh menemukan & memperbaiki celah integritas stok (**§6.13**) — koreksi stok tak tercatat, stok awal minus, kode barang yatim, jenis/tanggal/divisi tidak tervalidasi. Tes naik ke **163 API + 49 render** (Seksi **0D** & **24**).
+
+**Selesai di sesi 5 Oktober 2026 (branch `arena/01a10a2b-barang-dan-aset`):**
+- **Kosongkan Semua Data** khusus admin: backup SQLite konsisten via `VACUUM INTO`, hapus seluruh tabel operasional kecuali `users`, dan marker `data/.cleared` agar seed demo tidak hidup kembali setelah restart (§6.14).
+- `POST /api/reset-seed` secara eksplisit menghapus marker; verifikasi integrasi menunjukkan data tetap 0 sesudah restart dan pulih ke 1349 masuk / 470 keluar setelah reset.
+- Ringkasan login publik `/api/public/summary` dan `LoginPage` live (polling 15 detik): pills SKU/pelanggan/FO/tower, mutasi, valuasi aset, dan stok gudang bersumber dari DB.
+- Tes: **163/163 API + 49/49 render**, build frontend sukses.
 
 **Belum dikerjakan / kandidat sesi berikutnya:**
 
