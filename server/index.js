@@ -2163,7 +2163,8 @@ app.put('/api/fo/:id', (req, res) => {
         divisi: 'DIVISI FO',
         refId: Number(id),
         lokasiPenerima: (daerah_lokasi ? daerah_lokasi.trim() : current.daerah_lokasi),
-        label: `Edit titik FO ${current.daerah_lokasi}`
+        label: `Edit titik FO ${current.daerah_lokasi}`,
+        pengembalian: req.body.pengembalian
       });
     }
 
@@ -2421,7 +2422,8 @@ app.put('/api/tower/:id', (req, res) => {
         divisi: 'DIVISI TOWER',
         refId: Number(id),
         lokasiPenerima: (daerah_lokasi ? daerah_lokasi.trim() : current.daerah_lokasi),
-        label: `Edit site tower ${current.daerah_lokasi}`
+        label: `Edit site tower ${current.daerah_lokasi}`,
+        pengembalian: req.body.pengembalian
       });
     }
 

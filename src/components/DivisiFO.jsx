@@ -27,6 +27,8 @@ export default function DivisiFO({ foSites, items, onRefresh, canEdit = true }) 
   const [selectedSiteDetail, setSelectedSiteDetail] = useState(null);
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
   const [editingSite, setEditingSite] = useState(null);
+  const [returnConfirmation, setReturnConfirmation] = useState(null);
+  const [returnPayload, setReturnPayload] = useState(null);
   const [printSite, setPrintSite] = useState(null);
 
   // Form State
@@ -195,6 +197,13 @@ export default function DivisiFO({ foSites, items, onRefresh, canEdit = true }) 
       return;
     }
 
+    const returned = installedItemChanges(formData.items || [], formData.items || []).returned;
+    if (returned.length) {
+      setFormError('');
+      setReturnConfirmation({ items: returned, payload: JSON.parse(JSON.stringify(formData)) });
+      return;
+    }
+
     setIsSubmitting(true);
     setFormError('');
 
@@ -205,7 +214,7 @@ export default function DivisiFO({ foSites, items, onRefresh, canEdit = true }) 
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData)
+        body: JSON.stringify({ ...formData, pengembalian: returnConfirmation ? returnConfirmation.items : undefined })
       });
 
       const data = await res.json();
@@ -832,6 +841,36 @@ export default function DivisiFO({ foSites, items, onRefresh, canEdit = true }) 
           </div>
         </div>
       )}
+
+      {/* Konfirmasi Pengembalian Barang Terpasang FO */}
+      {returnConfirmation && <ReturnInstalledItemsModal
+        items={returnConfirmation.items}
+        busy={isSubmitting}
+        error={formError}
+        onCancel={() => { setReturnConfirmation(null); setFormError(''); }}
+        onConfirm={pengembalian => {
+          setIsFormModalOpen(false);
+          // Save with pengembalian data
+          const saveData = { ...returnPayload, pengembalian };
+          // Manually trigger the save logic
+          const url = editingSite ? `/api/fo/${editingSite.id}` : '/api/fo';
+          const method = editingSite ? 'PUT' : 'POST';
+          fetch(url, {
+            method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(saveData)
+          }).then(async res => {
+            const data = await res.json();
+            if (!res.ok || !data.success) {
+              throw new Error(data.error || 'Gagal menyimpan titik FO');
+            }
+            notify(editingSite ? 'Data titik FO berhasil diperbarui' : 'Titik FO baru berhasil disimpan', 'success');
+            onRefresh();
+          }).catch(err => {
+            setFormError(err.message);
+          });
+        }}
+      />}
 
       {/* Work Order / Berita Acara FO Print Modal */}
       <WorkOrderPrintModal
