@@ -580,6 +580,25 @@ try {
   } else sectionBad('31.1 Keperluan bon tidak mendukung beberapa baris');
 } catch (e) { sectionBad(`31.1 Render keperluan multibaris gagal: ${e.message}`); }
 
+console.log('\n=== 32. Realisasi Bon dalam Tampilan Mutasi ===');
+try {
+  const KM = (await vite.ssrLoadModule('/src/components/KeluarMasukBarang.jsx')).default;
+  const html = renderToString(React.createElement(KM, {
+    items, onRefreshMaster() {}, initialSummary: { total_transaksi: 1, total_realisasi_bon: 1, total_realisasi_qty: 2, total_keluar_qty: 0, total_keluar_nilai: 0 },
+    initialTransactions: [{ id: -1, record_key: 'bon-pasang-1', no_transaksi: 'REALISASI-1', tanggal: '2026-10-15', waktu: '10:00:00',
+      jenis: 'REALISASI_BON', kategori_transaksi: 'Realisasi Bon / Pemasangan', no_bon: 'BON-UJI-MUTASI', divisi: 'PELANGGAN',
+      lokasi_penerima: 'Pelanggan Uji Bon', lokasi_tujuan: 'Rumah Uji Lokasi', teknisi_pemasang: 'Pemasang Uji Bon',
+      kode_barang: 'KODE-UJI-BON', nama_barang: 'Radio Uji Bon', serial_number: 'SN-UJI-MUTASI', jumlah: 2, satuan: 'unit', harga_satuan: 1000, total_harga: 2000 }],
+  }));
+  const src = fs.readFileSync('src/components/KeluarMasukBarang.jsx', 'utf-8');
+  if (['REALISASI BON', 'BON-UJI-MUTASI', 'Pelanggan Uji Bon', 'Rumah Uji Lokasi', 'Pemasang Uji Bon', 'SN-UJI-MUTASI',
+      'Nilai aset terpasang', 'tidak mengurangi stok gudang lagi.', 'Total Masuk/Keluar hanya menghitung mutasi gudang'].every(t => html.includes(t))
+      && html.includes('value="REALISASI_BON"') && src.includes("include_bon: '1'")
+      && src.includes('/api/transaction-categories?include_bon=1') && src.includes("'Nilai Aset Terpasang (Rp)'")) {
+    sectionOk('32.1 Realisasi tampil lengkap, filter khusus tersedia, ringkasan/CSV membedakan histori pemasangan dari stok gudang');
+  } else sectionBad('32.1 Tampilan realisasi bon atau pemisahan total tidak sesuai');
+} catch (e) { sectionBad(`32.1 Render realisasi dalam Mutasi gagal: ${e.message}`); }
+
 await vite.close();
 console.log(`\nHasil: ${pass} lolos, ${fail} gagal`);
 process.exit(fail ? 1 : 0);

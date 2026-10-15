@@ -2458,12 +2458,31 @@ app.delete('/api/tower/:id', (req, res) => {
 // SQL atas seluruh baris yang cocok dengan filter (tanpa terpotong LIMIT).
 const MAX_TRANSACTION_ROWS = 5000;
 
+// Riwayat gabungan hanya untuk tampilan Mutasi. Tidak menulis/menggandakan transaksi gudang.
+// UNION membaca ledger bon langsung, sehingga realisasi historis ikut terlihat tanpa backfill.
+function transactionReadSource(includeBon) {
+  if (!includeBon) return 'transactions';
+  return `(SELECT t.id, t.no_transaksi, t.tanggal, t.waktu, t.jenis, t.kategori_transaksi, t.divisi,
+    t.ref_id, t.lokasi_penerima, t.kode_barang, t.nama_barang, t.satuan, t.jumlah, t.harga_satuan,
+    t.total_harga, t.keterangan, t.created_at, t.serial_number, t.kondisi,
+    'GUDANG' AS sumber_aktivitas, 'trx-' || t.id AS record_key,
+    '' AS no_bon, '' AS teknisi_pemasang, '' AS lokasi_tujuan
+    FROM transactions t
+    UNION ALL
+    SELECT -m.id, 'REALISASI-' || m.id, m.tanggal, m.waktu, 'REALISASI_BON', 'Realisasi Bon / Pemasangan',
+    m.divisi, m.tujuan_id, m.tujuan_nama, m.kode_barang, m.nama_barang, m.satuan, m.jumlah,
+    m.harga_barang, m.jumlah * m.harga_barang, m.keterangan, m.created_at, m.serial_number, 'Baik',
+    'REALISASI_BON', 'bon-pasang-' || m.id, l.no_bon, m.teknisi_nama, m.lokasi_tujuan
+    FROM technician_loan_movements m JOIN technician_loans l ON l.id = m.loan_id
+    WHERE m.jenis = 'PASANG')`;
+}
+
 // Daftar kategori transaksi yang pernah dipakai (untuk dropdown filter)
 app.get('/api/transactions/categories', (req, res) => {
   try {
     const rows = db.prepare(`
       SELECT kategori_transaksi AS kategori, COUNT(*) AS jumlah
-      FROM transactions
+      FROM ${transactionReadSource(req.query.include_bon === '1')}
       WHERE kategori_transaksi IS NOT NULL AND kategori_transaksi != ''
       GROUP BY kategori_transaksi
       ORDER BY kategori_transaksi ASC
@@ -2479,7 +2498,7 @@ app.get('/api/transaction-categories', (req, res) => {
   try {
     const rows = db.prepare(`
       SELECT kategori_transaksi AS kategori, COUNT(*) AS jumlah
-      FROM transactions
+      FROM ${transactionReadSource(req.query.include_bon === '1')}
       WHERE kategori_transaksi IS NOT NULL AND kategori_transaksi != ''
       GROUP BY kategori_transaksi
       ORDER BY kategori_transaksi ASC
@@ -2507,6 +2526,8 @@ app.get('/api/transactions', (req, res) => {
       limit
     } = req.query;
 
+    const includeBon = req.query.include_bon === '1';
+    const sourceSql = transactionReadSource(includeBon);
     let whereSql = ' WHERE 1=1';
     const params = [];
 
@@ -2562,7 +2583,7 @@ app.get('/api/transactions', (req, res) => {
     }
 
     // Jenis filter (MASUK / KELUAR)
-    if (jenis && (jenis === 'MASUK' || jenis === 'KELUAR')) {
+    if (jenis && (jenis === 'MASUK' || jenis === 'KELUAR' || (includeBon && jenis === 'REALISASI_BON'))) {
       whereSql += ' AND jenis = ?';
       params.push(jenis);
     }
@@ -2579,6 +2600,10 @@ app.get('/api/transactions', (req, res) => {
       whereSql += ' AND (kode_barang LIKE ? OR nama_barang LIKE ? OR no_transaksi LIKE ? OR lokasi_penerima LIKE ? OR keterangan LIKE ? OR kategori_transaksi LIKE ? OR kondisi LIKE ?)';
       const s = `%${search}%`;
       params.push(s, s, s, s, s, s, s);
+      if (includeBon) {
+        whereSql = whereSql.slice(0, -1) + ' OR no_bon LIKE ? OR teknisi_pemasang LIKE ? OR lokasi_tujuan LIKE ? OR serial_number LIKE ?)';
+        params.push(s, s, s, s);
+      }
     }
 
     // Ringkasan dihitung utuh di SQL atas seluruh baris yang cocok dengan filter
@@ -2589,8 +2614,11 @@ app.get('/api/transactions', (req, res) => {
         COALESCE(SUM(CASE WHEN jenis = 'MASUK' THEN jumlah ELSE 0 END), 0) AS total_masuk_qty,
         COALESCE(SUM(CASE WHEN jenis = 'MASUK' THEN total_harga ELSE 0 END), 0) AS total_masuk_nilai,
         COALESCE(SUM(CASE WHEN jenis = 'KELUAR' THEN jumlah ELSE 0 END), 0) AS total_keluar_qty,
-        COALESCE(SUM(CASE WHEN jenis = 'KELUAR' THEN total_harga ELSE 0 END), 0) AS total_keluar_nilai
-      FROM transactions
+        COALESCE(SUM(CASE WHEN jenis = 'KELUAR' THEN total_harga ELSE 0 END), 0) AS total_keluar_nilai,
+        SUM(CASE WHEN jenis = 'REALISASI_BON' THEN 1 ELSE 0 END) AS total_realisasi_bon,
+        COALESCE(SUM(CASE WHEN jenis = 'REALISASI_BON' THEN jumlah ELSE 0 END), 0) AS total_realisasi_qty,
+        SUM(CASE WHEN jenis IN ('MASUK', 'KELUAR') THEN 1 ELSE 0 END) AS total_transaksi_gudang
+      FROM ${sourceSql}
       ${whereSql}
     `).get(...params);
 
@@ -2606,7 +2634,7 @@ app.get('/api/transactions', (req, res) => {
         COALESCE(SUM(CASE WHEN jenis='KELUAR' THEN jumlah ELSE 0 END),0) AS keluar_qty,
         COALESCE(SUM(CASE WHEN jenis='MASUK' THEN total_harga ELSE 0 END),0) AS masuk_nilai,
         COALESCE(SUM(CASE WHEN jenis='KELUAR' THEN total_harga ELSE 0 END),0) AS keluar_nilai
-      FROM transactions
+      FROM ${sourceSql}
       ${whereSql}
       GROUP BY kategori_transaksi
       ORDER BY kategori_transaksi ASC
@@ -2629,7 +2657,7 @@ app.get('/api/transactions', (req, res) => {
       : MAX_TRANSACTION_ROWS;
 
     const txs = db.prepare(
-      `SELECT * FROM transactions${whereSql} ORDER BY tanggal DESC, id DESC LIMIT ?`
+      `SELECT * FROM ${sourceSql}${whereSql} ORDER BY ${includeBon ? 'tanggal DESC, waktu DESC, ABS(id) DESC, record_key DESC' : 'tanggal DESC, id DESC'} LIMIT ?`
     ).all(...params, rowLimit);
 
     const totalTransaksi = Number(agg?.total_transaksi) || 0;
@@ -2644,6 +2672,9 @@ app.get('/api/transactions', (req, res) => {
       data: txs,
       summary: {
         total_transaksi: totalTransaksi,
+        total_transaksi_gudang: Number(agg.total_transaksi_gudang) || 0,
+        total_realisasi_bon: Number(agg.total_realisasi_bon) || 0,
+        total_realisasi_qty: Number(agg.total_realisasi_qty) || 0,
         ditampilkan: txs.length,
         displayed: txs.length,
         limit: rowLimit,

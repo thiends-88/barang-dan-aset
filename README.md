@@ -104,6 +104,8 @@ Menu **Bon Teknisi** mencatat barang yang dibawa teknisi dari gudang dalam **3 t
 
 Fitur pendukung: riwayat mutasi per bon & lintas bon (cari lewat No. Bon / SN / tujuan), cetak **surat jalan** atau **rekap lengkap** bon (A4), **laporan** (per teknisi pembawa & pemasang, per barang, per divisi tujuan; filter periode/status/divisi/teknisi; rekap per divisi pembawa; CSV & cetak), kolom *dibawa teknisi* di Master Barang, dan kartu *Dibawa Teknisi* di Dashboard. Hak akses: admin & staff gudang membuat bon / mengembalikan / membatalkan; teknisi mencatat realisasi pemasangan; viewer hanya melihat.
 
+**Realisasi Bon di menu Mutasi / Keluar–Masuk:** daftar menampilkan transaksi gudang dan histori pemasangan dari Bon Teknisi, termasuk realisasi yang sudah pernah dicatat. Pilih Jenis **Realisasi Bon / Pemasangan**, atau cari nomor bon, teknisi, SN dan lokasi. Baris realisasi menampilkan tujuan Pelanggan/FO/Tower, teknisi pemasang, jumlah dan nilai aset terpasang. Realisasi **tidak mengurangi stok lagi** dan tidak ikut total barang MASUK/KELUAR atau neto gudang. Jumlah record mencakup kedua jenis aktivitas; jumlah baris/qty realisasi ditampilkan terpisah. CSV memisahkan nilai aset terpasang dari nilai transaksi gudang; hasil cetak mengikuti daftar/filter. Laporan stok gudang di menu Laporan tetap memakai transaksi gudang saja.
+
 ### 7. Laporan Terpadu (Reporting Engine)
 - **Laporan Barang Masuk & Keluar**:
   - Filter rentang tanggal bebas (Dari - Sampai).

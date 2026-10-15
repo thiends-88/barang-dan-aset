@@ -851,6 +851,14 @@ di README, info versi build (`/api/version`,
 - Backend sudah menyimpan baris baru di field `keperluan` (trim hanya pada awal/akhir), sehingga tidak perlu migrasi atau perubahan stok.
 - Tes API memastikan isi multibaris utuh saat buat/baca detail; render Seksi 31 memastikan textarea dan dokumen kedua varian mempertahankan baris. Verifikasi: **197 API + 56 render lolos**, build produksi diperbarui. Pada percobaan pertama tes cleanup teknisi lama sempat gagal (1 tersisa); pengulangan rangkaian lengkap lolos.
 
+**Realisasi Bon tampil di Mutasi / Keluar–Masuk (15 Oktober 2026):**
+- Menindaklanjuti temuan pemilik: realisasi PASANG sebelumnya hanya tampak di riwayat Bon, bukan daftar Mutasi. Kini tampilan Mutasi menyatukan keduanya sebagai **riwayat baca-saja**, bukan membuat transaksi stok baru.
+- GET `/api/transactions?include_bon=1` membaca UNION transaksi gudang dengan `technician_loan_movements.jenis=PASANG` + nomor bon. Realisasi lama otomatis ikut terbaca tanpa migrasi/backfill. Identitas virtual negatif + record_key mencegah bentrok; jenis `REALISASI_BON`, kategori `Realisasi Bon / Pemasangan`. BAWA/KEMBALI/BATAL tidak digandakan.
+- Parameter opt-in hanya dipakai KeluarMasukBarang. Endpoint default tanpa parameter (dipakai Laporan/klien lama) tetap transaksi gudang. Endpoint kategori beserta alias juga mendukung include_bon=1.
+- Tanggal/tahun/bulan/minggu/divisi/jenis/kategori/pencarian/limit diterapkan ke riwayat gabungan. Pencarian tambahan mencakup nomor bon, pemasang, lokasi dan SN. Ringkasan dihitung sebelum LIMIT 5.000; total record mencakup seluruh aktivitas, tetapi total masuk/keluar/neto hanya SUM jenis MASUK/KELUAR. Field tambahan: total_transaksi_gudang, total_realisasi_bon, total_realisasi_qty.
+- UI: badge indigo REALISASI BON, nomor bon, nama tujuan, lokasi, pemasang dan SN; catatan tidak terpotong. Filter khusus realisasi + penjelasan bahwa tidak mengurangi stok lagi. Nilai di baris realisasi diberi label nilai aset terpasang. CSV menaruh nilai realisasi pada kolom terpisah dari Total Nilai transaksi gudang (termasuk rekap kategori); cetak mengikuti tampilan.
+- Tidak mengubah alur install bon, stok, transaksi tersimpan atau valuasi gudang. Tes memastikan realisasi Pelanggan/FO/Tower lengkap, nilai/qty masuk-keluar-neto tidak dobel, filter, limit dan kompatibilitas endpoint default. Tes render Seksi 32; 8 pemeriksaan interaksi jsdom untuk baca histori/filter/cari/CSV/stok lolos. Verifikasi akhir **212 API + 57 render lolos**, build produksi berhasil.
+
 **Belum dikerjakan / kandidat sesi berikutnya:**
 
 0. Bon Teknisi: opsi **tambah barang ke bon yang sudah berjalan**, pembatasan teknisi hanya melihat/merealisasi bon sendiri,

@@ -1312,6 +1312,56 @@ console.log('\n=== 6F. BON / BARANG BAWAAN TEKNISI (3 tahap: bawa → pasang →
   const twRow = db.prepare('SELECT * FROM tower_items WHERE tower_id = ? AND kode_barang = ? AND no_bon = ?').get(twr.id, SLING, 'BON-UJI-001');
   if (foRow?.jumlah === 5 && twRow?.jumlah === 40.5 && twRow.dipasang_oleh === 'Tim Tower') ok('Tahap 2: baris terpasang FO & Tower mencatat bon + teknisi pemasang'); else bad('Tahap 2: baris terpasang FO/Tower', JSON.stringify([foRow, twRow]));
 
+  // Riwayat Mutasi gabungan membaca realisasi yang SUDAH tercatat, tanpa backfill transaksi.
+  {
+    const raw = await req('GET', '/api/transactions');
+    const combined = await req('GET', '/api/transactions?include_bon=1');
+    const rs = combined.json?.summary || {}, baseline = raw.json?.summary || {};
+    const events = (combined.json?.data || []).filter(t => t.jenis === 'REALISASI_BON' && t.no_bon === bon.no_bon);
+    if (combined.status === 200 && events.length === 4 && new Set(events.map(t => t.record_key)).size === 4
+        && events.every(t => t.sumber_aktivitas === 'REALISASI_BON' && t.kategori_transaksi === 'Realisasi Bon / Pemasangan')
+        && events.some(t => t.divisi === 'PELANGGAN' && t.lokasi_penerima === cust.nama_pelanggan && t.lokasi_tujuan === 'Rumah pelanggan, Jl. Contoh No. 5'
+          && t.teknisi_pemasang === 'Andi Pratama' && t.serial_number === 'SN-UJI-AA')
+        && events.some(t => t.divisi === 'DIVISI FO' && t.jumlah === 5)
+        && events.some(t => t.divisi === 'DIVISI TOWER' && t.jumlah === 40.5)) {
+      ok('Mutasi gabungan: realisasi bon historis Pelanggan/FO/Tower tampil lengkap nomor bon, tujuan, lokasi, teknisi, SN dan jumlah');
+    } else bad('Mutasi gabungan: rincian realisasi bon tidak lengkap', JSON.stringify(combined.json).slice(0, 200));
+    const totals = ['total_masuk_qty', 'total_masuk_nilai', 'total_keluar_qty', 'total_keluar_nilai', 'net_qty', 'net_nilai'];
+    if (totals.every(k => rs[k] === baseline[k]) && rs.total_transaksi === baseline.total_transaksi + 4
+        && rs.total_transaksi_gudang === baseline.total_transaksi && rs.total_realisasi_bon === 4 && rs.total_realisasi_qty === 48.5
+        && stockOf(ONT) === sOntSebelumPasang && trxSince(mark2).length === 0) {
+      ok('Mutasi gabungan: ringkasan masuk/keluar/neto dan stok tetap; realisasi dihitung terpisah tanpa transaksi gudang baru');
+    } else bad('Mutasi gabungan: ringkasan terduplikasi', JSON.stringify(rs));
+    const limited = await req('GET', '/api/transactions?include_bon=1&limit=1');
+    if (limited.json?.data?.length === 1 && limited.json.summary.terpotong && limited.json.summary.total_transaksi === rs.total_transaksi
+        && limited.json.summary.total_realisasi_bon === 4 && limited.json.summary.total_keluar_nilai === baseline.total_keluar_nilai) {
+      ok('Mutasi gabungan: LIMIT rincian tidak memotong ringkasan stok maupun jumlah realisasi');
+    } else bad('Mutasi gabungan: batas baris/ringkasan');
+    for (const [filter, expected] of [
+      ['jenis=REALISASI_BON', 4], ['kategori_transaksi=Realisasi%20Bon%20%2F%20Pemasangan', 4],
+      ['jenis=REALISASI_BON&divisi=PELANGGAN', 2], ['jenis=REALISASI_BON&divisi=DIVISI%20FO', 1],
+      ['jenis=REALISASI_BON&divisi=DIVISI%20TOWER', 1], ['search=SN-UJI-AA', 1],
+      ['search=Rumah%20pelanggan%2C%20Jl.%20Contoh%20No.%205', 2],
+      ['search=Tim%20Tower', 1], ['jenis=REALISASI_BON&search=BON-UJI-001', 4],
+      ['jenis=REALISASI_BON&start_date=1900-01-01&end_date=1900-01-02', 0],
+    ]) {
+      const filtered = await req('GET', `/api/transactions?include_bon=1&${filter}`);
+      if (filtered.status === 200 && filtered.json?.data?.length === expected) ok(`Mutasi gabungan: filter ${filter} sesuai`);
+      else bad(`Mutasi gabungan: filter ${filter}`, `baris=${filtered.json?.data?.length}`);
+    }
+    const [yr, mo, day] = String(events[0]?.tanggal || '').split('-').map(Number);
+    const periode = await req('GET', `/api/transactions?include_bon=1&jenis=REALISASI_BON&year=${yr}&month=${mo}&week=${Math.ceil(day / 7)}`);
+    if (periode.status === 200 && periode.json?.data?.length === 4) ok('Mutasi gabungan: filter tahun/bulan/minggu berlaku untuk realisasi historis');
+    else bad('Mutasi gabungan: filter periode realisasi');
+    const jenisKeluar = await req('GET', '/api/transactions?include_bon=1&jenis=KELUAR');
+    const categories = await req('GET', '/api/transaction-categories?include_bon=1');
+    const catsRaw = await req('GET', '/api/transaction-categories');
+    if (jenisKeluar.json?.data?.every(t => t.jenis === 'KELUAR') && !raw.json?.data?.some(t => t.jenis === 'REALISASI_BON')
+        && categories.json?.data?.includes('Realisasi Bon / Pemasangan') && !catsRaw.json?.data?.includes('Realisasi Bon / Pemasangan')) {
+      ok('Mutasi gabungan: filter KELUAR tetap transaksi gudang; endpoint default dan kategori laporan lama tidak berubah');
+    } else bad('Mutasi gabungan: kompatibilitas endpoint transaksi gudang');
+  }
+
   // PUT pelanggan tidak menghapus jejak teknisi pemasang
   {
     const cur = (await req('GET', `/api/customers/${cust.id}`)).json?.data;
