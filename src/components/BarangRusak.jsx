@@ -1,12 +1,13 @@
+import ServiceShipments from './ServiceShipments';
 import React, { useState, useEffect, useCallback } from 'react';
 import { PackageX, Wrench, Trash2, Search, Filter, Plus, Download, RefreshCw, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { formatRupiah, formatNumber, formatDate, exportToCSV, todayLocal } from '../utils/formatters';
 import { notify } from '../utils/notify';
 
-const STATUS_OPTS = ['SEMUA', 'DITAMPUNG', 'DIPERBAIKI', 'DIMUSNAHKAN'];
+const STATUS_OPTS = ['SEMUA', 'DISERVIS', 'DITAMPUNG', 'DIPERBAIKI', 'DIMUSNAHKAN'];
 const KONDISI_OPTS = ['SEMUA', 'Rusak Ringan', 'Rusak Berat', 'Afkir'];
 
-export default function BarangRusak({ items }) {
+export default function BarangRusak({ items, canEdit = false, onRefreshMaster }) {
   const [data, setData] = useState([]);
   const [pagination, setPagination] = useState(null);
   const [summary, setSummary] = useState([]);
@@ -55,7 +56,7 @@ export default function BarangRusak({ items }) {
       notify(json.message || 'Barang rusak berhasil ditampung', 'success');
       setIsAddOpen(false);
       setAddForm({ kode_barang: '', jumlah: 1, kondisi: 'Rusak Ringan', keterangan: '', sumber: 'MANUAL', sumber_nama: '' });
-      fetchData();
+      fetchData(); onRefreshMaster?.();
     } catch (err) { notify(err.message, 'error'); }
     finally { setSubmitting(false); }
   };
@@ -80,13 +81,13 @@ export default function BarangRusak({ items }) {
         const json = await res.json();
         if (!res.ok || !json.success) throw new Error(json.error || 'Gagal memperbarui');
         notify('Catatan barang rusak diperbarui', 'success');
-        setActionRow(null); setActionType(null); fetchData(); return;
+        setActionRow(null); setActionType(null); fetchData(); onRefreshMaster?.(); return;
       }
       const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || 'Gagal');
       notify(json.message, 'success');
-      setActionRow(null); setActionType(null); fetchData();
+      setActionRow(null); setActionType(null); fetchData(); onRefreshMaster?.();
     } catch (err) { notify(err.message, 'error'); }
     finally { setSubmitting(false); }
   };
@@ -102,16 +103,18 @@ export default function BarangRusak({ items }) {
   const totalNilaiTampung = data.filter(d => d.status === 'DITAMPUNG').reduce((a, d) => a + d.jumlah * d.harga_barang, 0);
 
   return (
-    <div className="space-y-4">
+    <>
+    <ServiceShipments canEdit={canEdit} onChanged={() => { fetchData(); onRefreshMaster?.(); }} />
+    <div className="space-y-4 no-print">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-black text-slate-900 flex items-center gap-2"><PackageX className="w-5 h-5 text-rose-600" /> Gudang Barang Rusak / Afkir</h2>
-          <p className="text-xs text-slate-500">Ledger terpisah — barang tidak masuk stok siap pakai. Alur: DITAMPUNG → DIPERBAIKI (kembali ke stok) atau DIMUSNAHKAN.</p>
+          <p className="text-xs text-slate-500">Ledger terpisah — barang tidak masuk stok siap pakai. Alur: DITAMPUNG → DISERVIS → DIPERBAIKI (kembali ke stok) atau DIMUSNAHKAN.</p>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={fetchData} className="p-2 bg-white border border-slate-200 rounded-xl hover:bg-slate-50"><RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></button>
           <button onClick={handleExport} className="px-3 py-2 bg-slate-100 border border-slate-300 rounded-xl text-xs font-semibold flex items-center gap-1.5"><Download className="w-4 h-4" />Export CSV</button>
-          <button onClick={() => setIsAddOpen(true)} className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5"><Plus className="w-4 h-4" />Tampung Barang Rusak</button>
+          {canEdit && <button onClick={() => setIsAddOpen(true)} className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5"><Plus className="w-4 h-4" />Tampung Barang Rusak</button>}
         </div>
       </div>
 
@@ -173,7 +176,7 @@ export default function BarangRusak({ items }) {
                   <td className="py-2.5 px-3 text-right font-bold text-indigo-700 whitespace-nowrap">{formatRupiah(r.jumlah * r.harga_barang)}</td>
                   <td className="py-2.5 px-3 max-w-[200px] truncate text-slate-500">{r.keterangan || '-'}</td>
                   <td className="py-2.5 px-3 text-center">
-                    {r.status === 'DITAMPUNG' ? (
+                    {canEdit && r.status === 'DITAMPUNG' ? (
                       <div className="flex items-center justify-center gap-1">
                         <button onClick={() => openAction(r, 'repair')} className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-bold flex items-center gap-1"><Wrench className="w-3 h-3" />Perbaiki</button>
                         <button onClick={() => openAction(r, 'destroy')} className="px-2 py-1 bg-slate-800 hover:bg-black text-white rounded-lg text-[11px] font-bold flex items-center gap-1"><Trash2 className="w-3 h-3" />Musnahkan</button>
@@ -233,5 +236,6 @@ export default function BarangRusak({ items }) {
         </div>
       )}
     </div>
+    </>
   );
 }

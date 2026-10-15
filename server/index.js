@@ -1,4 +1,5 @@
 import express from 'express';
+import { registerServiceShipments } from './serviceShipments.js';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
@@ -124,6 +125,7 @@ app.get('/api/version', (req, res) => {
 // Aturan hak akses tulis (POST/PUT/DELETE) per kelompok endpoint.
 // Endpoint GET boleh diakses semua peran yang sudah login.
 const WRITE_RULES = [
+  { pattern: /^\/api\/(service-shipments|damaged-items)(\/|$)/, roles: ['admin', 'staff_gudang'] },
   { pattern: /^\/api\/users(\/|$)/, roles: ['admin'] },
   { pattern: /^\/api\/reset-seed$/, roles: ['admin'] },
   { pattern: /^\/api\/admin(\/|$)/, roles: ['admin'] },
@@ -530,7 +532,7 @@ function teksBody(nilai, label) {
 // ==========================================================
 const KONDISI_LIST = ['Baik', 'Rusak Ringan', 'Rusak Berat', 'Afkir'];
 const KONDISI_RUSAK = ['Rusak Ringan', 'Rusak Berat', 'Afkir'];
-const DAMAGED_STATUS = ['DITAMPUNG', 'DIPERBAIKI', 'DIMUSNAHKAN'];
+const DAMAGED_STATUS = ['DISERVIS', 'DITAMPUNG', 'DIPERBAIKI', 'DIMUSNAHKAN'];
 function normalizeKondisi(v) {
   if (v === undefined || v === null || String(v).trim() === '') return 'Baik';
   const s = String(v).trim();
@@ -3779,6 +3781,8 @@ app.get('/api/damaged-items', (req, res) => {
   }
 });
 
+registerServiceShipments(app, { db, todayLocal, tanggalOpsional, logStockMutation, getMasterItem });
+
 // GET single
 app.get('/api/damaged-items/:id', (req, res) => {
   try {
@@ -3792,45 +3796,48 @@ app.get('/api/damaged-items/:id', (req, res) => {
 // POST create manual
 app.post('/api/damaged-items', (req, res) => {
   try {
-    const { kode_barang, nama_barang, jenis_barang, satuan, harga_barang, jumlah, kondisi, keterangan, sumber, sumber_nama, tanggal } = req.body || {};
-    if (!kode_barang || !String(kode_barang).trim()) throw new Error('kode_barang wajib diisi');
-    const kondisiBersih = normalizeKondisi(kondisi || 'Rusak Ringan');
-    if (!isKondisiRusak(kondisiBersih)) throw new Error('kondisi untuk gudang rusak harus salah satu dari: Rusak Ringan, Rusak Berat, Afkir');
-    const qty = Number(jumlah);
-    if (!Number.isFinite(qty) || qty <= 0) throw new Error('jumlah harus lebih dari 0');
-    const master = getMasterItem(kode_barang);
-    const nama = String(nama_barang || master?.nama_barang || '').trim() || String(kode_barang).trim();
-    const jenis = String(jenis_barang || master?.jenis_barang || '').trim();
-    const sat = String(satuan || master?.satuan || 'pcs').trim();
-    const harga = harga_barang !== undefined ? Number(harga_barang) : (master?.harga_barang || 0);
-    if (!Number.isFinite(harga) || harga < 0) throw new Error('harga_barang tidak valid');
-    const tgl = (tanggal && isDateStr(tanggal)) ? tanggal : todayLocal();
-    const dibuat = req.user?.nama_lengkap || req.user?.username || '';
-    // Jika barang ada di stok, kurangi stok gudang (barang dipindahkan ke gudang rusak)
-    if (master) {
-      if (master.stok < qty) throw new Error(`Stok gudang tidak cukup. Sisa: ${master.stok} ${master.satuan}, diminta: ${qty}`);
-      db.prepare("UPDATE items SET stok = stok - ?, updated_at = datetime('now','localtime') WHERE id = ?").run(qty, master.id);
-    }
-    const trxNo = logStockMutation({
-      jenis: 'KELUAR',
-      kategori: kondisiBersih === 'Afkir' ? 'Barang Afkir' : 'Barang Rusak',
-      divisi: 'GUDANG',
-      refId: master ? master.id : null,
-      lokasi: String(sumber_nama || sumber || 'Gudang Rusak'),
-      item: { kode_barang: String(kode_barang).toUpperCase().trim(), nama_barang: nama, jenis_barang: jenis, satuan: sat, harga_barang: harga },
-      jumlah: qty,
-      harga_satuan: harga,
-      keterangan: keterangan ? `${keterangan} — ${kondisiBersih}` : `Masuk gudang rusak — ${kondisiBersih}`,
-      tanggal: tgl,
-      kondisi: kondisiBersih
-    });
-    const entry = buatDamagedEntry({
-      kode_barang: String(kode_barang).toUpperCase().trim(), nama_barang: nama, jenis_barang: jenis,
-      satuan: sat, harga_barang: harga, jumlah: qty, kondisi: kondisiBersih,
-      sumber: sumber ? String(sumber).trim() : 'MANUAL', sumber_nama: sumber_nama ? String(sumber_nama).trim() : '',
-      no_transaksi: trxNo, keterangan: keterangan || '', tanggal: tgl, dibuat_oleh: dibuat
-    });
-    res.status(201).json({ success: true, data: entry, message: `Barang rusak ${entry.kode_barang} berhasil ditampung (${kondisiBersih})` });
+    const entry = db.transaction(() => {
+      const { kode_barang, nama_barang, jenis_barang, satuan, harga_barang, jumlah, kondisi, keterangan, sumber, sumber_nama, tanggal } = req.body || {};
+      if (!kode_barang || !String(kode_barang).trim()) throw new Error('kode_barang wajib diisi');
+      const kondisiBersih = normalizeKondisi(kondisi || 'Rusak Ringan');
+      if (!isKondisiRusak(kondisiBersih)) throw new Error('kondisi untuk gudang rusak harus salah satu dari: Rusak Ringan, Rusak Berat, Afkir');
+      const qty = Number(jumlah);
+      if (!Number.isFinite(qty) || qty <= 0) throw new Error('jumlah harus lebih dari 0');
+      const master = getMasterItem(kode_barang);
+      const nama = String(nama_barang || master?.nama_barang || '').trim() || String(kode_barang).trim();
+      const jenis = String(jenis_barang || master?.jenis_barang || '').trim();
+      const sat = String(satuan || master?.satuan || 'pcs').trim();
+      const harga = harga_barang !== undefined ? Number(harga_barang) : (master?.harga_barang || 0);
+      if (!Number.isFinite(harga) || harga < 0) throw new Error('harga_barang tidak valid');
+      const tgl = (tanggal && isDateStr(tanggal)) ? tanggal : todayLocal();
+      const dibuat = req.user?.nama_lengkap || req.user?.username || '';
+      // Jika barang ada di stok, kurangi stok gudang (barang dipindahkan ke gudang rusak)
+      if (master) {
+        if (master.stok < qty) throw new Error(`Stok gudang tidak cukup. Sisa: ${master.stok} ${master.satuan}, diminta: ${qty}`);
+        db.prepare("UPDATE items SET stok = stok - ?, updated_at = datetime('now','localtime') WHERE id = ?").run(qty, master.id);
+      }
+      const trxNo = logStockMutation({
+        jenis: 'KELUAR',
+        kategori: kondisiBersih === 'Afkir' ? 'Barang Afkir' : 'Barang Rusak',
+        divisi: 'GUDANG',
+        refId: master ? master.id : null,
+        lokasi: String(sumber_nama || sumber || 'Gudang Rusak'),
+        item: { kode_barang: String(kode_barang).toUpperCase().trim(), nama_barang: nama, jenis_barang: jenis, satuan: sat, harga_barang: harga },
+        jumlah: qty,
+        harga_satuan: harga,
+        keterangan: keterangan ? `${keterangan} — ${kondisiBersih}` : `Masuk gudang rusak — ${kondisiBersih}`,
+        tanggal: tgl,
+        kondisi: kondisiBersih
+      });
+      const entryId = buatDamagedEntry({
+        kode_barang: String(kode_barang).toUpperCase().trim(), nama_barang: nama, jenis_barang: jenis,
+        satuan: sat, harga_barang: harga, jumlah: qty, kondisi: kondisiBersih,
+        sumber: sumber ? String(sumber).trim() : 'MANUAL', sumber_nama: sumber_nama ? String(sumber_nama).trim() : '',
+        no_transaksi: trxNo, keterangan: keterangan || '', tanggal: tgl, dibuat_oleh: dibuat
+      });
+      return db.prepare('SELECT * FROM damaged_items WHERE id = ?').get(Number(entryId));
+    })();
+    res.status(201).json({ success: true, data: entry, message: `Barang rusak ${entry.kode_barang} berhasil ditampung (${entry.kondisi})` });
   } catch (err) {
     res.status(400).json({ success: false, error: err.message });
   }
@@ -4401,6 +4408,8 @@ app.post('/api/reset-seed', (req, res) => {
         DELETE FROM tower_items;
         DELETE FROM tower_sites;
         DELETE FROM transactions;
+        DELETE FROM service_shipment_items;
+        DELETE FROM service_shipments;
         DELETE FROM damaged_items;
         DELETE FROM items;
       `);
@@ -4431,6 +4440,8 @@ const RESTORE_CONFIRM_WORD = 'PULIHKAN';
 const CLEAR_CONFIRM_WORD = 'KOSONGKAN';
 const RESTORE_MAX_BYTES = 512 * 1024 * 1024; // 512 MB
 const CLEAR_DATA_TABLES = [
+  'service_shipment_items',
+  'service_shipments',
   'technician_loan_movements',
   'technician_loan_items',
   'technician_loans',

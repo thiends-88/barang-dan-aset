@@ -1064,6 +1064,65 @@ console.log('\n=== 6E.1 PENJUALAN BARANG DARI GUDANG ===');
   }
 }
 
+console.log('\n=== 6E.2 PENGIRIMAN SERVIS BARANG RUSAK ===');
+{
+  const kode = 'BRG-UJI-SERVIS';
+  await req('POST', '/api/items', { kode_barang: kode, nama_barang: 'Barang Servis Uji', satuan: 'unit', jenis_barang: 'Aksesoris & Pasif FO', stok: 20, min_stok: 1, harga_barang: 1000 });
+  const a = await req('POST', '/api/damaged-items', { kode_barang: kode, jumlah: 6, kondisi: 'Rusak Ringan' });
+  const b = await req('POST', '/api/damaged-items', { kode_barang: kode, jumlah: 3, kondisi: 'Rusak Berat' });
+  const aid = a.json?.data?.id, bid = b.json?.data?.id;
+  const damaged = id => db.prepare('SELECT * FROM damaged_items WHERE id = ?').get(id);
+  const countBefore = db.prepare('SELECT COUNT(*) AS n FROM service_shipments').get().n;
+  const stockBefore = stockOf(kode);
+  const payload = { tujuan: 'Pusat Servis Uji', alamat: 'Solok', kontak: 'Teknisi Vendor', tanggal: '2026-10-15', catatan: 'Uji servis', items: [{ damaged_id: aid, jumlah: 4 }, { damaged_id: bid, jumlah: 3 }] };
+  for (const body of [
+    { ...payload, tujuan: '' }, { ...payload, tanggal: 'bukan-tanggal' },
+    { ...payload, items: [] }, { ...payload, items: [{ damaged_id: aid, jumlah: 1 }, { damaged_id: aid, jumlah: 1 }] },
+    { ...payload, items: [{ damaged_id: aid, jumlah: 2 }, { damaged_id: bid, jumlah: 99 }] },
+    { ...payload, items: [{ damaged_id: aid, jumlah: -1 }] },
+  ]) {
+    const invalid = await req('POST', '/api/service-shipments', body);
+    if (invalid.status === 400 && damaged(aid).jumlah === 6 && damaged(bid).jumlah === 3
+        && db.prepare('SELECT COUNT(*) AS n FROM service_shipments').get().n === countBefore) {
+      ok('Servis: input tidak valid ditolak atomik tanpa perubahan ledger');
+    } else bad('Servis: validasi / rollback gagal', JSON.stringify(body));
+  }
+  const created = await req('POST', '/api/service-shipments', payload);
+  const shipment = created.json?.data;
+  if (created.status === 201 && shipment?.items.length === 2 && shipment.no_surat.startsWith('SRV-')
+      && damaged(aid).jumlah === 2 && damaged(bid).jumlah === 0 && damaged(bid).status === 'DISERVIS'
+      && stockOf(kode) === stockBefore) ok('Servis: pilih multi barang, kirim sebagian/seluruh tanpa mengurangi stok siap pakai lagi');
+  else bad('Servis: pengiriman multi barang', JSON.stringify(created.json));
+  if (shipment) {
+    const ulang = await req('POST', '/api/service-shipments', { ...payload, items: [{ damaged_id: bid, jumlah: 1 }] });
+    const repairPending = await req('POST', `/api/damaged-items/${bid}/repair`, { jumlah: 1 });
+    const destroyPending = await req('POST', `/api/damaged-items/${bid}/destroy`, { jumlah: 1, keterangan: 'Tidak boleh' });
+    if (ulang.status === 400 && repairPending.status === 400 && destroyPending.status === 400) ok('Servis: barang dalam pengiriman tidak bisa dikirim ulang/diperbaiki/dimusnahkan langsung');
+    else bad('Servis: barang diservis harus terkunci');
+    const list = await req('GET', '/api/service-shipments');
+    const get = await req('GET', `/api/service-shipments/${shipment.id}`);
+    if (get.json?.data?.items.length === 2 && list.json?.data?.some(s => s.id === shipment.id && s.qty_diservis === 7)) ok('Servis: histori dan detail memuat hanya barang yang dipilih');
+    else bad('Servis: histori/detail tidak lengkap');
+    const i1 = shipment.items[0], i2 = shipment.items[1];
+    const backdated = await req('POST', `/api/service-shipments/${shipment.id}/items/${i1.id}/receive`, { hasil: 'BERHASIL', tanggal: '2026-10-14' });
+    if (backdated.status === 400 && stockOf(kode) === stockBefore) ok('Servis: tanggal penerimaan sebelum kirim ditolak'); else bad('Servis: validasi tanggal kembali');
+    const mark = maxTrxId();
+    const success = await req('POST', `/api/service-shipments/${shipment.id}/items/${i1.id}/receive`, { hasil: 'BERHASIL', tanggal: '2026-10-16', catatan: 'Normal kembali' });
+    if (success.status === 200 && stockOf(kode) === stockBefore + 4 && trxSince(mark).some(t => t.jenis === 'MASUK' && t.jumlah === 4 && t.kategori_transaksi === 'Perbaikan Barang Rusak')) ok('Servis: hasil berhasil menambah stok dengan jejak mutasi'); else bad('Servis: penerimaan berhasil');
+    const duplicate = await req('POST', `/api/service-shipments/${shipment.id}/items/${i1.id}/receive`, { hasil: 'BERHASIL' });
+    if (duplicate.status === 400 && stockOf(kode) === stockBefore + 4) ok('Servis: penerimaan ganda ditolak'); else bad('Servis: stok terduplikasi');
+    const failed = await req('POST', `/api/service-shipments/${shipment.id}/items/${i2.id}/receive`, { hasil: 'GAGAL', tanggal: '2026-10-16', catatan: 'Tidak dapat diperbaiki' });
+    if (failed.status === 200 && damaged(bid).jumlah === 3 && damaged(bid).status === 'DITAMPUNG'
+        && stockOf(kode) === stockBefore + 4 && failed.json?.data?.status === 'SELESAI') ok('Servis: hasil gagal kembali ke gudang rusak, histori pengiriman tetap tersimpan'); else bad('Servis: penerimaan gagal');
+    for (const role of ['viewer', 'teknisi', 'gudang']) {
+      const login = await req('POST', '/api/auth/login', { username: role, password: `${role}123` }, { noAuth: true });
+      const token = login.json?.data?.token;
+      const res = await fetch(API + '/api/service-shipments', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ ...payload, items: [{ damaged_id: aid, jumlah: 1 }] }) });
+      if (res.status === (role === 'gudang' ? 201 : 403)) ok(`Servis: hak akses ${role} sesuai`); else bad(`Servis: hak akses ${role}`, String(res.status));
+    }
+  }
+}
+
 console.log('\n=== 6F. BON / BARANG BAWAAN TEKNISI (3 tahap: bawa → pasang → kembali) ===');
 {
   const ONT = 'BRG-ONT-HG8546M';        // stok seed 45

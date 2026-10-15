@@ -531,6 +531,23 @@ try {
   sectionBad(`28.1 Render input penjualan gagal: ${String(e.message).split('\n')[0]}`);
 }
 
+console.log('\n=== 29. Pengiriman Servis & Dokumen Historis ===');
+try {
+  const { default: Service, ServiceDocument } = await vite.ssrLoadModule('/src/components/ServiceShipments.jsx');
+  const screen = renderToString(React.createElement(Service, { canEdit: true, onChanged() {} }));
+  const viewer = renderToString(React.createElement(Service, { canEdit: false, onChanged() {} }));
+  const document = renderToString(React.createElement(ServiceDocument, { shipment: {
+    no_surat: 'SRV-20261015-00001', tanggal: '2026-10-15', tujuan: 'Servis Solok', alamat: 'Alamat uji', dibuat_oleh: 'Gudang',
+    items: [{ id: 1, kode_barang: 'UJI-SERVIS', nama_barang: 'Barang pilihan', jumlah: 2, satuan: 'unit', kondisi: 'Rusak Berat', hasil: 'DISERVIS' }],
+  } }));
+  if (screen.includes('Kirim untuk Servis') && screen.includes('Histori') && !viewer.includes('Kirim untuk Servis')
+      && document.includes('SRV-20261015-00001') && document.includes('Servis Solok')
+      && document.includes('Barang pilihan') && document.includes('Rusak Berat') && document.includes('DISERVIS')
+      && !document.includes('Harga') && !document.includes('Rp')) {
+    sectionOk('29.1 Pilih servis sesuai peran; laporan memuat nomor, tujuan dan barang pilihan tanpa harga');
+  } else sectionBad('29.1 Render servis atau laporan tidak sesuai');
+} catch (e) { sectionBad(`29.1 Render servis gagal: ${e.message}`); }
+
 await vite.close();
 console.log(`\nHasil: ${pass} lolos, ${fail} gagal`);
 process.exit(fail ? 1 : 0);

@@ -78,6 +78,17 @@ Aplikasi enterprise untuk manajemen inventaris barang dan pelacakan aset jaringa
     5. Daftar site divisi Tower mana saja yang memakai barang tersebut.
     6. Riwayat mutasi keluar/masuk barang tersebut lengkap tanggal, bulan, dan tahunnya.
 
+### Pengiriman servis barang rusak
+
+Di menu **Barang Rusak**, admin / staff gudang dapat memilih **Kirim untuk Servis**:
+1. Isi tempat servis, alamat/kontak, tanggal kirim dan catatan.
+2. Pilih beberapa entri berstatus **DITAMPUNG**, lalu atur jumlah masing-masing (boleh sebagian; maksimal 100 entri per pengiriman).
+3. Simpan untuk mendapatkan nomor surat **SRV-…**, histori, rincian serta **Export CSV / Cetak / Simpan PDF** khusus barang yang dipilih, tanpa harga.
+4. Dari **Detail / Cetak → Catat Hasil**, terima seluruh jumlah **per baris**. Berhasil → stok siap pakai bertambah disertai mutasi MASUK; gagal → kembali ke gudang rusak tanpa menambah stok siap pakai. Baris lain dapat diterima belakangan.
+
+Jumlah yang sudah dikirim tidak bisa dikirim ulang atau diperbaiki/dimusnahkan dari daftar gudang rusak; sisa yang belum dikirim tetap dapat diproses. Pengiriman tidak mengurangi stok siap pakai lagi. Histori menyimpan snapshot barang/tujuan, petugas pengirim dan penerima, tanggal serta hasil servis. Viewer/teknisi hanya boleh melihat laporan; pencatatan oleh admin/staff gudang. Tidak ada penghapusan histori servis dari UI.
+
+
 ### 6. Bon / Barang Bawaan Teknisi (Stok Transit Lapangan)
 Menu **Bon Teknisi** mencatat barang yang dibawa teknisi dari gudang dalam **3 tahap**:
 1. **Bawa dari gudang** — buat bon (No. Bon otomatis `BON-YYYYMM-NNNN` atau diisi manual), pilih **Divisi** (Pelanggan / Divisi FO / Divisi Tower) lalu **nama teknisi** dari *Data Teknisi*, daftar barang + **scan barcode** (scanner USB / kamera). Stok gudang **berkurang** dan pindah ke *stok dibawa teknisi* (mutasi KELUAR, divisi `TEKNISI`). Surat jalan bisa langsung dicetak.

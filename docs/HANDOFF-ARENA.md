@@ -824,6 +824,17 @@ di README, info versi build (`/api/version`,
 - Tidak menambahkan harga jual/profit: nilai transaksi tetap mengikuti harga barang dari sistem yang sudah ada.
 - Regresi penjualan normal dan melebihi stok ditambahkan pada tes API; Seksi 28 render memeriksa tombol masuk hilang dan kategori terkunci. Hasil: **166 API + 53 render lolos**.
 
+**Pengiriman servis barang rusak (15 Oktober 2026, sesi yang sama):**
+- Modul `ServiceShipments.jsx` pada halaman Barang Rusak: pilih banyak entri DITAMPUNG, cari + paginasi kandidat, jumlah per entri (sebagian/seluruh), tujuan/alamat/kontak servis, tanggal, catatan. Nomor unik `SRV-YYYYMMDD-ID`; histori, detail, CSV, pratinjau dan dokumen `.print-doc` tanpa harga.
+- Tabel baru `service_shipments` / `service_shipment_items` menyimpan snapshot barang, jumlah dikirim, hasil, tanggal kembali, petugas dan no mutasi. Migrasi otomatis; disertakan pada reset-seed dan Kosongkan Semua Data dengan urutan FK aman.
+- Endpoint di `server/serviceShipments.js`, didaftarkan di index: GET list/detail, POST pengiriman, POST `/:id/items/:itemId/receive`. Tulis hanya admin/staff_gudang (aturan untuk damaged-items juga diperjelas); peran lain boleh baca.
+- Pengiriman mengurangi jumlah tersedia di ledger rusak, **tidak** menyentuh stok siap pakai. Sumber yang habis dikirim menjadi DISERVIS; sisa tetap DITAMPUNG. Semua pemilihan divalidasi di transaksi SQLite, sehingga salah satu baris gagal = seluruh pengiriman dibatalkan. Jumlah minimal 0,001, maks 3 desimal.
+- Penerimaan **seluruh jumlah per baris** (bukan sebagian dalam satu baris): BERHASIL → tambah stok siap pakai + mutasi MASUK kategori Perbaikan Barang Rusak; GAGAL → pulihkan ke ledger rusak. Baris lain boleh menyusul. Penerimaan ganda dan tanggal kembali sebelum kirim ditolak. Tidak ada edit/hapus histori.
+- Menemukan bug lama saat test: POST damaged-items mengembalikan ID mentah, bukan objek entri; sekarang mengembalikan entri lengkap dan dibungkus transaksi atomik agar pengurangan stok/log/ledger tidak bisa terpisah.
+- Tes regresi API Seksi 6E.2 mencakup rollback multi barang, validasi, kirim ulang, histori, penerimaan berhasil/gagal/ganda, tanggal dan peran. Render Seksi 29 untuk dokumen/peran. Uji interaksi jsdom: pilih → simpan → pratinjau/cetak → terima → histori selesai, stok kembali tepat (skrip sementara, tidak menambah dependensi proyek).
+- Verifikasi akhir: **182/182 API + 54/54 render lolos**, 12 pemeriksaan interaksi jsdom lolos, `npm run build` berhasil. Master barang di App ikut dimuat ulang setelah perubahan stok.
+- Belum mencakup biaya servis, pengembalian sebagian dalam satu baris, atau pembatalan pengiriman. Bila perlu jumlah kembali bertahap, pisahkan menjadi entri/pengiriman berbeda terlebih dahulu.
+
 **Belum dikerjakan / kandidat sesi berikutnya:**
 
 0. Bon Teknisi: opsi **tambah barang ke bon yang sudah berjalan**, pembatasan teknisi hanya melihat/merealisasi bon sendiri,

@@ -278,6 +278,36 @@ export function initDb() {
       updated_at TEXT DEFAULT (datetime('now', 'localtime'))
     );
 
+    -- Pengiriman servis menyimpan snapshot barang agar laporan historis tidak berubah.
+    CREATE TABLE IF NOT EXISTS service_shipments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      no_surat TEXT UNIQUE,
+      tanggal TEXT NOT NULL,
+      tujuan TEXT NOT NULL,
+      alamat TEXT NOT NULL DEFAULT '',
+      kontak TEXT NOT NULL DEFAULT '',
+      catatan TEXT NOT NULL DEFAULT '',
+      dibuat_oleh TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE TABLE IF NOT EXISTS service_shipment_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      shipment_id INTEGER NOT NULL REFERENCES service_shipments(id),
+      damaged_id INTEGER NOT NULL REFERENCES damaged_items(id),
+      kode_barang TEXT NOT NULL,
+      nama_barang TEXT NOT NULL,
+      satuan TEXT NOT NULL,
+      kondisi TEXT NOT NULL,
+      harga_barang REAL NOT NULL,
+      jumlah REAL NOT NULL CHECK(jumlah > 0),
+      hasil TEXT NOT NULL DEFAULT 'DISERVIS',
+      tanggal_kembali TEXT,
+      catatan_hasil TEXT NOT NULL DEFAULT '',
+      diterima_oleh TEXT NOT NULL DEFAULT '',
+      no_transaksi TEXT NOT NULL DEFAULT ''
+    );
+    CREATE INDEX IF NOT EXISTS idx_service_items_shipment ON service_shipment_items(shipment_id);
+
     -- Pengguna Aplikasi (login & hirarki peran)
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
