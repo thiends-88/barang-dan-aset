@@ -800,6 +800,11 @@ di README, info versi build (`/api/version`,
 - Ringkasan login publik `/api/public/summary` dan `LoginPage` live (polling 15 detik): pills SKU/pelanggan/FO/tower, mutasi, valuasi aset, dan stok gudang bersumber dari DB.
 - Tes: **163/163 API + 49/49 render**, build frontend sukses.
 
+**Selesai di sesi 15 Oktober 2026 (branch `arena/444dbd84-barang-dan-aset`):**
+- Sesuai permintaan pemilik, panel **Rekap per Kategori Mutasi** di halaman Mutasi dihapus dari tampilan (termasuk hasil cetak halaman).
+- Kartu ringkasan, input cepat, filter kategori, daftar transaksi, data API dan rekap pada ekspor CSV tetap dipertahankan; tidak ada perubahan stok/database.
+- Tes regresi Seksi **25** memastikan panel tidak muncul walaupun `summary.per_kategori` berisi data, sementara kontrol lainnya tetap tampil. `npm test` lolos dan `dist/` di-build ulang.
+
 **Belum dikerjakan / kandidat sesi berikutnya:**
 
 0. Bon Teknisi: opsi **tambah barang ke bon yang sudah berjalan**, pembatasan teknisi hanya melihat/merealisasi bon sendiri,

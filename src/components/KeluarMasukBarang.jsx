@@ -427,38 +427,6 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
         </div>
       </div>
 
-      {/* Rekap per Kategori */}
-      {summary && Array.isArray(summary.per_kategori) && summary.per_kategori.length > 0 && (
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">Rekap per Kategori Mutasi</h3>
-            <span className="text-[11px] text-slate-500">Dihitung utuh dari seluruh {formatNumber(summary.total_transaksi)} transaksi (tidak terpotong 5000)</span>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 text-slate-600 border-b font-semibold">
-                <tr>
-                  <th className="py-2 px-4">Kategori</th>
-                  <th className="py-2 px-4 text-right">Jumlah Transaksi</th>
-                  <th className="py-2 px-4 text-right">Total Qty</th>
-                  <th className="py-2 px-4 text-right">Total Nilai (Rp)</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {summary.per_kategori.map((k) => (
-                  <tr key={k.kategori_transaksi} className="hover:bg-slate-50">
-                    <td className="py-2 px-4 font-semibold text-slate-800">{k.kategori_transaksi}</td>
-                    <td className="py-2 px-4 text-right">{formatNumber(k.total_transaksi)}</td>
-                    <td className="py-2 px-4 text-right font-bold">{formatNumber(k.total_qty)}</td>
-                    <td className="py-2 px-4 text-right font-bold text-indigo-700">{formatRupiah(k.total_nilai)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
       {/* Main Table & Filter Container */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         {/* Advanced Filter Toolbar */}

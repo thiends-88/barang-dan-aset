@@ -438,6 +438,31 @@ console.log('\n=== 24. Validasi Input Server & Transparansi Koreksi Stok ===');
   }
 }
 
+// Rekap kategori tidak ditampilkan lagi, meskipun API masih mengirim datanya.
+console.log('\n=== 25. Tampilan Mutasi Tanpa Rekap Kategori ===');
+try {
+  const KM = (await vite.ssrLoadModule('/src/components/KeluarMasukBarang.jsx')).default;
+  const html = renderToString(React.createElement(KM, {
+    items, onRefreshMaster() {},
+    initialSummary: {
+      total_transaksi: 195,
+      total_masuk_qty: 2271.25,
+      total_keluar_qty: 569,
+      per_kategori: [{ kategori_transaksi: 'Kategori uji rekap', total_transaksi: 1, total_qty: 2, total_nilai: 1000 }],
+    },
+  }));
+  if (!html.includes('Rekap per Kategori Mutasi') && !html.includes('Kategori uji rekap')
+      && html.includes('Total Mutasi Transaksi') && html.includes('Total Barang Masuk')
+      && html.includes('Total Barang Keluar') && html.includes('Input Cepat Mutasi')
+      && html.includes('Semua Kategori') && html.includes('Kategori Mutasi')) {
+    sectionOk('25.1 Rekap kategori hilang; kartu ringkasan, input cepat, filter dan tabel transaksi tetap tampil');
+  } else {
+    sectionBad('25.1 Tampilan Mutasi tidak sesuai setelah penghapusan rekap kategori');
+  }
+} catch (e) {
+  sectionBad(`25.1 Render Mutasi gagal: ${String(e.message).split('\n')[0]}`);
+}
+
 await vite.close();
 console.log(`\nHasil: ${pass} lolos, ${fail} gagal`);
 process.exit(fail ? 1 : 0);
