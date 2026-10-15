@@ -310,7 +310,7 @@ console.log('\n=== 21. Bon / Barang Bawaan Teknisi ===');
 
     const docs = await render('/src/components/BonTeknisiPrint.jsx', { loan: fakeLoan, variant: 'surat_jalan' }, 'BonDocument');
     const docr = await render('/src/components/BonTeknisiPrint.jsx', { loan: fakeLoan, variant: 'rekap' }, 'BonDocument');
-    cek('surat jalan memuat No. Bon, teknisi, barang & tanda tangan, tanpa riwayat realisasi', docs.includes('Surat Jalan / Bon Barang Bawaan Teknisi') && docs.includes('BON-202610-0001') && docs.includes('Budi Santoso') && docs.includes('Dibawa oleh') && docs.includes('Divisi FO') && !docs.includes('SN-RENDER-777'));
+    cek('surat jalan memuat No. Bon, teknisi, barang & Note, tanpa riwayat realisasi', docs.includes('Surat Jalan / Bon Barang Bawaan Teknisi') && docs.includes('BON-202610-0001') && docs.includes('Budi Santoso') && docs.includes('Note:') && docs.includes('Divisi FO') && !docs.includes('SN-RENDER-777'));
     cek('rekap bon memuat realisasi (SN, lokasi, teknisi pemasang) & pengembalian', ['SN-RENDER-777', 'Jl. Uji Render No. 9', 'Andi Pemasang', 'TRX-IN-202610-2222', 'Realisasi Pemasangan', 'Pengembalian ke Gudang'].every((t) => docr.includes(t)));
 
     const modal = await render('/src/components/BonTeknisiPrint.jsx', { loan: fakeLoan, variant: 'surat_jalan', onChangeVariant() {}, onClose() {} });
@@ -461,6 +461,33 @@ try {
   }
 } catch (e) {
   sectionBad(`25.1 Render Mutasi gagal: ${String(e.message).split('\n')[0]}`);
+}
+
+console.log('\n=== 26. Surat Jalan Teknisi Tanpa Harga dan Tanda Tangan ===');
+try {
+  const { BonDocument } = await vite.ssrLoadModule('/src/components/BonTeknisiPrint.jsx');
+  const loan = {
+    no_bon: 'BON-202610-0011', tanggal: '2026-10-14', waktu: '10:37',
+    teknisi_nama: 'Teknisi Uji', dibuat_oleh: 'Gudang Uji', status: 'AKTIF',
+    items: [{ id: 1, kode_barang: 'UJI', nama_barang: 'Barang Uji', satuan: 'unit',
+      jumlah_dibawa: 3, harga_barang: 1000000, jumlah_sisa: 3 }],
+    summary: { nilai_dibawa: 3000000, nilai_sisa: 3000000 },
+  };
+  const surat = renderToString(React.createElement(BonDocument, { loan }));
+  const rekap = renderToString(React.createElement(BonDocument, { loan, variant: 'rekap' }));
+  if (!surat.includes('Harga') && !surat.includes('Nilai Dibawa')
+      && !surat.includes('Total Nilai Barang Dibawa') && !surat.includes('Rp')
+      && !surat.includes('Nama jelas &amp; tanda tangan') && !surat.includes('Mengetahui')
+      && surat.includes('Note:') && surat.includes('Barang di atas telah dikeluarkan dari stok gudang')
+      && surat.includes('lewat realisasi pemasangan) atau dikembalikan ke gudang bila tidak terpakai.')
+      && surat.includes('Barang Uji') && surat.includes('Dibawa')
+      && rekap.includes('Total Nilai Barang Dibawa') && rekap.includes('Mengetahui')) {
+    sectionOk('26.1 Surat jalan tanpa harga/nilai/tanda tangan, diganti Note; rekap lengkap tetap utuh');
+  } else {
+    sectionBad('26.1 Surat jalan atau rekap lengkap tidak sesuai');
+  }
+} catch (e) {
+  sectionBad(`26.1 Render dokumen bon gagal: ${String(e.message).split('\n')[0]}`);
 }
 
 await vite.close();

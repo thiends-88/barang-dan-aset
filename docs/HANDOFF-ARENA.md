@@ -805,6 +805,12 @@ di README, info versi build (`/api/version`,
 - Kartu ringkasan, input cepat, filter kategori, daftar transaksi, data API dan rekap pada ekspor CSV tetap dipertahankan; tidak ada perubahan stok/database.
 - Tes regresi Seksi **25** memastikan panel tidak muncul walaupun `summary.per_kategori` berisi data, sementara kontrol lainnya tetap tampil. `npm test` lolos dan `dist/` di-build ulang.
 
+**Penyesuaian cetak Bon Teknisi (15 Oktober 2026, sesi yang sama):**
+- Varian **Surat Jalan (barang dibawa)** tidak lagi menampilkan harga, nilai dibawa, maupun total nilai barang, baik di pratinjau maupun cetak/PDF.
+- Blok tanda tangan diganti **Note:** berisi tanggung jawab teknisi atas barang sampai dipasang atau dikembalikan; catatan lama yang sama dipindahkan, tidak diduplikasi.
+- **Rekap Lengkap** tetap memiliki kolom nilai dan tanda tangan. Data harga/valuasi di API dan halaman lain tidak diubah.
+- Regresi render Seksi 21 disesuaikan dan Seksi 26 ditambahkan.
+
 **Belum dikerjakan / kandidat sesi berikutnya:**
 
 0. Bon Teknisi: opsi **tambah barang ke bon yang sudah berjalan**, pembatasan teknisi hanya melihat/merealisasi bon sendiri,

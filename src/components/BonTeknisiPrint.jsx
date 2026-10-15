@@ -84,8 +84,8 @@ export function BonDocument({ loan, variant = 'surat_jalan' }) {
             {rekap && <th className={`${th} text-right`}>Terpasang</th>}
             {rekap && <th className={`${th} text-right`}>Kembali</th>}
             {rekap && <th className={`${th} text-right`}>Sisa</th>}
-            <th className={`${th} text-right`}>Harga</th>
-            <th className={`${th} text-right`}>Nilai Dibawa</th>
+            {rekap && <th className={`${th} text-right`}>Harga</th>}
+            {rekap && <th className={`${th} text-right`}>Nilai Dibawa</th>}
           </tr>
         </thead>
         <tbody>
@@ -99,14 +99,14 @@ export function BonDocument({ loan, variant = 'surat_jalan' }) {
               {rekap && <td className={`${td} text-right`}>{formatNumber(li.jumlah_terpasang)}</td>}
               {rekap && <td className={`${td} text-right`}>{formatNumber(li.jumlah_kembali)}</td>}
               {rekap && <td className={`${td} text-right font-bold`}>{formatNumber(li.jumlah_sisa)}</td>}
-              <td className={`${td} text-right`}>{formatRupiah(li.harga_barang)}</td>
-              <td className={`${td} text-right`}>{formatRupiah(li.jumlah_dibawa * li.harga_barang)}</td>
+              {rekap && <td className={`${td} text-right`}>{formatRupiah(li.harga_barang)}</td>}
+              {rekap && <td className={`${td} text-right`}>{formatRupiah(li.jumlah_dibawa * li.harga_barang)}</td>}
             </tr>
           ))}
         </tbody>
-        <tfoot>
+        {rekap && <tfoot>
           <tr>
-            <td colSpan={rekap ? 9 : 6} className={`${td} text-right font-bold`}>Total Nilai Barang Dibawa</td>
+            <td colSpan={9} className={`${td} text-right font-bold`}>Total Nilai Barang Dibawa</td>
             <td className={`${td} text-right font-bold`}>{formatRupiah(s.nilai_dibawa)}</td>
           </tr>
           {rekap && (
@@ -115,7 +115,7 @@ export function BonDocument({ loan, variant = 'surat_jalan' }) {
               <td className={`${td} text-right font-bold`}>{formatRupiah(s.nilai_sisa)}</td>
             </tr>
           )}
-        </tfoot>
+        </tfoot>}
       </table>
 
       {rekap && (
@@ -185,17 +185,18 @@ export function BonDocument({ loan, variant = 'surat_jalan' }) {
       )}
 
       {!rekap && (
-        <p className="text-[11px] text-slate-600 mb-4">
+        <p className="text-[11px] text-slate-600 mt-6" style={{ breakInside: 'avoid' }}>
+          <span className="font-bold">Note:</span>{' '}
           Barang di atas telah dikeluarkan dari stok gudang dan menjadi tanggung jawab teknisi yang membawa sampai dipasang (dilaporkan
           lewat realisasi pemasangan) atau dikembalikan ke gudang bila tidak terpakai.
         </p>
       )}
 
-      <div className="grid grid-cols-3 gap-4 mt-6">
+      {rekap && <div className="grid grid-cols-3 gap-4 mt-6">
         <Sign title="Dibuat oleh (Gudang)" name={loan.dibuat_oleh} />
-        <Sign title={rekap ? 'Teknisi' : 'Dibawa oleh (Teknisi)'} name={loan.teknisi_nama} />
+        <Sign title="Teknisi" name={loan.teknisi_nama} />
         <Sign title="Mengetahui" name="" />
-      </div>
+      </div>}
       <p className="text-[10px] text-slate-400 mt-5 text-right">Dicetak dari SIM-ASET ISP • Bon dicatat {formatDateTime(loan.tanggal, loan.waktu)}</p>
     </div>
   );
