@@ -1186,7 +1186,7 @@ app.put('/api/items/:id', (req, res) => {
 
     // Ganti kode barang → seluruh rujukan barang terpasang ikut diperbarui
     if (kode_barang !== current.kode_barang) {
-      for (const tbl of ['customer_items', 'fo_items', 'tower_items', 'technician_loan_items']) {
+      for (const tbl of ['customer_items', 'fo_items', 'tower_items', 'technician_loan_items', 'damaged_items']) {
         db.prepare(`UPDATE ${tbl} SET kode_barang = ? WHERE UPPER(kode_barang) = UPPER(?)`).run(kode_barang, current.kode_barang);
       }
     }
@@ -1234,6 +1234,8 @@ app.delete('/api/items/:id', (req, res) => {
       });
     }
 
+    const damaged = db.prepare("SELECT COUNT(*) AS n FROM damaged_items WHERE kode_barang = ? AND (jumlah > 0 OR status = 'DISERVIS')").get(item.kode_barang).n;
+    if (damaged > 0) return res.status(400).json({ success: false, error: 'Barang masih tercatat di gudang rusak atau sedang diservis. Selesaikan penanganannya sebelum menghapus master.' });
     db.prepare('DELETE FROM items WHERE id = ?').run(id);
     res.json({ success: true, message: `Barang ${item.nama_barang} berhasil dihapus` });
   } catch (err) {
@@ -3645,7 +3647,7 @@ app.post('/api/technician-loans/:id/install', (req, res) => {
         );
       }
 
-      db.prepare('UPDATE technician_loan_items SET jumlah_terpasang = ? WHERE id = ?').run(round3(li.jumlah_terpasang + qty), li.id);
+      db.prepare('UPDATE technician_loan_items SET jumlah_terpasang = ROUND(jumlah_terpasang + ?, 3) WHERE id = ?').run(qty, li.id);
       insertLoanMovement({
         loan_id: loan.id, loan_item_id: li.id, jenis: 'PASANG', tanggal: tgl,
         kode_barang: li.kode_barang, nama_barang: li.nama_barang, satuan: li.satuan, harga_barang: li.harga_barang,
@@ -3705,7 +3707,7 @@ app.post('/api/technician-loans/:id/return', (req, res) => {
       if (!rusak) {
         db.prepare("UPDATE items SET stok = stok + ?, updated_at = datetime('now','localtime') WHERE id = ?").run(qty, master.id);
       }
-      db.prepare('UPDATE technician_loan_items SET jumlah_kembali = ? WHERE id = ?').run(round3(li.jumlah_kembali + qty), li.id);
+      db.prepare('UPDATE technician_loan_items SET jumlah_kembali = ROUND(jumlah_kembali + ?, 3) WHERE id = ?').run(qty, li.id);
       const kategoriReturn = rusak ? (kondisiItem === 'Afkir' ? 'Barang Afkir' : 'Barang Rusak') : 'Pengembalian Bon Teknisi';
       const trxNo = logStockMutation({
         jenis: 'MASUK',
@@ -3884,7 +3886,7 @@ app.post('/api/damaged-items', (req, res) => {
       const sat = String(satuan || master?.satuan || 'pcs').trim();
       const harga = harga_barang !== undefined ? Number(harga_barang) : (master?.harga_barang || 0);
       if (!Number.isFinite(harga) || harga < 0) throw new Error('harga_barang tidak valid');
-      const tgl = (tanggal && isDateStr(tanggal)) ? tanggal : todayLocal();
+      const tgl = tanggalOpsional(tanggal, 'Tanggal penampungan') || todayLocal();
       const dibuat = req.user?.nama_lengkap || req.user?.username || '';
       // Jika barang ada di stok, kurangi stok gudang (barang dipindahkan ke gudang rusak)
       if (master) {
@@ -3929,22 +3931,13 @@ app.put('/api/damaged-items/:id', (req, res) => {
     let ket = row.keterangan;
     let src = row.sumber;
     let srcNama = row.sumber_nama;
-    let harga = row.harga_barang;
-    // Validasi perubahan jumlah: selisih harus ada stok jika menambah
+    // Jumlah hanya berubah melalui tampung/perbaiki/musnahkan/servis yang punya jejak audit.
+    // Edit metadata tidak boleh mengembalikan barang rusak menjadi stok siap pakai diam-diam.
     if (jumlah !== undefined && jumlah !== '') {
       const q = Number(jumlah);
-      if (!Number.isFinite(q) || q <= 0) throw new Error('jumlah harus lebih dari 0');
-      const delta = round3(q - Number(row.jumlah));
-      if (delta > 0) {
-        // butuh kunci? Actually manual: if originally from stok, delta means extra? For ledger-only (rusak), we don't have stok to deduct? But original qty already deducted? For entries from pengembalian rusak, stok tidak dikurangi? Actually those came from installed, not from stok. So we keep simple: only allow smaller or equal? Let's allow but validate stok if master exists
-        const master = getMasterItem(row.kode_barang);
-        if (master && master.stok < delta) throw new Error(`Stok gudang tidak cukup untuk menambah jumlah. Sisa: ${master.stok}`);
-        if (master && delta > 0) db.prepare("UPDATE items SET stok = stok - ?, updated_at = datetime('now','localtime') WHERE id = ?").run(delta, master.id);
-      } else if (delta < 0) {
-        const master = getMasterItem(row.kode_barang);
-        if (master) db.prepare("UPDATE items SET stok = stok + ?, updated_at = datetime('now','localtime') WHERE id = ?").run(-delta, master.id);
+      if (!Number.isFinite(q) || q <= 0 || Math.abs(q - Number(row.jumlah)) > 1e-9) {
+        throw new Error('Jumlah ledger rusak tidak boleh diubah lewat edit. Gunakan Tampung, Perbaiki, Musnahkan atau Kirim Servis.');
       }
-      qty = round3(q);
     }
     if (kondisi !== undefined && kondisi !== '') {
       kondisiBersih = normalizeKondisi(kondisi);
@@ -3970,17 +3963,12 @@ app.post('/api/damaged-items/:id/repair', (req, res) => {
     let qty = req.body?.jumlah !== undefined && req.body?.jumlah !== '' ? Number(req.body.jumlah) : Number(row.jumlah);
     if (!Number.isFinite(qty) || qty <= 0) throw new Error('jumlah perbaikan harus lebih dari 0');
     if (qty > Number(row.jumlah)) throw new Error(`Jumlah perbaikan melebihi stok rusak. Tersedia: ${row.jumlah}`);
-    const tgl = (req.body?.tanggal && isDateStr(req.body.tanggal)) ? req.body.tanggal : todayLocal();
+    const tgl = tanggalOpsional(req.body?.tanggal, 'Tanggal proses barang rusak') || todayLocal();
     const keterangan = String(req.body?.keterangan || '').trim();
     const diperbaikiOleh = String(req.body?.diperbaiki_oleh || req.user?.nama_lengkap || req.user?.username || '').trim();
     const master = getMasterItem(row.kode_barang);
-    // Tambah kembali ke stok siap pakai
-    if (master) {
-      db.prepare("UPDATE items SET stok = stok + ?, updated_at = datetime('now','localtime') WHERE id = ?").run(qty, master.id);
-    } else {
-      // Jika master hilang, buat entri baru? Tetap log transaksi tanpa master — buat item baru minimal
-      // Lewati penambahan stok, cukup ledger
-    }
+    if (!master) throw new Error('Master barang tidak ditemukan; daftarkan master sebelum mengembalikan hasil perbaikan');
+    db.prepare("UPDATE items SET stok = stok + ?, updated_at = datetime('now','localtime') WHERE id = ?").run(qty, master.id);
     const harga = row.harga_barang;
     const itemForTrx = master || { kode_barang: row.kode_barang, nama_barang: row.nama_barang, jenis_barang: row.jenis_barang, satuan: row.satuan, harga_barang: harga };
     const trxNo = logStockMutation({
@@ -4023,7 +4011,7 @@ app.post('/api/damaged-items/:id/destroy', (req, res) => {
     let qty = req.body?.jumlah !== undefined && req.body?.jumlah !== '' ? Number(req.body.jumlah) : Number(row.jumlah);
     if (!Number.isFinite(qty) || qty <= 0) throw new Error('jumlah pemusnahan harus lebih dari 0');
     if (qty > Number(row.jumlah)) throw new Error(`Jumlah pemusnahan melebihi stok rusak. Tersedia: ${row.jumlah}`);
-    const tgl = (req.body?.tanggal && isDateStr(req.body.tanggal)) ? req.body.tanggal : todayLocal();
+    const tgl = tanggalOpsional(req.body?.tanggal, 'Tanggal proses barang rusak') || todayLocal();
     const keterangan = String(req.body?.keterangan || '').trim();
     if (!keterangan) throw new Error('Keterangan / berita acara pemusnahan wajib diisi');
     const dimusnahkanOleh = String(req.body?.dimusnahkan_oleh || req.user?.nama_lengkap || req.user?.username || '').trim();

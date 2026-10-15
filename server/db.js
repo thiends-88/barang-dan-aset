@@ -351,7 +351,8 @@ export function initDb() {
     try {
       db.exec(m);
     } catch (e) {
-      // Column already exists, ignore
+      // Hanya duplikasi kolom yang aman diabaikan. I/O/schema rusak harus menghentikan start.
+      if (!/duplicate column name/i.test(e.message)) throw e;
     }
   }
 

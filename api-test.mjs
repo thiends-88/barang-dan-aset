@@ -1544,7 +1544,62 @@ console.log('\n=== 6G. DATA TEKNISI & DIVISI PADA BON (pilih divisi → nama tek
   await req('POST', '/api/reset-seed');
   for (const t of [andi, tower]) await req('DELETE', `/api/teknisi/${t.id}`);
   const sisa = db.prepare('SELECT COUNT(*) AS c FROM technicians').get().c;
-  if (sisa === 0) ok('Teknisi uji dibersihkan setelah tes'); else bad('Teknisi uji dibersihkan', `${sisa} tersisa`);
+  if (sisa === 0) ok('Teknisi uji dibersihkan setelah tes'); else bad('Teknisi uji dibersihkan', `${sisa} tersisa: ${JSON.stringify(db.prepare('SELECT * FROM technicians').all())}`);
+}
+
+console.log('\n=== 6G.2 REGRESI AUDIT: BARIS BON BERULANG & LEDGER RUSAK ===');
+{
+  await req('POST', '/api/reset-seed');
+  const code = 'UJI-AUDIT-BON';
+  await req('POST', '/api/items', { kode_barang: code, nama_barang: 'Audit Bon', satuan: 'unit', jenis_barang: 'Aksesoris & Pasif FO', stok: 10, harga_barang: 1000 });
+  const customer = (await req('GET', '/api/customers')).json.data[0];
+  const bon = (await req('POST', '/api/technician-loans', { divisi: 'PELANGGAN', teknisi_nama: 'Audit', items: [{ kode_barang: code, jumlah: 4 }] })).json.data;
+  const line = bon.items[0];
+  const installed = await req('POST', `/api/technician-loans/${bon.id}/install`, { divisi: 'PELANGGAN', tujuan_id: customer.id, items: [
+    { loan_item_id: line.id, jumlah: 1, serial_number: 'AUDIT-A' },
+    { loan_item_id: line.id, jumlah: 1, serial_number: 'AUDIT-B' }
+  ] });
+  if (installed.status === 201 && installed.json.data.items[0].jumlah_terpasang === 2 && stockOf(code) === 6) ok('Audit bon: dua SN kode sama dalam satu permintaan terakumulasi tanpa mengurangi stok dua kali');
+  else bad('Audit bon: akumulasi pemasangan', JSON.stringify(installed));
+  const returned = await req('POST', `/api/technician-loans/${bon.id}/return`, { items: [
+    { loan_item_id: line.id, jumlah: 1, kondisi: 'Baik' },
+    { loan_item_id: line.id, jumlah: 1, kondisi: 'Rusak Ringan' }
+  ] });
+  const repeat = await req('POST', `/api/technician-loans/${bon.id}/return`, { semua_sisa: true });
+  const qtyMov = db.prepare("SELECT SUM(jumlah) AS n FROM technician_loan_movements WHERE loan_id = ? AND jenis = 'KEMBALI'").get(bon.id).n;
+  if (returned.status === 201 && returned.json.data.status === 'SELESAI' && returned.json.data.items[0].jumlah_kembali === 2 && stockOf(code) === 7 && qtyMov === 2 && repeat.status === 400) ok('Audit bon: pengembalian campuran berulang terakumulasi; bon selesai dan tidak bisa mengembalikan stok lagi');
+  else bad('Audit bon: akumulasi pengembalian', JSON.stringify(returned));
+  const row = db.prepare('SELECT * FROM damaged_items WHERE kode_barang = ?').get(code);
+  const beforeTrx = maxTrxId();
+  const editQty = await req('PUT', `/api/damaged-items/${row.id}`, { jumlah: 0.5, kondisi: 'Baik' });
+  const editCondition = await req('PUT', `/api/damaged-items/${row.id}`, { kondisi: 'Baik' });
+  const editNote = await req('PUT', `/api/damaged-items/${row.id}`, { keterangan: 'Catatan tetap, stok tidak berubah' });
+  if (editQty.status === 400 && editCondition.status === 400 && editNote.status === 200 && editNote.json.data.jumlah === 1 && stockOf(code) === 7 && maxTrxId() === beforeTrx) ok('Audit rusak: edit jumlah/kondisi tidak valid ditolak tanpa efek samping; catatan tetap dapat disimpan');
+  else bad('Audit rusak: edit metadata', JSON.stringify({ editQty, editCondition, editNote }));
+  const badRepair = await req('POST', `/api/damaged-items/${row.id}/repair`, { tanggal: '2026-02-30' });
+  const badDestroy = await req('POST', `/api/damaged-items/${row.id}/destroy`, { tanggal: 'salah', keterangan: 'Uji' });
+  const badIntake = await req('POST', '/api/damaged-items', { kode_barang: code, jumlah: 1, kondisi: 'Rusak Berat', tanggal: '2026-02-30' });
+  if (badRepair.status === 400 && badDestroy.status === 400 && badIntake.status === 400 && stockOf(code) === 7 && maxTrxId() === beforeTrx) ok('Audit rusak: tanggal tidak sah ditolak pada tampung, perbaiki dan musnahkan tanpa perubahan data');
+  else bad('Audit rusak: tanggal', JSON.stringify({ badRepair, badDestroy, badIntake }));
+  // Simulasikan ledger lama yang sudah kehilangan master (bukan operasi normal baru).
+  const master = db.prepare('SELECT * FROM items WHERE kode_barang = ?').get(code);
+  db.prepare('DELETE FROM items WHERE id = ?').run(master.id);
+  const orphanRepair = await req('POST', `/api/damaged-items/${row.id}/repair`, {});
+  if (orphanRepair.status === 400 && db.prepare('SELECT jumlah FROM damaged_items WHERE id = ?').get(row.id).jumlah === 1 && maxTrxId() === beforeTrx) ok('Audit rusak: ledger tanpa master tidak boleh dinyatakan diperbaiki tanpa stok tujuan');
+  else bad('Audit rusak: master hilang', JSON.stringify(orphanRepair));
+  await req('POST', '/api/items', { ...master, stok: 7 });
+  const renamed = await req('PUT', `/api/items/${db.prepare('SELECT id FROM items WHERE kode_barang = ?').get(code).id}`, { ...master, kode_barang: 'UJI-AUDIT-GANTI', stok: 7 });
+  const id = renamed.json?.data?.id;
+  const removed = await req('DELETE', `/api/items/${id}`);
+  if (renamed.status === 200 && db.prepare('SELECT kode_barang FROM damaged_items WHERE id = ?').get(row.id).kode_barang === 'UJI-AUDIT-GANTI' && removed.status === 400) ok('Audit master: ganti kode ikut memperbarui ledger rusak; master yang masih dipakai tidak dapat dihapus');
+  else bad('Audit master: rujukan ledger', JSON.stringify({ renamed, removed }));
+  const onlyCode = 'UJI-AUDIT-HANYA-RUSAK';
+  const onlyMaster = (await req('POST', '/api/items', { kode_barang: onlyCode, nama_barang: 'Hanya ledger rusak', satuan: 'unit', jenis_barang: 'FO', stok: 2, harga_barang: 1000 })).json.data;
+  await req('POST', '/api/damaged-items', { kode_barang: onlyCode, jumlah: 1, kondisi: 'Rusak Ringan' });
+  const deleteOnly = await req('DELETE', `/api/items/${onlyMaster.id}`);
+  if (deleteOnly.status === 400 && /gudang rusak/.test(deleteOnly.json?.error || '') && stockOf(onlyCode) === 1) ok('Audit master: ledger rusak saja (tanpa instalasi/bon) sudah cukup untuk mencegah penghapusan master');
+  else bad('Audit master: larangan hapus master ledger saja', JSON.stringify(deleteOnly));
+  await req('POST', '/api/reset-seed');
 }
 
 console.log('\n=== 6H. EDIT BARANG PELANGGAN: KONDISI PENGEMBALIAN PER BARANG ===');

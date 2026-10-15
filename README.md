@@ -378,3 +378,8 @@ Aplikasi dirancang agar nyaman dipakai di HP, tablet, dan desktop:
 - **Sentuhan**: area tap tombol dalam tabel diperbesar, highlight biru saat tap dihilangkan, dan animasi dihormati bagi pengguna yang mengaktifkan *reduce motion*.
 - **Notch / safe area**: elemen yang menempel di bawah (toast, bottom sheet) memberi ruang untuk *safe area* perangkat iOS.
 - **Cetak**: hasil cetak (label barcode, berita acara, laporan) tidak terpengaruh perubahan layout layar — lebar minimum tabel dinonaktifkan saat mode cetak.
+
+## Audit & kesiapan deployment (15 Oktober 2026)
+
+Lihat [laporan audit dan checklist update Proxmox](docs/AUDIT-2026-10-15.md).
+Tes operasional lolos, tetapi dependensi pembaca Excel `xlsx` masih memiliki advisory **high** yang belum ditutup. Jangan menganggap CI hijau sebagai persetujuan keamanan tanpa syarat; hindari spreadsheet tidak tepercaya dan selesaikan migrasi parser atau putuskan penerimaan risikonya sebelum rilis produksi.

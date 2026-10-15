@@ -10,7 +10,7 @@
 #       lolos integrity_check) + simpan perubahan lokal (bila ada) sebagai .patch
 #    5. git reset --hard origin/<branch>, lalu pulihkan DB dari cadangan bila
 #       hilang/tertimpa; bandingkan isi DB sebelum vs sesudah
-#    6. npm install --omit=dev
+#    6. npm ci --omit=dev
 #    7. jalankan ulang layanan + cek /api/version (commit berjalan = target?)
 #    8. rapikan cadangan lama (simpan N terbaru di data/backups/)
 #
@@ -99,6 +99,10 @@ die() {
     echo "    menyalakan kembali layanan $SERVICE ..." >&2
     systemctl start "$SERVICE" || true
   fi
+  if [[ ${RESET_DONE:-0} -eq 1 ]]; then
+    echo "    Update belum dinyatakan berhasil. Cadangan DB: ${BACKUP_FILE:-belum tersedia}" >&2
+    echo "    Jangan menimpa DB saat layanan masih berjalan; hentikan layanan sebelum rollback." >&2
+  fi
   exit 1
 }
 
@@ -139,11 +143,12 @@ on_error() {
   [[ $SERVICE_STOPPED -eq 1 ]] && echo "  ${Y}Layanan $SERVICE masih BERHENTI.${N}" >&2
   if [[ $DRY_RUN -eq 0 && -n "$OLD_COMMIT" ]]; then
     echo "  Cara kembali ke kondisi sebelum update:" >&2
+    [[ $NO_RESTART -eq 0 ]] && echo "    systemctl stop $SERVICE" >&2
     echo "    cd $APP_DIR" >&2
     echo "    git reset --hard $OLD_COMMIT" >&2
     [[ -f "$BACKUP_FILE" ]] && echo "    rm -f $DB_REL-wal $DB_REL-shm && cp $BACKUP_FILE $DB_REL" >&2
-    echo "    npm install --omit=dev" >&2
-    [[ $SERVICE_STOPPED -eq 1 ]] && echo "    systemctl start $SERVICE" >&2
+    echo "    npm ci --omit=dev" >&2
+    [[ $NO_RESTART -eq 0 ]] && echo "    systemctl start $SERVICE" >&2
   fi
   exit "$code"
 }
@@ -350,7 +355,7 @@ fi
 
 # =============================================================================
 step "6/8 Pasang dependensi runtime"
-run npm install --omit=dev --no-audit --no-fund
+run npm ci --omit=dev --no-audit --no-fund
 
 # =============================================================================
 step "7/8 Jalankan ulang & cek kesehatan"
@@ -367,14 +372,14 @@ if [[ $NO_RESTART -eq 0 ]]; then
         [[ -n "$RUNNING" ]] && break
       done
       if [[ -z "$RUNNING" ]]; then
-        warn "aplikasi belum menjawab di port $APP_PORT. Cek log: journalctl -u $SERVICE -n 50"
+        die "aplikasi belum menjawab di port $APP_PORT. Cek log: journalctl -u $SERVICE -n 50"
       elif [[ "$RUNNING" == "$NEW_COMMIT" ]]; then
         ok "aplikasi aktif, commit berjalan = target (${NEW_COMMIT:0:7})"
       else
-        warn "aplikasi aktif tetapi commit berjalan ${RUNNING:0:7} ≠ target ${NEW_COMMIT:0:7}"
+        die "aplikasi aktif tetapi commit berjalan ${RUNNING:0:7} ≠ target ${NEW_COMMIT:0:7}"
       fi
     else
-      systemctl is-active --quiet "$SERVICE" && ok "layanan aktif" || warn "layanan tidak aktif — cek: journalctl -u $SERVICE -n 50"
+      systemctl is-active --quiet "$SERVICE" && ok "layanan aktif" || die "layanan tidak aktif — cek: journalctl -u $SERVICE -n 50"
     fi
   fi
 else
@@ -384,9 +389,19 @@ fi
 # =============================================================================
 step "8/8 Rapikan cadangan lama (simpan $KEEP terbaru)"
 if [[ -d "$BACKUP_DIR" ]]; then
-  mapfile -t OLD_BACKUPS < <(ls -1t "$BACKUP_DIR"/inventory-*.db 2>/dev/null | tail -n +"$((KEEP + 1))")
-  if [[ ${#OLD_BACKUPS[@]} -gt 0 ]]; then
-    for f in "${OLD_BACKUPS[@]}"; do run rm -f "$f" "$f-wal" "$f-shm"; done
+  # Glob tanpa kecocokan bukan kegagalan. Jangan pakai ls di process substitution:
+  # ERR trap subshell bisa tertelan mapfile dan terbaca sebagai nama berkas!
+  BACKUP_FILES=()
+  for f in "$BACKUP_DIR"/inventory-*.db; do
+    if [[ -f "$f" ]]; then BACKUP_FILES+=("$f"); fi
+  done
+  if [[ ${#BACKUP_FILES[@]} -gt $KEEP ]]; then
+    # Nama inventory-YYYYMMDD-HHMMSS.db terurut menurut waktu; NUL aman untuk path berspasi.
+    mapfile -d '' -t SORTED_BACKUPS < <(printf '%s\0' "${BACKUP_FILES[@]}" | sort -zr)
+    for ((i = KEEP; i < ${#SORTED_BACKUPS[@]}; i++)); do
+      f="${SORTED_BACKUPS[i]}"
+      run rm -f -- "$f" "$f-wal" "$f-shm"
+    done
   else
     info "tidak ada cadangan yang perlu dihapus."
   fi

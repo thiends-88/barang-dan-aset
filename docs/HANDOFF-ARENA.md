@@ -915,3 +915,15 @@ gh pr create --fill --base main          # jangan merge sendiri
 
 *Dokumen ini hidup: setiap keputusan baru yang disepakati bersama pemilik repo sebaiknya
 ditambahkan di sini pada sesi yang sama, supaya sesi Arena berikutnya tidak perlu menebak.*
+
+## Tambahan audit 15 Oktober 2026 — PR #18
+
+Laporan lengkap dan panduan deployment: [AUDIT-2026-10-15.md](AUDIT-2026-10-15.md).
+
+- Audit memperbaiki akumulasi dua baris realisasi/pengembalian bon untuk item sama (snapshot lama menimpa jumlah); edit ledger rusak kini metadata saja; master aktif pada ledger tidak dapat dihapus dan ganti kode mengikutkan ledger; repair tanpa master ditolak; tanggal ledger invalid ditolak.
+- UI Catatan pada Barang Rusak memakai catatan lama dan hanya mengirim metadata. Jumlah berubah lewat tampung/perbaiki/musnahkan/servis, tidak lewat edit bebas.
+- Migrasi hanya mengabaikan kolom duplikat. Updater memakai npm ci, health-check/commit mismatch gagal, dan enumerasi cadangan tanpa ls/process-substitution error semu; rollback wajib stop sebelum mengganti DB.
+- Validasi terbaru: **234 API + 58 render**, **4 interaksi jsdom audit**, build, migrasi skema basis/idempoten/integritas, bash syntax dan dry-run updater lolos. Suite 233 API sebelum tambahan satu kasus diulang lima kali tanpa gagal.
+- **Jangan mengklaim seluruh keamanan bersih/langsung rekomendasikan merge produksi:** npm audit masih **1 high di xlsx (dua advisory)**, tidak ada patched version di registry npm yang digunakan. Source-map-js sudah diperbaiki. Jangan ganti fork tanpa verifikasi atau hapus format impor diam-diam. Butuh migrasi parser atau penerimaan risiko eksplisit pemilik.
+- Flake pembersihan teknisi sesi lama tidak terulang lima putaran; belum ada bukti akar masalah/perbaikan, hanya diagnostik record tertinggal ditambah.
+- Tidak dilakukan merge atau update Proxmox. Cadangkan DB di luar server dan pakai updater dari main setelah merge, bukan reset/pull mentah.
