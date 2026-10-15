@@ -604,12 +604,29 @@ function getMasterItem(kode) {
 }
 
 /**
+ * Peta tanggal pasang barang yang SUDAH terpasang, berkunci kode barang + SN
+ * (lihat installedItemKey). Dipakai saat menyimpan ulang data induk: barang yang
+ * sudah ada tidak boleh ikut berubah tanggal pasangnya.
+ */
+function petaTanggalTerpasang(oldItems) {
+  const map = new Map();
+  for (const it of oldItems || []) {
+    if (!it || !it.kode_barang) continue;
+    map.set(installedItemKey(it), it.tanggal_pasang || '');
+  }
+  return map;
+}
+
+/**
  * Validasi daftar barang terpasang yang dikirim dari frontend.
  * - Kode barang wajib terdaftar di master data
  * - Jumlah wajib angka >= 0 (baris kosong / jumlah 0 otomatis dilewati, jumlah negatif ditolak)
+ * - tanggalLama (opsional, hasil petaTanggalTerpasang): barang yang sudah terpasang
+ *   mempertahankan tanggal pasang aslinya — mis. unit hasil realisasi Bon Teknisi pada
+ *   tanggal berbeda dengan tanggal lokasi. Hanya barang baru yang memakai installDate.
  * Mengembalikan { validated, totalHarga }.
  */
-function validateInstalledItems(items, installDate) {
+function validateInstalledItems(items, installDate, tanggalLama) {
   const validated = [];
   let totalHarga = 0;
 
@@ -635,6 +652,11 @@ function validateInstalledItems(items, installDate) {
     const subtotal = qty * master.harga_barang;
     totalHarga += subtotal;
 
+    const sn = it.serial_number ? String(it.serial_number).trim() : '';
+    // Riwayat tanggal pasang per barang dipertahankan; hanya unit yang benar-benar baru
+    // (atau SN baru) yang memakai tanggal data induk.
+    const tanggalLamaItem = tanggalLama?.get(installedItemKey({ kode_barang: master.kode_barang, serial_number: sn }));
+
     validated.push({
       kode_barang: master.kode_barang,
       nama_barang: master.nama_barang,
@@ -643,9 +665,9 @@ function validateInstalledItems(items, installDate) {
       jumlah: qty,
       harga_barang: master.harga_barang,
       subtotal,
-      serial_number: it.serial_number ? String(it.serial_number).trim() : '',
+      serial_number: sn,
       referensi_suplayer: master.referensi_suplayer || '',
-      tanggal_pasang: installDate
+      tanggal_pasang: tanggalLamaItem || installDate
     });
   }
 
@@ -1786,7 +1808,7 @@ app.put('/api/customers/:id', (req, res) => {
     if (Array.isArray(items)) {
       const oldItems = db.prepare('SELECT * FROM customer_items WHERE customer_id = ?').all(id);
       const installDate = tanggalPasang;
-      const { validated, totalHarga: totalBaru } = validateInstalledItems(items, installDate);
+      const { validated, totalHarga: totalBaru } = validateInstalledItems(items, installDate, petaTanggalTerpasang(oldItems));
       assertStockAvailable(sumQtyByCode(validated), sumQtyByCode(oldItems));
 
       totalHarga = totalBaru;
@@ -2143,7 +2165,7 @@ app.put('/api/fo/:id', (req, res) => {
     if (Array.isArray(items)) {
       const oldItems = db.prepare('SELECT * FROM fo_items WHERE fo_id = ?').all(id);
       const installDate = tanggalPasang;
-      const { validated, totalHarga: totalBaru } = validateInstalledItems(items, installDate);
+      const { validated, totalHarga: totalBaru } = validateInstalledItems(items, installDate, petaTanggalTerpasang(oldItems));
       assertStockAvailable(sumQtyByCode(validated), sumQtyByCode(oldItems));
 
       totalHarga = totalBaru;
@@ -2403,7 +2425,7 @@ app.put('/api/tower/:id', (req, res) => {
     if (Array.isArray(items)) {
       const oldItems = db.prepare('SELECT * FROM tower_items WHERE tower_id = ?').all(id);
       const installDate = tanggalPasang;
-      const { validated, totalHarga: totalBaru } = validateInstalledItems(items, installDate);
+      const { validated, totalHarga: totalBaru } = validateInstalledItems(items, installDate, petaTanggalTerpasang(oldItems));
       assertStockAvailable(sumQtyByCode(validated), sumQtyByCode(oldItems));
 
       totalHarga = totalBaru;

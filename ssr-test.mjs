@@ -662,6 +662,24 @@ console.log('\n=== 34. Konfirmasi Pengembalian saat Edit Barang FO & Tower ===')
   else sectionBad(`34.1 Alur konfirmasi FO/Tower: ${masalah.join('; ')}`);
 }
 
+console.log('\n=== 35. Tanggal Pasang Barang Terpasang Dipertahankan Saat Edit ===');
+{
+  const masalah = [];
+  const server = fs.readFileSync('server/index.js', 'utf-8');
+  const jumlahPemakaian = (server.match(/validateInstalledItems\(items, installDate, petaTanggalTerpasang\(oldItems\)\)/g) || []).length;
+  const wajib = [
+    ['helper petaTanggalTerpasang tersedia', /function petaTanggalTerpasang\(oldItems\)\s*\{/.test(server)],
+    ['peta memakai kunci kode barang + SN yang sama dengan perhitungan selisih', /map\.set\(installedItemKey\(it\)/.test(server)],
+    ['validateInstalledItems menerima tanggal lama', /function validateInstalledItems\(items, installDate, tanggalLama\)/.test(server)],
+    ['tanggal barang lama dipakai lebih dulu, tanggal induk hanya untuk unit baru', /tanggal_pasang:\s*tanggalLamaItem \|\| installDate/.test(server)],
+    ['ketiga divisi (pelanggan, FO, tower) mengirim peta tanggal saat edit', jumlahPemakaian === 3],
+    ['baris tanggal pada insert tidak lagi selalu installDate', !/tanggal_pasang:\s*installDate\s*$/.test(server)],
+  ];
+  for (const [label, lolos] of wajib) if (!lolos) masalah.push(label);
+  if (masalah.length === 0) sectionOk('35.1 Edit data pokok tidak menulis ulang tanggal pasang barang terpasang di ketiga divisi');
+  else sectionBad(`35.1 Tanggal pasang barang terpasang: ${masalah.join('; ')}`);
+}
+
 await vite.close();
 console.log(`\nHasil: ${pass} lolos, ${fail} gagal`);
 process.exit(fail ? 1 : 0);

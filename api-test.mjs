@@ -1812,6 +1812,76 @@ console.log('\n=== 6I. EDIT BARANG FO & TOWER: KONDISI PENGEMBALIAN WAJIB (SEPER
   await req('POST', '/api/reset-seed');
 }
 
+console.log('\n=== 6J. TANGGAL PASANG BARANG TERPASANG DIPERTAHANKAN SAAT DATA INDUK DIEDIT ===');
+{
+  const codeFo = 'UJI-TGL-FO', codeSn = 'UJI-TGL-SN', codeTw = 'UJI-TGL-TWR', codePl = 'UJI-TGL-PLG';
+  for (const [kode, nama] of [[codeFo, 'Perangkat FO Uji Tanggal'], [codeSn, 'Unit Bon Uji Tanggal'],
+    [codeTw, 'Perangkat Tower Uji Tanggal'], [codePl, 'Perangkat Pelanggan Uji Tanggal']]) {
+    await req('POST', '/api/items', { kode_barang: kode, nama_barang: nama, satuan: 'unit', jenis_barang: 'Perangkat Jaringan Core', stok: 10, harga_barang: 1000 });
+  }
+
+  // Titik FO bertanggal 2025-01-10; unit kedua dipasang lewat Bon Teknisi bertanggal 2025-06-20,
+  // jadi tanggal pasang barang itu memang BEDA dari tanggal titik lokasinya.
+  const fo = await req('POST', '/api/fo', { daerah_lokasi: 'UJI-TGL-FO', tanggal_pasang: '2025-01-10', items: [{ kode_barang: codeFo, jumlah: 1 }] });
+  const idFo = fo.json?.data?.id;
+  const bon = await req('POST', '/api/technician-loans', { divisi: 'DIVISI FO', teknisi_nama: 'Uji Tanggal Pemasangan', tanggal: '2025-06-20', items: [{ kode_barang: codeSn, jumlah: 1, serial_number: 'TGL-SN-1' }] });
+  const idBon = bon.json?.data?.id;
+  const pasang = await req('POST', `/api/technician-loans/${idBon}/install`, { divisi: 'DIVISI FO', tujuan_id: idFo, tanggal: '2025-06-20', items: [{ kode_barang: codeSn, jumlah: 1, serial_number: 'TGL-SN-1' }] });
+  const sebelum = (await req('GET', `/api/fo/${idFo}`)).json?.data;
+  const tanggalAwal = Object.fromEntries((sebelum?.items || []).map(i => [i.kode_barang + '|' + (i.serial_number || ''), i.tanggal_pasang]));
+
+  const editCatatan = await req('PUT', `/api/fo/${idFo}`, {
+    catatan: 'hanya catatan yang diubah',
+    items: (sebelum?.items || []).map(i => ({ kode_barang: i.kode_barang, jumlah: i.jumlah, serial_number: i.serial_number }))
+  });
+  const sesudah = (await req('GET', `/api/fo/${idFo}`)).json?.data;
+  const tanggalAkhir = Object.fromEntries((sesudah?.items || []).map(i => [i.kode_barang + '|' + (i.serial_number || ''), i.tanggal_pasang]));
+  if (pasang.status < 300 && editCatatan.status === 200 && sebelum?.items?.length === 2 && sesudah?.items?.length === 2
+      && tanggalAkhir[codeFo + '|'] === '2025-01-10' && tanggalAkhir[codeSn + '|TGL-SN-1'] === '2025-06-20'
+      && sesudah?.tanggal_pasang === '2025-01-10') {
+    ok('Edit FO (hanya catatan): tanggal pasang tiap barang tidak ditulis ulang — unit dari Bon Teknisi tetap 2025-06-20');
+  } else {
+    bad('Edit FO tidak boleh menulis ulang tanggal pasang barang terpasang', JSON.stringify({ pasang: pasang.status, edit: editCatatan.status, tanggalAwal, tanggalAkhir }));
+  }
+
+  // Barang yang benar-benar baru saat edit tetap memakai tanggal data induk.
+  const tambah = await req('PUT', `/api/fo/${idFo}`, {
+    items: [...(sesudah?.items || []).map(i => ({ kode_barang: i.kode_barang, jumlah: i.jumlah, serial_number: i.serial_number })), { kode_barang: codeFo, jumlah: 2 }]
+  });
+  const setelahTambah = (await req('GET', `/api/fo/${idFo}`)).json?.data;
+  const barisBaru = (setelahTambah?.items || []).find(i => i.kode_barang === codeFo && !i.serial_number && Number(i.jumlah) === 2);
+  const barisSn = (setelahTambah?.items || []).find(i => i.serial_number === 'TGL-SN-1');
+  if (tambah.status === 200 && barisBaru?.tanggal_pasang === '2025-01-10' && barisSn?.tanggal_pasang === '2025-06-20') {
+    ok('Barang baru saat edit memakai tanggal data induk; unit lama tetap mempertahankan tanggal pasangnya');
+  } else {
+    bad('Tanggal barang baru saat edit', JSON.stringify({ status: tambah.status, barisBaru, barisSn }));
+  }
+
+  // Mengubah tanggal lokasi tetap mengubah data induk, tetapi tidak menyeret tanggal barang terpasang.
+  const tw = await req('POST', '/api/tower', { daerah_lokasi: 'UJI-TGL-TWR', tanggal_pasang: '2025-02-02', items: [{ kode_barang: codeTw, jumlah: 1 }] });
+  const idTw = tw.json?.data?.id;
+  const twEdit = await req('PUT', `/api/tower/${idTw}`, { tanggal_pasang: '2025-03-03', catatan: 'koreksi tanggal lokasi', items: [{ kode_barang: codeTw, jumlah: 1 }] });
+  const twAfter = (await req('GET', `/api/tower/${idTw}`)).json?.data;
+  if (twEdit.status === 200 && twAfter?.tanggal_pasang === '2025-03-03' && twAfter?.items?.[0]?.tanggal_pasang === '2025-02-02') {
+    ok('Tanggal site Tower tetap dapat dikoreksi di data induk, sementara tanggal barang terpasang dipertahankan');
+  } else {
+    bad('Tanggal Tower saat tanggal lokasi diubah', JSON.stringify({ status: twEdit.status, site: twAfter?.tanggal_pasang, item: twAfter?.items?.[0]?.tanggal_pasang }));
+  }
+
+  const plg = await req('POST', '/api/customers', { id_pelanggan: 'UJI-TGL-PLG', nama_pelanggan: 'Pelanggan Uji Tanggal', tanggal_pasang: '2025-04-04', items: [{ kode_barang: codePl, jumlah: 1 }] });
+  const idPlg = plg.json?.data?.id;
+  const plgEdit = await req('PUT', `/api/customers/${idPlg}`, { catatan: 'diubah', items: [{ kode_barang: codePl, jumlah: 1 }] });
+  const plgAfter = (await req('GET', `/api/customers/${idPlg}`)).json?.data;
+  if (plgEdit.status === 200 && plgAfter?.items?.[0]?.tanggal_pasang === '2025-04-04') {
+    ok('Edit pelanggan juga mempertahankan tanggal pasang barang terpasang — perilaku ketiga divisi sama');
+  } else {
+    bad('Tanggal pelanggan saat edit', JSON.stringify({ status: plgEdit.status, item: plgAfter?.items?.[0]?.tanggal_pasang }));
+  }
+
+  checkNoNegativeStock('setelah edit data induk tanpa mengubah tanggal pasang barang');
+  await req('POST', '/api/reset-seed');
+}
+
 console.log('\n=== PEMBERSIHAN: ringkasan publik, kosongkan data & pulihkan seed ===');
 {
   const adminToken = TOKEN;
