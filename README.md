@@ -78,6 +78,16 @@ Aplikasi enterprise untuk manajemen inventaris barang dan pelacakan aset jaringa
     5. Daftar site divisi Tower mana saja yang memakai barang tersebut.
     6. Riwayat mutasi keluar/masuk barang tersebut lengkap tanggal, bulan, dan tahunnya.
 
+### Pengurangan / penghapusan barang terpasang saat edit pelanggan
+
+Pada **Edit Pelanggan & Barang Terpasang**, mengurangi jumlah, menghapus baris, mengganti kode atau mengganti SN tidak langsung mengembalikan barang ke stok. Saat **Simpan Perubahan**, sistem menampilkan konfirmasi per barang yang ditarik:
+- Pilih **Baik / Rusak Ringan / Rusak Berat / Afkir** (tidak ada pilihan otomatis).
+- Isi **keterangan / alasan pengembalian** untuk setiap kode dan SN.
+- **Baik** menambah stok siap pakai; **rusak/afkir** masuk Gudang Barang Rusak, tanpa menambah stok siap pakai. Kondisi, jumlah, SN dan alasan tercatat pada riwayat mutasi.
+- **Kembali ke Edit** membatalkan konfirmasi tanpa menyimpan perubahan atau mengubah stok.
+
+Pemeriksaan juga dilakukan di server: PUT pelanggan yang mengurangi/mengganti barang wajib membawa `pengembalian` (kode_barang, serial_number, jumlah, kondisi, keterangan) sesuai selisih kode+SN. Penambahan barang atau edit data tanpa pengurangan tidak memerlukan konfirmasi. Unit pengganti tetap membutuhkan stok siap pakai; barang kembali rusak tidak bisa dihitung sebagai stok untuk penggantinya. Semua perubahan disimpan secara atomik.
+
 ### Pengiriman servis barang rusak
 
 Di menu **Barang Rusak**, admin / staff gudang dapat memilih **Kirim untuk Servis**:

@@ -397,8 +397,12 @@ else bad('Edit melebihi stok ditolak', `HTTP ${r.status} — stok jadi minus!`);
 if (stockOf(KODE) === STOK_AWAL - 2) ok('Stok utuh setelah edit ditolak (rollback)');
 else bad('Stok utuh setelah edit ditolak', `stok=${stockOf(KODE)}`);
 
+r = await req('PUT', `/api/customers/${idPelanggan}`, { items: [{ kode_barang: KODE, jumlah: 1 }] });
+if (r.status === 400 && stockOf(KODE) === STOK_AWAL - 2 && trxSince(mark).length === 0) ok('Edit pengurangan/hapus barang wajib kondisi dan keterangan, tidak otomatis kembali ke stok');
+else bad('Edit pengurangan tanpa kondisi harus ditolak');
 r = await req('PUT', `/api/customers/${idPelanggan}`, {
   items: [{ kode_barang: KODE, jumlah: 1 }],
+  pengembalian: [{ kode_barang: KODE, jumlah: 1, kondisi: 'Baik', keterangan: 'Pengurangan perangkat pelanggan masih baik' }],
 });
 if (r.status === 200) ok('Edit wajar berhasil', `HTTP 200`);
 else bad('Edit wajar berhasil', `HTTP ${r.status}`);
@@ -1541,6 +1545,74 @@ console.log('\n=== 6G. DATA TEKNISI & DIVISI PADA BON (pilih divisi → nama tek
   for (const t of [andi, tower]) await req('DELETE', `/api/teknisi/${t.id}`);
   const sisa = db.prepare('SELECT COUNT(*) AS c FROM technicians').get().c;
   if (sisa === 0) ok('Teknisi uji dibersihkan setelah tes'); else bad('Teknisi uji dibersihkan', `${sisa} tersisa`);
+}
+
+console.log('\n=== 6H. EDIT BARANG PELANGGAN: KONDISI PENGEMBALIAN PER BARANG ===');
+{
+  const code = 'UJI-EDIT-RETURN', code2 = 'UJI-EDIT-AFKIR';
+  await req('POST', '/api/items', { kode_barang: code, nama_barang: 'Radio Pengembalian', satuan: 'unit', jenis_barang: 'Wireless', stok: 20, harga_barang: 1000 });
+  await req('POST', '/api/items', { kode_barang: code2, nama_barang: 'Barang Afkir Edit', satuan: 'unit', jenis_barang: 'Wireless', stok: 10, harga_barang: 500 });
+  const made = await req('POST', '/api/customers', { id_pelanggan: 'PG-EDIT-RETURN', nama_pelanggan: 'Pelanggan Uji Return',
+    items: [{ kode_barang: code, jumlah: 3 }, { kode_barang: code, jumlah: 1, serial_number: 'SN-EDIT-B' }, { kode_barang: code2, jumlah: 2 }] });
+  const id = made.json?.data?.id;
+  const target = [{ kode_barang: code, jumlah: 1 }, { kode_barang: code2, jumlah: 1 }];
+  const returns = [
+    { kode_barang: code, jumlah: 2, kondisi: 'Baik', keterangan: 'Dikurangi, perangkat masih baik' },
+    { kode_barang: code, serial_number: 'SN-EDIT-B', jumlah: 1, kondisi: 'Rusak Berat', keterangan: 'Perangkat mati setelah petir' },
+    { kode_barang: code2, jumlah: 1, kondisi: 'Afkir', keterangan: 'Tidak layak pakai' },
+  ];
+  const start = maxTrxId();
+  for (const pengembalian of [undefined, [], returns.slice(1), [...returns, returns[0]],
+    returns.map((r, n) => n === 0 ? { ...r, jumlah: 99 } : r),
+    returns.map((r, n) => n === 0 ? { ...r, kondisi: '' } : r),
+    returns.map((r, n) => n === 0 ? { ...r, keterangan: '   ' } : r),
+    returns.map((r, n) => n === 1 ? { ...r, serial_number: 'SN-SALAH' } : r)]) {
+    const invalid = await req('PUT', `/api/customers/${id}`, { items: target, pengembalian });
+    const current = (await req('GET', `/api/customers/${id}`)).json?.data;
+    if (invalid.status === 400 && current?.items.length === 3 && current.total_harga === 5000 && stockOf(code) === 16 && stockOf(code2) === 8 && trxSince(start).length === 0) {
+      ok('Edit pelanggan: rincian pengembalian kosong/salah ditolak tanpa perubahan barang, stok, nilai atau mutasi');
+    } else bad('Edit pelanggan: rollback pengembalian tidak valid', JSON.stringify(invalid.json));
+  }
+  db.exec(`CREATE TRIGGER test_fail_customer_return BEFORE INSERT ON transactions
+    WHEN NEW.kondisi = 'Afkir' AND NEW.divisi = 'PELANGGAN' AND NEW.ref_id = ${Number(id)}
+    BEGIN SELECT RAISE(ABORT, 'Uji rollback pengembalian pelanggan'); END`);
+  try {
+    const rejected = await req('PUT', `/api/customers/${id}`, { items: target, pengembalian: returns });
+    const original = (await req('GET', `/api/customers/${id}`)).json?.data;
+    const ledger = db.prepare('SELECT COUNT(*) AS n FROM damaged_items WHERE sumber = ? AND sumber_id = ?').get('Edit Barang Terpasang Pelanggan', id).n;
+    if (rejected.status === 400 && stockOf(code) === 16 && stockOf(code2) === 8 && original?.items.length === 3 && original.total_harga === 5000
+        && trxSince(start).length === 0 && ledger === 0) ok('Edit pelanggan: gagal di tengah pengembalian campuran membatalkan stok, ledger rusak, mutasi dan barang terpasang');
+    else bad('Edit pelanggan: pengembalian campuran harus atomik');
+  } finally { db.exec('DROP TRIGGER IF EXISTS test_fail_customer_return'); }
+  const changed = await req('PUT', `/api/customers/${id}`, { items: target, pengembalian: returns });
+  const logged = trxSince(start);
+  const damaged = db.prepare('SELECT * FROM damaged_items WHERE sumber_id = ? AND sumber = ?').all(id, 'Edit Barang Terpasang Pelanggan');
+  if (changed.status === 200 && stockOf(code) === 18 && stockOf(code2) === 8 && changed.json?.data?.items.length === 2 && changed.json.data.total_harga === 1500
+      && logged.length === 3 && logged.some(t => t.kondisi === 'Baik' && t.jumlah === 2 && t.keterangan.includes(returns[0].keterangan))
+      && logged.some(t => t.kondisi === 'Rusak Berat' && t.serial_number === 'SN-EDIT-B' && t.keterangan.includes(returns[1].keterangan))
+      && logged.some(t => t.kondisi === 'Afkir') && damaged.length === 2
+      && damaged.some(d => d.kondisi === 'Rusak Berat' && d.keterangan.includes('SN-EDIT-B')) && damaged.some(d => d.kondisi === 'Afkir')) {
+    ok('Edit pelanggan: kondisi campuran per kode/SN, Baik masuk stok; rusak/afkir masuk ledger rusak; alasan dan SN tercatat');
+  } else bad('Edit pelanggan: pemisahan pengembalian berdasarkan kondisi', JSON.stringify(changed.json));
+  // Mengganti SN (jumlah kode sama) juga merupakan pengembalian unit lama + pemasangan baru.
+  const serial = await req('POST', '/api/customers', { id_pelanggan: 'PG-EDIT-SN', nama_pelanggan: 'Pelanggan SN', items: [{ kode_barang: code, jumlah: 1, serial_number: 'SN-LAMA' }] });
+  const sid = serial.json?.data?.id, beforeSwap = stockOf(code), markSwap = maxTrxId();
+  const replacement = [{ kode_barang: code, jumlah: 1, serial_number: 'SN-BARU' }];
+  const noCondition = await req('PUT', `/api/customers/${sid}`, { items: replacement });
+  if (noCondition.status === 400 && stockOf(code) === beforeSwap && trxSince(markSwap).length === 0) ok('Edit pelanggan: ganti SN wajib konfirmasi penarikan unit lama meskipun jumlah kode tetap');
+  else bad('Edit pelanggan: ganti SN tanpa konfirmasi');
+  const swap = await req('PUT', `/api/customers/${sid}`, { items: replacement, pengembalian: [{ kode_barang: code, serial_number: 'SN-LAMA', jumlah: 1, kondisi: 'Rusak Ringan', keterangan: 'Unit lama putus-putus, diganti unit lain' }] });
+  if (swap.status === 200 && stockOf(code) === beforeSwap - 1 && trxSince(markSwap).length === 2) ok('Edit pelanggan: penggantian SN rusak memakai stok unit baru, bukan mengembalikan unit rusak ke stok'); else bad('Edit pelanggan: ganti SN rusak');
+  // Pengembalian rusak tidak boleh menjadi stok semu untuk memasang penggantinya.
+  const zeroCode = 'UJI-RETURN-NO-STOCK';
+  await req('POST', '/api/items', { kode_barang: zeroCode, nama_barang: 'Stok Uji Habis', satuan: 'unit', jenis_barang: 'Wireless', stok: 1 });
+  const last = await req('POST', '/api/customers', { id_pelanggan: 'PG-NO-STOCK', nama_pelanggan: 'Pelanggan Stok Habis', items: [{ kode_barang: zeroCode, jumlah: 1, serial_number: 'OLD' }] });
+  const blocked = await req('PUT', `/api/customers/${last.json?.data?.id}`, { items: [{ kode_barang: zeroCode, jumlah: 1, serial_number: 'NEW' }],
+    pengembalian: [{ kode_barang: zeroCode, serial_number: 'OLD', jumlah: 1, kondisi: 'Rusak Berat', keterangan: 'Rusak, perlu pengganti' }] });
+  if (blocked.status === 400 && stockOf(zeroCode) === 0 && (await req('GET', `/api/customers/${last.json?.data?.id}`)).json?.data?.items[0].serial_number === 'OLD') ok('Edit pelanggan: stok nol menolak pengganti jika unit kembali rusak; perubahan atomik'); else bad('Edit pelanggan: stok rusak dipakai untuk pengganti');
+  const same = await req('PUT', `/api/customers/${id}`, { catatan: 'Edit catatan saja', items: target });
+  if (same.status === 200) ok('Edit pelanggan: tanpa pengurangan tidak membutuhkan konfirmasi pengembalian'); else bad('Edit pelanggan: edit biasa tidak boleh diblokir');
+  await req('POST', '/api/reset-seed');
 }
 
 console.log('\n=== PEMBERSIHAN: ringkasan publik, kosongkan data & pulihkan seed ===');

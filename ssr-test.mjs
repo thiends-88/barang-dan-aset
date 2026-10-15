@@ -599,6 +599,26 @@ try {
   } else sectionBad('32.1 Tampilan realisasi bon atau pemisahan total tidak sesuai');
 } catch (e) { sectionBad(`32.1 Render realisasi dalam Mutasi gagal: ${e.message}`); }
 
+console.log('\n=== 33. Konfirmasi Pengembalian saat Edit Barang Pelanggan ===');
+try {
+  const { installedItemChanges } = await vite.ssrLoadModule('/shared/installedReturns.js');
+  const Modal = (await vite.ssrLoadModule('/src/components/ReturnInstalledItemsModal.jsx')).default;
+  const old = [{ kode_barang: 'RADIO', nama_barang: 'Radio Pelanggan', satuan: 'unit', jumlah: 3 },
+    { kode_barang: 'RADIO', nama_barang: 'Radio SN', satuan: 'unit', serial_number: 'SN-OLD', jumlah: 1 }];
+  const target = [{ kode_barang: 'radio', jumlah: 1 }, { kode_barang: 'RADIO', serial_number: 'SN-NEW', jumlah: 1 }];
+  const changes = installedItemChanges(old, target);
+  const html = renderToString(React.createElement(Modal, { items: changes.returned, busy: false, onConfirm() {}, onCancel() {} }));
+  const source = fs.readFileSync('src/components/DivisiPelanggan.jsx', 'utf-8');
+  if (changes.returned.length === 2 && changes.returned[0].jumlah === 2 && changes.returned[1].serial_number === 'SN-OLD'
+      && changes.added.length === 1 && changes.added[0].serial_number === 'SN-NEW'
+      && installedItemChanges(old, old).returned.length === 0 && installedItemChanges(old, []).returned.length === 2
+      && ['Konfirmasi Barang Dikurangi / Dihapus', 'SN-OLD', 'Kondisi Pengembalian', 'Keterangan / Alasan Pengembalian',
+          'Baik — kembali ke stok siap pakai', 'Rusak Ringan', 'Rusak Berat', 'Afkir', 'Kembali ke Edit', 'Konfirmasi &amp; Simpan Perubahan'].every(t => html.includes(t))
+      && source.includes('setReturnConfirmation({ items: returned') && source.includes('pengembalian => saveCustomer')) {
+    sectionOk('33.1 Pengurangan/hapus/ganti SN terdeteksi; modal meminta kondisi dan alasan per barang sebelum simpan, dapat dibatalkan');
+  } else sectionBad('33.1 Deteksi pengembalian / formulir kondisi tidak sesuai');
+} catch (e) { sectionBad(`33.1 Render konfirmasi pengembalian gagal: ${e.message}`); }
+
 await vite.close();
 console.log(`\nHasil: ${pass} lolos, ${fail} gagal`);
 process.exit(fail ? 1 : 0);

@@ -1,4 +1,5 @@
 import express from 'express';
+import { installedItemKey, installedItemChanges } from '../shared/installedReturns.js';
 import { registerServiceShipments } from './serviceShipments.js';
 import cors from 'cors';
 import path from 'path';
@@ -713,12 +714,52 @@ function logStockMutation({ jenis, kategori, divisi, refId = null, lokasi, item,
   return trxNo;
 }
 
+/** Penarikan saat edit pelanggan wajib punya kondisi & alasan per kode+SN, bukan pengembalian diam-diam. */
+function processCustomerItemChanges({ oldItems, validatedItems, pengembalian, refId, lokasiPenerima, label, dicatatOleh }) {
+  const { returned, added } = installedItemChanges(oldItems, validatedItems);
+  if (pengembalian !== undefined && !Array.isArray(pengembalian)) throw new Error('Rincian pengembalian harus berupa daftar');
+  const details = new Map();
+  for (const entry of pengembalian || []) {
+    const key = installedItemKey(entry);
+    if (details.has(key)) throw new Error('Rincian pengembalian kode/SN tidak boleh duplikat');
+    details.set(key, entry);
+  }
+  if (details.size !== returned.length) throw new Error('Pilih kondisi dan isi keterangan setiap barang yang dikurangi atau dihapus');
+  const returns = returned.map(item => {
+    const entry = details.get(installedItemKey(item));
+    if (!entry || !Number.isFinite(Number(entry.jumlah)) || Math.abs(Number(entry.jumlah) - item.jumlah) > 1e-9) throw new Error('Jumlah pengembalian tidak sesuai barang yang dikurangi/dihapus; periksa ulang data terbaru');
+    if (!KONDISI_LIST.includes(entry.kondisi)) throw new Error('Pilih kondisi pengembalian: Baik, Rusak Ringan, Rusak Berat, atau Afkir');
+    const keterangan = teksBody(entry.keterangan, 'Keterangan pengembalian');
+    if (!keterangan || keterangan.length > 2000) throw new Error('Keterangan pengembalian wajib diisi (maksimal 2000 karakter)');
+    if (!getMasterItem(item.kode_barang)) throw new Error(`Master barang ${item.kode_barang} tidak ditemukan`);
+    return { ...item, kondisi: entry.kondisi, keterangan };
+  });
+  // Pengembalian rusak tidak dapat dipakai untuk membiayai pemasangan unit penggantinya.
+  assertStockAvailable(sumQtyByCode(added), sumQtyByCode(returns.filter(i => i.kondisi === 'Baik')));
+  for (const item of returns) {
+    const rusak = isKondisiRusak(item.kondisi);
+    if (!rusak) db.prepare("UPDATE items SET stok = stok + ?, updated_at = datetime('now','localtime') WHERE kode_barang = ?").run(item.jumlah, item.kode_barang);
+    const trx = logStockMutation({ jenis: 'MASUK', kategori: rusak ? (item.kondisi === 'Afkir' ? 'Barang Afkir' : 'Barang Rusak') : 'Penyesuaian Pengembalian',
+      divisi: 'PELANGGAN', refId, lokasi: lokasiPenerima, item, jumlah: item.jumlah, harga_satuan: item.harga_barang,
+      kondisi: item.kondisi, keterangan: `${label} — ${item.keterangan} — ${rusak ? 'masuk gudang rusak, bukan stok siap pakai' : 'kembali ke stok siap pakai'}${item.serial_number ? ` [SN: ${item.serial_number}]` : ''}` });
+    if (rusak) buatDamagedEntry({ ...item, keterangan: `${item.keterangan}${item.serial_number ? ` [SN: ${item.serial_number}]` : ''}`, sumber: 'Edit Barang Terpasang Pelanggan', sumber_id: refId,
+      sumber_nama: lokasiPenerima, no_transaksi: trx, dibuat_oleh: dicatatOleh });
+  }
+  for (const item of added) {
+    db.prepare("UPDATE items SET stok = stok - ?, updated_at = datetime('now','localtime') WHERE kode_barang = ?").run(item.jumlah, item.kode_barang);
+    logStockMutation({ jenis: 'KELUAR', kategori: 'Penyesuaian Pemasangan', divisi: 'PELANGGAN', refId,
+      lokasi: lokasiPenerima, item, jumlah: item.jumlah, harga_satuan: item.harga_barang,
+      keterangan: `${label} — tambahan pemasangan ${item.jumlah} ${item.satuan}` });
+  }
+}
+
 /**
  * Sinkronkan barang terpasang pada satu data divisi (pelanggan / FO / tower).
  * Baris lama diganti baris baru, lalu stok gudang disesuaikan berdasarkan SELISIH,
  * sehingga tidak ada stok yang hilang/tertahan dan setiap selisih tercatat sebagai mutasi.
  */
-function reconcileInstalledItems({ table, fkColumn, ownerId, oldItems, validatedItems, divisi, refId, lokasiPenerima, label }) {
+function reconcileInstalledItems({ table, fkColumn, ownerId, oldItems, validatedItems, divisi, refId, lokasiPenerima, label, pengembalian, dicatatOleh }) {
+  if (divisi === 'PELANGGAN') processCustomerItemChanges({ oldItems, validatedItems, pengembalian, refId, lokasiPenerima, label, dicatatOleh });
   const oldQtyByCode = sumQtyByCode(oldItems);
   const newQtyByCode = sumQtyByCode(validatedItems);
 
@@ -740,6 +781,7 @@ function reconcileInstalledItems({ table, fkColumn, ownerId, oldItems, validated
     insert.run(ownerId, it.kode_barang, it.nama_barang, it.jenis_barang, it.satuan, it.jumlah, it.harga_barang, it.subtotal, it.serial_number, it.referensi_suplayer, it.tanggal_pasang, j.dipasang_oleh, j.no_bon);
   }
 
+  if (divisi === 'PELANGGAN') return; // Selisih pelanggan sudah diproses per kode+SN beserta kondisi.
   const semuaKode = new Set([...oldQtyByCode.keys(), ...newQtyByCode.keys()]);
   for (const kode of semuaKode) {
     const sebelum = oldQtyByCode.get(kode) || 0;
@@ -1762,7 +1804,9 @@ app.put('/api/customers/:id', (req, res) => {
         divisi: 'PELANGGAN',
         refId: Number(id),
         lokasiPenerima: (nama_pelanggan ? nama_pelanggan.trim() : current.nama_pelanggan),
-        label: `Edit data pelanggan ${current.id_pelanggan}`
+        label: `Edit data pelanggan ${current.id_pelanggan}`,
+        pengembalian: req.body.pengembalian,
+        dicatatOleh: req.user?.nama_lengkap || req.user?.username || ''
       });
     }
 

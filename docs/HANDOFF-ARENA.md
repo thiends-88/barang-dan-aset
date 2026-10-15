@@ -859,6 +859,15 @@ di README, info versi build (`/api/version`,
 - UI: badge indigo REALISASI BON, nomor bon, nama tujuan, lokasi, pemasang dan SN; catatan tidak terpotong. Filter khusus realisasi + penjelasan bahwa tidak mengurangi stok lagi. Nilai di baris realisasi diberi label nilai aset terpasang. CSV menaruh nilai realisasi pada kolom terpisah dari Total Nilai transaksi gudang (termasuk rekap kategori); cetak mengikuti tampilan.
 - Tidak mengubah alur install bon, stok, transaksi tersimpan atau valuasi gudang. Tes memastikan realisasi Pelanggan/FO/Tower lengkap, nilai/qty masuk-keluar-neto tidak dobel, filter, limit dan kompatibilitas endpoint default. Tes render Seksi 32; 8 pemeriksaan interaksi jsdom untuk baca histori/filter/cari/CSV/stok lolos. Verifikasi akhir **212 API + 57 render lolos**, build produksi berhasil.
 
+**Konfirmasi kondisi saat edit barang pelanggan (15 Oktober 2026):**
+- Permintaan screenshot Edit Pelanggan: ketika jumlah berkurang, baris dihapus, kode atau SN diganti, **Simpan Perubahan** membuka `ReturnInstalledItemsModal`. Setiap unit/kelompok kode+SN yang ditarik wajib kondisi (tanpa default) dan alasan. Cancel kembali ke edit tanpa request PUT / perubahan stok.
+- `shared/installedReturns.js` dipakai UI dan server untuk agregasi/diff kode+SN (case-insensitive); menangani baris duplikat, pengurangan sebagian, ganti SN, hapus semua. Normalisasi di server tetap melalui validateInstalledItems terlebih dahulu.
+- PUT `/api/customers/:id` menerima `pengembalian: [{kode_barang, serial_number, jumlah, kondisi, keterangan}]`. Metadata wajib cocok tepat dengan pengurangan terbaru; hilang/berlebih/duplikat/jumlah atau SN salah/kondisi kosong/alasan kosong ditolak. Edit tanpa pengurangan tetap bisa tanpa metadata.
+- Reconcile khusus pelanggan: Baik menambah stok siap pakai + log MASUK Penyesuaian Pengembalian; rusak/afkir hanya log MASUK berkondisi dan ledger rusak (sumber Edit Barang Terpasang Pelanggan), tidak menambah stok siap pakai. Keterangan/SN/asal pelanggan tercatat. Tambahan pemasangan tetap mengambil stok dan log KELUAR; pengganti tidak boleh memakai stok semu dari barang kembali rusak.
+- Semua langkah di transaksi PUT pelanggan yang sudah ada; kegagalan mutasi di tengah membatalkan stok, ledger rusak, barang terpasang dan nilai pelanggan. Jejak no_bon/pemasang yang masih terpasang tetap dipertahankan.
+- Cakupan perubahan: **edit daftar barang pelanggan**, bukan DELETE seluruh pelanggan, dismantle seluruh pelanggan, atau edit FO/Tower (alur tersebut tetap seperti sebelumnya).
+- Tes API Seksi 2 disesuaikan + Seksi 6H: validasi metadata, rollback, kondisi campuran, SN, pengganti stok nol dan edit biasa. Render Seksi 33. Uji interaksi jsdom 11 pemeriksaan: kurang → konfirmasi → batal → rusak tersimpan → hapus → Baik, stok dan ledger tepat. Verifikasi akhir **227 API + 58 render lolos**, build produksi berhasil.
+
 **Belum dikerjakan / kandidat sesi berikutnya:**
 
 0. Bon Teknisi: opsi **tambah barang ke bon yang sudah berjalan**, pembatasan teknisi hanya melihat/merealisasi bon sendiri,
