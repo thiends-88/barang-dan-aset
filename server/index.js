@@ -1,4 +1,6 @@
 import express from 'express';
+import { installedItemKey, installedItemChanges } from '../shared/installedReturns.js';
+import { registerServiceShipments } from './serviceShipments.js';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
@@ -124,6 +126,7 @@ app.get('/api/version', (req, res) => {
 // Aturan hak akses tulis (POST/PUT/DELETE) per kelompok endpoint.
 // Endpoint GET boleh diakses semua peran yang sudah login.
 const WRITE_RULES = [
+  { pattern: /^\/api\/(service-shipments|damaged-items)(\/|$)/, roles: ['admin', 'staff_gudang'] },
   { pattern: /^\/api\/users(\/|$)/, roles: ['admin'] },
   { pattern: /^\/api\/reset-seed$/, roles: ['admin'] },
   { pattern: /^\/api\/admin(\/|$)/, roles: ['admin'] },
@@ -530,7 +533,7 @@ function teksBody(nilai, label) {
 // ==========================================================
 const KONDISI_LIST = ['Baik', 'Rusak Ringan', 'Rusak Berat', 'Afkir'];
 const KONDISI_RUSAK = ['Rusak Ringan', 'Rusak Berat', 'Afkir'];
-const DAMAGED_STATUS = ['DITAMPUNG', 'DIPERBAIKI', 'DIMUSNAHKAN'];
+const DAMAGED_STATUS = ['SELESAI_SERVIS', 'DISERVIS', 'DITAMPUNG', 'DIPERBAIKI', 'DIMUSNAHKAN'];
 function normalizeKondisi(v) {
   if (v === undefined || v === null || String(v).trim() === '') return 'Baik';
   const s = String(v).trim();
@@ -711,12 +714,52 @@ function logStockMutation({ jenis, kategori, divisi, refId = null, lokasi, item,
   return trxNo;
 }
 
+/** Penarikan saat edit pelanggan wajib punya kondisi & alasan per kode+SN, bukan pengembalian diam-diam. */
+function processCustomerItemChanges({ oldItems, validatedItems, pengembalian, refId, lokasiPenerima, label, dicatatOleh }) {
+  const { returned, added } = installedItemChanges(oldItems, validatedItems);
+  if (pengembalian !== undefined && !Array.isArray(pengembalian)) throw new Error('Rincian pengembalian harus berupa daftar');
+  const details = new Map();
+  for (const entry of pengembalian || []) {
+    const key = installedItemKey(entry);
+    if (details.has(key)) throw new Error('Rincian pengembalian kode/SN tidak boleh duplikat');
+    details.set(key, entry);
+  }
+  if (details.size !== returned.length) throw new Error('Pilih kondisi dan isi keterangan setiap barang yang dikurangi atau dihapus');
+  const returns = returned.map(item => {
+    const entry = details.get(installedItemKey(item));
+    if (!entry || !Number.isFinite(Number(entry.jumlah)) || Math.abs(Number(entry.jumlah) - item.jumlah) > 1e-9) throw new Error('Jumlah pengembalian tidak sesuai barang yang dikurangi/dihapus; periksa ulang data terbaru');
+    if (!KONDISI_LIST.includes(entry.kondisi)) throw new Error('Pilih kondisi pengembalian: Baik, Rusak Ringan, Rusak Berat, atau Afkir');
+    const keterangan = teksBody(entry.keterangan, 'Keterangan pengembalian');
+    if (!keterangan || keterangan.length > 2000) throw new Error('Keterangan pengembalian wajib diisi (maksimal 2000 karakter)');
+    if (!getMasterItem(item.kode_barang)) throw new Error(`Master barang ${item.kode_barang} tidak ditemukan`);
+    return { ...item, kondisi: entry.kondisi, keterangan };
+  });
+  // Pengembalian rusak tidak dapat dipakai untuk membiayai pemasangan unit penggantinya.
+  assertStockAvailable(sumQtyByCode(added), sumQtyByCode(returns.filter(i => i.kondisi === 'Baik')));
+  for (const item of returns) {
+    const rusak = isKondisiRusak(item.kondisi);
+    if (!rusak) db.prepare("UPDATE items SET stok = stok + ?, updated_at = datetime('now','localtime') WHERE kode_barang = ?").run(item.jumlah, item.kode_barang);
+    const trx = logStockMutation({ jenis: 'MASUK', kategori: rusak ? (item.kondisi === 'Afkir' ? 'Barang Afkir' : 'Barang Rusak') : 'Penyesuaian Pengembalian',
+      divisi: 'PELANGGAN', refId, lokasi: lokasiPenerima, item, jumlah: item.jumlah, harga_satuan: item.harga_barang,
+      kondisi: item.kondisi, keterangan: `${label} — ${item.keterangan} — ${rusak ? 'masuk gudang rusak, bukan stok siap pakai' : 'kembali ke stok siap pakai'}${item.serial_number ? ` [SN: ${item.serial_number}]` : ''}` });
+    if (rusak) buatDamagedEntry({ ...item, keterangan: `${item.keterangan}${item.serial_number ? ` [SN: ${item.serial_number}]` : ''}`, sumber: 'Edit Barang Terpasang Pelanggan', sumber_id: refId,
+      sumber_nama: lokasiPenerima, no_transaksi: trx, dibuat_oleh: dicatatOleh });
+  }
+  for (const item of added) {
+    db.prepare("UPDATE items SET stok = stok - ?, updated_at = datetime('now','localtime') WHERE kode_barang = ?").run(item.jumlah, item.kode_barang);
+    logStockMutation({ jenis: 'KELUAR', kategori: 'Penyesuaian Pemasangan', divisi: 'PELANGGAN', refId,
+      lokasi: lokasiPenerima, item, jumlah: item.jumlah, harga_satuan: item.harga_barang,
+      keterangan: `${label} — tambahan pemasangan ${item.jumlah} ${item.satuan}` });
+  }
+}
+
 /**
  * Sinkronkan barang terpasang pada satu data divisi (pelanggan / FO / tower).
  * Baris lama diganti baris baru, lalu stok gudang disesuaikan berdasarkan SELISIH,
  * sehingga tidak ada stok yang hilang/tertahan dan setiap selisih tercatat sebagai mutasi.
  */
-function reconcileInstalledItems({ table, fkColumn, ownerId, oldItems, validatedItems, divisi, refId, lokasiPenerima, label }) {
+function reconcileInstalledItems({ table, fkColumn, ownerId, oldItems, validatedItems, divisi, refId, lokasiPenerima, label, pengembalian, dicatatOleh }) {
+  if (divisi === 'PELANGGAN') processCustomerItemChanges({ oldItems, validatedItems, pengembalian, refId, lokasiPenerima, label, dicatatOleh });
   const oldQtyByCode = sumQtyByCode(oldItems);
   const newQtyByCode = sumQtyByCode(validatedItems);
 
@@ -738,6 +781,7 @@ function reconcileInstalledItems({ table, fkColumn, ownerId, oldItems, validated
     insert.run(ownerId, it.kode_barang, it.nama_barang, it.jenis_barang, it.satuan, it.jumlah, it.harga_barang, it.subtotal, it.serial_number, it.referensi_suplayer, it.tanggal_pasang, j.dipasang_oleh, j.no_bon);
   }
 
+  if (divisi === 'PELANGGAN') return; // Selisih pelanggan sudah diproses per kode+SN beserta kondisi.
   const semuaKode = new Set([...oldQtyByCode.keys(), ...newQtyByCode.keys()]);
   for (const kode of semuaKode) {
     const sebelum = oldQtyByCode.get(kode) || 0;
@@ -1142,7 +1186,7 @@ app.put('/api/items/:id', (req, res) => {
 
     // Ganti kode barang → seluruh rujukan barang terpasang ikut diperbarui
     if (kode_barang !== current.kode_barang) {
-      for (const tbl of ['customer_items', 'fo_items', 'tower_items', 'technician_loan_items']) {
+      for (const tbl of ['customer_items', 'fo_items', 'tower_items', 'technician_loan_items', 'damaged_items']) {
         db.prepare(`UPDATE ${tbl} SET kode_barang = ? WHERE UPPER(kode_barang) = UPPER(?)`).run(kode_barang, current.kode_barang);
       }
     }
@@ -1190,6 +1234,8 @@ app.delete('/api/items/:id', (req, res) => {
       });
     }
 
+    const damaged = db.prepare("SELECT COUNT(*) AS n FROM damaged_items WHERE kode_barang = ? AND (jumlah > 0 OR status = 'DISERVIS')").get(item.kode_barang).n;
+    if (damaged > 0) return res.status(400).json({ success: false, error: 'Barang masih tercatat di gudang rusak atau sedang diservis. Selesaikan penanganannya sebelum menghapus master.' });
     db.prepare('DELETE FROM items WHERE id = ?').run(id);
     res.json({ success: true, message: `Barang ${item.nama_barang} berhasil dihapus` });
   } catch (err) {
@@ -1760,7 +1806,9 @@ app.put('/api/customers/:id', (req, res) => {
         divisi: 'PELANGGAN',
         refId: Number(id),
         lokasiPenerima: (nama_pelanggan ? nama_pelanggan.trim() : current.nama_pelanggan),
-        label: `Edit data pelanggan ${current.id_pelanggan}`
+        label: `Edit data pelanggan ${current.id_pelanggan}`,
+        pengembalian: req.body.pengembalian,
+        dicatatOleh: req.user?.nama_lengkap || req.user?.username || ''
       });
     }
 
@@ -2456,12 +2504,31 @@ app.delete('/api/tower/:id', (req, res) => {
 // SQL atas seluruh baris yang cocok dengan filter (tanpa terpotong LIMIT).
 const MAX_TRANSACTION_ROWS = 5000;
 
+// Riwayat gabungan hanya untuk tampilan Mutasi. Tidak menulis/menggandakan transaksi gudang.
+// UNION membaca ledger bon langsung, sehingga realisasi historis ikut terlihat tanpa backfill.
+function transactionReadSource(includeBon) {
+  if (!includeBon) return 'transactions';
+  return `(SELECT t.id, t.no_transaksi, t.tanggal, t.waktu, t.jenis, t.kategori_transaksi, t.divisi,
+    t.ref_id, t.lokasi_penerima, t.kode_barang, t.nama_barang, t.satuan, t.jumlah, t.harga_satuan,
+    t.total_harga, t.keterangan, t.created_at, t.serial_number, t.kondisi,
+    'GUDANG' AS sumber_aktivitas, 'trx-' || t.id AS record_key,
+    '' AS no_bon, '' AS teknisi_pemasang, '' AS lokasi_tujuan
+    FROM transactions t
+    UNION ALL
+    SELECT -m.id, 'REALISASI-' || m.id, m.tanggal, m.waktu, 'REALISASI_BON', 'Realisasi Bon / Pemasangan',
+    m.divisi, m.tujuan_id, m.tujuan_nama, m.kode_barang, m.nama_barang, m.satuan, m.jumlah,
+    m.harga_barang, m.jumlah * m.harga_barang, m.keterangan, m.created_at, m.serial_number, 'Baik',
+    'REALISASI_BON', 'bon-pasang-' || m.id, l.no_bon, m.teknisi_nama, m.lokasi_tujuan
+    FROM technician_loan_movements m JOIN technician_loans l ON l.id = m.loan_id
+    WHERE m.jenis = 'PASANG')`;
+}
+
 // Daftar kategori transaksi yang pernah dipakai (untuk dropdown filter)
 app.get('/api/transactions/categories', (req, res) => {
   try {
     const rows = db.prepare(`
       SELECT kategori_transaksi AS kategori, COUNT(*) AS jumlah
-      FROM transactions
+      FROM ${transactionReadSource(req.query.include_bon === '1')}
       WHERE kategori_transaksi IS NOT NULL AND kategori_transaksi != ''
       GROUP BY kategori_transaksi
       ORDER BY kategori_transaksi ASC
@@ -2477,7 +2544,7 @@ app.get('/api/transaction-categories', (req, res) => {
   try {
     const rows = db.prepare(`
       SELECT kategori_transaksi AS kategori, COUNT(*) AS jumlah
-      FROM transactions
+      FROM ${transactionReadSource(req.query.include_bon === '1')}
       WHERE kategori_transaksi IS NOT NULL AND kategori_transaksi != ''
       GROUP BY kategori_transaksi
       ORDER BY kategori_transaksi ASC
@@ -2505,6 +2572,8 @@ app.get('/api/transactions', (req, res) => {
       limit
     } = req.query;
 
+    const includeBon = req.query.include_bon === '1';
+    const sourceSql = transactionReadSource(includeBon);
     let whereSql = ' WHERE 1=1';
     const params = [];
 
@@ -2560,7 +2629,7 @@ app.get('/api/transactions', (req, res) => {
     }
 
     // Jenis filter (MASUK / KELUAR)
-    if (jenis && (jenis === 'MASUK' || jenis === 'KELUAR')) {
+    if (jenis && (jenis === 'MASUK' || jenis === 'KELUAR' || (includeBon && jenis === 'REALISASI_BON'))) {
       whereSql += ' AND jenis = ?';
       params.push(jenis);
     }
@@ -2577,6 +2646,10 @@ app.get('/api/transactions', (req, res) => {
       whereSql += ' AND (kode_barang LIKE ? OR nama_barang LIKE ? OR no_transaksi LIKE ? OR lokasi_penerima LIKE ? OR keterangan LIKE ? OR kategori_transaksi LIKE ? OR kondisi LIKE ?)';
       const s = `%${search}%`;
       params.push(s, s, s, s, s, s, s);
+      if (includeBon) {
+        whereSql = whereSql.slice(0, -1) + ' OR no_bon LIKE ? OR teknisi_pemasang LIKE ? OR lokasi_tujuan LIKE ? OR serial_number LIKE ?)';
+        params.push(s, s, s, s);
+      }
     }
 
     // Ringkasan dihitung utuh di SQL atas seluruh baris yang cocok dengan filter
@@ -2587,8 +2660,11 @@ app.get('/api/transactions', (req, res) => {
         COALESCE(SUM(CASE WHEN jenis = 'MASUK' THEN jumlah ELSE 0 END), 0) AS total_masuk_qty,
         COALESCE(SUM(CASE WHEN jenis = 'MASUK' THEN total_harga ELSE 0 END), 0) AS total_masuk_nilai,
         COALESCE(SUM(CASE WHEN jenis = 'KELUAR' THEN jumlah ELSE 0 END), 0) AS total_keluar_qty,
-        COALESCE(SUM(CASE WHEN jenis = 'KELUAR' THEN total_harga ELSE 0 END), 0) AS total_keluar_nilai
-      FROM transactions
+        COALESCE(SUM(CASE WHEN jenis = 'KELUAR' THEN total_harga ELSE 0 END), 0) AS total_keluar_nilai,
+        SUM(CASE WHEN jenis = 'REALISASI_BON' THEN 1 ELSE 0 END) AS total_realisasi_bon,
+        COALESCE(SUM(CASE WHEN jenis = 'REALISASI_BON' THEN jumlah ELSE 0 END), 0) AS total_realisasi_qty,
+        SUM(CASE WHEN jenis IN ('MASUK', 'KELUAR') THEN 1 ELSE 0 END) AS total_transaksi_gudang
+      FROM ${sourceSql}
       ${whereSql}
     `).get(...params);
 
@@ -2604,7 +2680,7 @@ app.get('/api/transactions', (req, res) => {
         COALESCE(SUM(CASE WHEN jenis='KELUAR' THEN jumlah ELSE 0 END),0) AS keluar_qty,
         COALESCE(SUM(CASE WHEN jenis='MASUK' THEN total_harga ELSE 0 END),0) AS masuk_nilai,
         COALESCE(SUM(CASE WHEN jenis='KELUAR' THEN total_harga ELSE 0 END),0) AS keluar_nilai
-      FROM transactions
+      FROM ${sourceSql}
       ${whereSql}
       GROUP BY kategori_transaksi
       ORDER BY kategori_transaksi ASC
@@ -2627,7 +2703,7 @@ app.get('/api/transactions', (req, res) => {
       : MAX_TRANSACTION_ROWS;
 
     const txs = db.prepare(
-      `SELECT * FROM transactions${whereSql} ORDER BY tanggal DESC, id DESC LIMIT ?`
+      `SELECT * FROM ${sourceSql}${whereSql} ORDER BY ${includeBon ? 'tanggal DESC, waktu DESC, ABS(id) DESC, record_key DESC' : 'tanggal DESC, id DESC'} LIMIT ?`
     ).all(...params, rowLimit);
 
     const totalTransaksi = Number(agg?.total_transaksi) || 0;
@@ -2642,6 +2718,9 @@ app.get('/api/transactions', (req, res) => {
       data: txs,
       summary: {
         total_transaksi: totalTransaksi,
+        total_transaksi_gudang: Number(agg.total_transaksi_gudang) || 0,
+        total_realisasi_bon: Number(agg.total_realisasi_bon) || 0,
+        total_realisasi_qty: Number(agg.total_realisasi_qty) || 0,
         ditampilkan: txs.length,
         displayed: txs.length,
         limit: rowLimit,
@@ -3568,7 +3647,7 @@ app.post('/api/technician-loans/:id/install', (req, res) => {
         );
       }
 
-      db.prepare('UPDATE technician_loan_items SET jumlah_terpasang = ? WHERE id = ?').run(round3(li.jumlah_terpasang + qty), li.id);
+      db.prepare('UPDATE technician_loan_items SET jumlah_terpasang = ROUND(jumlah_terpasang + ?, 3) WHERE id = ?').run(qty, li.id);
       insertLoanMovement({
         loan_id: loan.id, loan_item_id: li.id, jenis: 'PASANG', tanggal: tgl,
         kode_barang: li.kode_barang, nama_barang: li.nama_barang, satuan: li.satuan, harga_barang: li.harga_barang,
@@ -3628,7 +3707,7 @@ app.post('/api/technician-loans/:id/return', (req, res) => {
       if (!rusak) {
         db.prepare("UPDATE items SET stok = stok + ?, updated_at = datetime('now','localtime') WHERE id = ?").run(qty, master.id);
       }
-      db.prepare('UPDATE technician_loan_items SET jumlah_kembali = ? WHERE id = ?').run(round3(li.jumlah_kembali + qty), li.id);
+      db.prepare('UPDATE technician_loan_items SET jumlah_kembali = ROUND(jumlah_kembali + ?, 3) WHERE id = ?').run(qty, li.id);
       const kategoriReturn = rusak ? (kondisiItem === 'Afkir' ? 'Barang Afkir' : 'Barang Rusak') : 'Pengembalian Bon Teknisi';
       const trxNo = logStockMutation({
         jenis: 'MASUK',
@@ -3779,6 +3858,8 @@ app.get('/api/damaged-items', (req, res) => {
   }
 });
 
+registerServiceShipments(app, { db, todayLocal, tanggalOpsional, logStockMutation });
+
 // GET single
 app.get('/api/damaged-items/:id', (req, res) => {
   try {
@@ -3792,45 +3873,48 @@ app.get('/api/damaged-items/:id', (req, res) => {
 // POST create manual
 app.post('/api/damaged-items', (req, res) => {
   try {
-    const { kode_barang, nama_barang, jenis_barang, satuan, harga_barang, jumlah, kondisi, keterangan, sumber, sumber_nama, tanggal } = req.body || {};
-    if (!kode_barang || !String(kode_barang).trim()) throw new Error('kode_barang wajib diisi');
-    const kondisiBersih = normalizeKondisi(kondisi || 'Rusak Ringan');
-    if (!isKondisiRusak(kondisiBersih)) throw new Error('kondisi untuk gudang rusak harus salah satu dari: Rusak Ringan, Rusak Berat, Afkir');
-    const qty = Number(jumlah);
-    if (!Number.isFinite(qty) || qty <= 0) throw new Error('jumlah harus lebih dari 0');
-    const master = getMasterItem(kode_barang);
-    const nama = String(nama_barang || master?.nama_barang || '').trim() || String(kode_barang).trim();
-    const jenis = String(jenis_barang || master?.jenis_barang || '').trim();
-    const sat = String(satuan || master?.satuan || 'pcs').trim();
-    const harga = harga_barang !== undefined ? Number(harga_barang) : (master?.harga_barang || 0);
-    if (!Number.isFinite(harga) || harga < 0) throw new Error('harga_barang tidak valid');
-    const tgl = (tanggal && isDateStr(tanggal)) ? tanggal : todayLocal();
-    const dibuat = req.user?.nama_lengkap || req.user?.username || '';
-    // Jika barang ada di stok, kurangi stok gudang (barang dipindahkan ke gudang rusak)
-    if (master) {
-      if (master.stok < qty) throw new Error(`Stok gudang tidak cukup. Sisa: ${master.stok} ${master.satuan}, diminta: ${qty}`);
-      db.prepare("UPDATE items SET stok = stok - ?, updated_at = datetime('now','localtime') WHERE id = ?").run(qty, master.id);
-    }
-    const trxNo = logStockMutation({
-      jenis: 'KELUAR',
-      kategori: kondisiBersih === 'Afkir' ? 'Barang Afkir' : 'Barang Rusak',
-      divisi: 'GUDANG',
-      refId: master ? master.id : null,
-      lokasi: String(sumber_nama || sumber || 'Gudang Rusak'),
-      item: { kode_barang: String(kode_barang).toUpperCase().trim(), nama_barang: nama, jenis_barang: jenis, satuan: sat, harga_barang: harga },
-      jumlah: qty,
-      harga_satuan: harga,
-      keterangan: keterangan ? `${keterangan} — ${kondisiBersih}` : `Masuk gudang rusak — ${kondisiBersih}`,
-      tanggal: tgl,
-      kondisi: kondisiBersih
-    });
-    const entry = buatDamagedEntry({
-      kode_barang: String(kode_barang).toUpperCase().trim(), nama_barang: nama, jenis_barang: jenis,
-      satuan: sat, harga_barang: harga, jumlah: qty, kondisi: kondisiBersih,
-      sumber: sumber ? String(sumber).trim() : 'MANUAL', sumber_nama: sumber_nama ? String(sumber_nama).trim() : '',
-      no_transaksi: trxNo, keterangan: keterangan || '', tanggal: tgl, dibuat_oleh: dibuat
-    });
-    res.status(201).json({ success: true, data: entry, message: `Barang rusak ${entry.kode_barang} berhasil ditampung (${kondisiBersih})` });
+    const entry = db.transaction(() => {
+      const { kode_barang, nama_barang, jenis_barang, satuan, harga_barang, jumlah, kondisi, keterangan, sumber, sumber_nama, tanggal } = req.body || {};
+      if (!kode_barang || !String(kode_barang).trim()) throw new Error('kode_barang wajib diisi');
+      const kondisiBersih = normalizeKondisi(kondisi || 'Rusak Ringan');
+      if (!isKondisiRusak(kondisiBersih)) throw new Error('kondisi untuk gudang rusak harus salah satu dari: Rusak Ringan, Rusak Berat, Afkir');
+      const qty = Number(jumlah);
+      if (!Number.isFinite(qty) || qty <= 0) throw new Error('jumlah harus lebih dari 0');
+      const master = getMasterItem(kode_barang);
+      const nama = String(nama_barang || master?.nama_barang || '').trim() || String(kode_barang).trim();
+      const jenis = String(jenis_barang || master?.jenis_barang || '').trim();
+      const sat = String(satuan || master?.satuan || 'pcs').trim();
+      const harga = harga_barang !== undefined ? Number(harga_barang) : (master?.harga_barang || 0);
+      if (!Number.isFinite(harga) || harga < 0) throw new Error('harga_barang tidak valid');
+      const tgl = tanggalOpsional(tanggal, 'Tanggal penampungan') || todayLocal();
+      const dibuat = req.user?.nama_lengkap || req.user?.username || '';
+      // Jika barang ada di stok, kurangi stok gudang (barang dipindahkan ke gudang rusak)
+      if (master) {
+        if (master.stok < qty) throw new Error(`Stok gudang tidak cukup. Sisa: ${master.stok} ${master.satuan}, diminta: ${qty}`);
+        db.prepare("UPDATE items SET stok = stok - ?, updated_at = datetime('now','localtime') WHERE id = ?").run(qty, master.id);
+      }
+      const trxNo = logStockMutation({
+        jenis: 'KELUAR',
+        kategori: kondisiBersih === 'Afkir' ? 'Barang Afkir' : 'Barang Rusak',
+        divisi: 'GUDANG',
+        refId: master ? master.id : null,
+        lokasi: String(sumber_nama || sumber || 'Gudang Rusak'),
+        item: { kode_barang: String(kode_barang).toUpperCase().trim(), nama_barang: nama, jenis_barang: jenis, satuan: sat, harga_barang: harga },
+        jumlah: qty,
+        harga_satuan: harga,
+        keterangan: keterangan ? `${keterangan} — ${kondisiBersih}` : `Masuk gudang rusak — ${kondisiBersih}`,
+        tanggal: tgl,
+        kondisi: kondisiBersih
+      });
+      const entryId = buatDamagedEntry({
+        kode_barang: String(kode_barang).toUpperCase().trim(), nama_barang: nama, jenis_barang: jenis,
+        satuan: sat, harga_barang: harga, jumlah: qty, kondisi: kondisiBersih,
+        sumber: sumber ? String(sumber).trim() : 'MANUAL', sumber_nama: sumber_nama ? String(sumber_nama).trim() : '',
+        no_transaksi: trxNo, keterangan: keterangan || '', tanggal: tgl, dibuat_oleh: dibuat
+      });
+      return db.prepare('SELECT * FROM damaged_items WHERE id = ?').get(Number(entryId));
+    })();
+    res.status(201).json({ success: true, data: entry, message: `Barang rusak ${entry.kode_barang} berhasil ditampung (${entry.kondisi})` });
   } catch (err) {
     res.status(400).json({ success: false, error: err.message });
   }
@@ -3847,22 +3931,13 @@ app.put('/api/damaged-items/:id', (req, res) => {
     let ket = row.keterangan;
     let src = row.sumber;
     let srcNama = row.sumber_nama;
-    let harga = row.harga_barang;
-    // Validasi perubahan jumlah: selisih harus ada stok jika menambah
+    // Jumlah hanya berubah melalui tampung/perbaiki/musnahkan/servis yang punya jejak audit.
+    // Edit metadata tidak boleh mengembalikan barang rusak menjadi stok siap pakai diam-diam.
     if (jumlah !== undefined && jumlah !== '') {
       const q = Number(jumlah);
-      if (!Number.isFinite(q) || q <= 0) throw new Error('jumlah harus lebih dari 0');
-      const delta = round3(q - Number(row.jumlah));
-      if (delta > 0) {
-        // butuh kunci? Actually manual: if originally from stok, delta means extra? For ledger-only (rusak), we don't have stok to deduct? But original qty already deducted? For entries from pengembalian rusak, stok tidak dikurangi? Actually those came from installed, not from stok. So we keep simple: only allow smaller or equal? Let's allow but validate stok if master exists
-        const master = getMasterItem(row.kode_barang);
-        if (master && master.stok < delta) throw new Error(`Stok gudang tidak cukup untuk menambah jumlah. Sisa: ${master.stok}`);
-        if (master && delta > 0) db.prepare("UPDATE items SET stok = stok - ?, updated_at = datetime('now','localtime') WHERE id = ?").run(delta, master.id);
-      } else if (delta < 0) {
-        const master = getMasterItem(row.kode_barang);
-        if (master) db.prepare("UPDATE items SET stok = stok + ?, updated_at = datetime('now','localtime') WHERE id = ?").run(-delta, master.id);
+      if (!Number.isFinite(q) || q <= 0 || Math.abs(q - Number(row.jumlah)) > 1e-9) {
+        throw new Error('Jumlah ledger rusak tidak boleh diubah lewat edit. Gunakan Tampung, Perbaiki, Musnahkan atau Kirim Servis.');
       }
-      qty = round3(q);
     }
     if (kondisi !== undefined && kondisi !== '') {
       kondisiBersih = normalizeKondisi(kondisi);
@@ -3888,17 +3963,12 @@ app.post('/api/damaged-items/:id/repair', (req, res) => {
     let qty = req.body?.jumlah !== undefined && req.body?.jumlah !== '' ? Number(req.body.jumlah) : Number(row.jumlah);
     if (!Number.isFinite(qty) || qty <= 0) throw new Error('jumlah perbaikan harus lebih dari 0');
     if (qty > Number(row.jumlah)) throw new Error(`Jumlah perbaikan melebihi stok rusak. Tersedia: ${row.jumlah}`);
-    const tgl = (req.body?.tanggal && isDateStr(req.body.tanggal)) ? req.body.tanggal : todayLocal();
+    const tgl = tanggalOpsional(req.body?.tanggal, 'Tanggal proses barang rusak') || todayLocal();
     const keterangan = String(req.body?.keterangan || '').trim();
     const diperbaikiOleh = String(req.body?.diperbaiki_oleh || req.user?.nama_lengkap || req.user?.username || '').trim();
     const master = getMasterItem(row.kode_barang);
-    // Tambah kembali ke stok siap pakai
-    if (master) {
-      db.prepare("UPDATE items SET stok = stok + ?, updated_at = datetime('now','localtime') WHERE id = ?").run(qty, master.id);
-    } else {
-      // Jika master hilang, buat entri baru? Tetap log transaksi tanpa master — buat item baru minimal
-      // Lewati penambahan stok, cukup ledger
-    }
+    if (!master) throw new Error('Master barang tidak ditemukan; daftarkan master sebelum mengembalikan hasil perbaikan');
+    db.prepare("UPDATE items SET stok = stok + ?, updated_at = datetime('now','localtime') WHERE id = ?").run(qty, master.id);
     const harga = row.harga_barang;
     const itemForTrx = master || { kode_barang: row.kode_barang, nama_barang: row.nama_barang, jenis_barang: row.jenis_barang, satuan: row.satuan, harga_barang: harga };
     const trxNo = logStockMutation({
@@ -3941,7 +4011,7 @@ app.post('/api/damaged-items/:id/destroy', (req, res) => {
     let qty = req.body?.jumlah !== undefined && req.body?.jumlah !== '' ? Number(req.body.jumlah) : Number(row.jumlah);
     if (!Number.isFinite(qty) || qty <= 0) throw new Error('jumlah pemusnahan harus lebih dari 0');
     if (qty > Number(row.jumlah)) throw new Error(`Jumlah pemusnahan melebihi stok rusak. Tersedia: ${row.jumlah}`);
-    const tgl = (req.body?.tanggal && isDateStr(req.body.tanggal)) ? req.body.tanggal : todayLocal();
+    const tgl = tanggalOpsional(req.body?.tanggal, 'Tanggal proses barang rusak') || todayLocal();
     const keterangan = String(req.body?.keterangan || '').trim();
     if (!keterangan) throw new Error('Keterangan / berita acara pemusnahan wajib diisi');
     const dimusnahkanOleh = String(req.body?.dimusnahkan_oleh || req.user?.nama_lengkap || req.user?.username || '').trim();
@@ -4189,7 +4259,7 @@ app.get('/api/reports/installed-assets', (req, res) => {
     } else if (divisi === 'GUDANG') {
       filteredResult = result.filter(r => r.stok_gudang > 0);
     } else if (divisi === 'STOK_MENIPIS') {
-      filteredResult = result.filter(r => r.stok_gudang <= r.min_stok);
+      filteredResult = result.filter(r => r.stok_gudang > 0 && r.stok_gudang <= r.min_stok);
     }
 
     res.json({ success: true, data: filteredResult });
@@ -4240,15 +4310,15 @@ app.get('/api/reports/warehouse-stock', (req, res) => {
       sku_tersedia: enriched.filter(i => i.stok > 0).length,
       total_stok_tersedia: enriched.filter(i => i.stok > 0).reduce((a, b) => a + b.stok, 0),
       total_nilai_gudang: enriched.reduce((a, b) => a + b.nilai_stok, 0),
-      low_stock_count: enriched.filter(i => i.stok <= i.min_stok).length,
+      low_stock_count: enriched.filter(i => i.stok > 0 && i.stok <= i.min_stok).length,
       out_of_stock_count: enriched.filter(i => i.stok <= 0).length,
-      total_nilai_menipis: enriched.filter(i => i.stok <= i.min_stok).reduce((a, b) => a + b.nilai_stok, 0)
+      total_nilai_menipis: enriched.filter(i => i.stok > 0 && i.stok <= i.min_stok).reduce((a, b) => a + b.nilai_stok, 0)
     };
 
     let filtered = enriched;
 
     if (filter === 'menipis') {
-      filtered = filtered.filter(i => i.stok <= i.min_stok);
+      filtered = filtered.filter(i => i.stok > 0 && i.stok <= i.min_stok);
       filtered.sort((a, b) => a.stok - b.stok || a.nama_barang.localeCompare(b.nama_barang));
     } else if (filter === 'tersedia') {
       filtered = filtered.filter(i => i.stok > 0);
@@ -4287,7 +4357,7 @@ app.get('/api/reports/warehouse-stock', (req, res) => {
 app.get('/api/reports/dashboard-summary', (req, res) => {
   try {
     const totalItems = db.prepare('SELECT COUNT(*) as c, SUM(stok) as total_stok, SUM(stok * harga_barang) as total_nilai_gudang FROM items').get();
-    const lowStockItems = db.prepare('SELECT * FROM items WHERE stok <= min_stok ORDER BY stok ASC').all();
+    const lowStockItems = db.prepare('SELECT * FROM items WHERE stok > 0 AND stok <= min_stok ORDER BY stok ASC').all();
 
     const totalCust = db.prepare('SELECT COUNT(*) as c, SUM(total_harga) as total_nilai FROM customers').get();
     const totalFO = db.prepare('SELECT COUNT(*) as c, SUM(total_harga) as total_nilai FROM fo_sites').get();
@@ -4401,6 +4471,8 @@ app.post('/api/reset-seed', (req, res) => {
         DELETE FROM tower_items;
         DELETE FROM tower_sites;
         DELETE FROM transactions;
+        DELETE FROM service_shipment_items;
+        DELETE FROM service_shipments;
         DELETE FROM damaged_items;
         DELETE FROM items;
       `);
@@ -4431,6 +4503,8 @@ const RESTORE_CONFIRM_WORD = 'PULIHKAN';
 const CLEAR_CONFIRM_WORD = 'KOSONGKAN';
 const RESTORE_MAX_BYTES = 512 * 1024 * 1024; // 512 MB
 const CLEAR_DATA_TABLES = [
+  'service_shipment_items',
+  'service_shipments',
   'technician_loan_movements',
   'technician_loan_items',
   'technician_loans',

@@ -113,7 +113,7 @@ export default function MasterBarang({
         (item.referensi_suplayer && item.referensi_suplayer.toLowerCase().includes(searchTerm.toLowerCase()));
 
       const matchCategory = !selectedCategory || item.jenis_barang === selectedCategory;
-      const matchLowStock = !showLowStockOnly || item.stok <= item.min_stok;
+      const matchLowStock = !showLowStockOnly || (item.stok > 0 && item.stok <= item.min_stok);
 
       return matchSearch && matchCategory && matchLowStock;
     });
@@ -124,7 +124,7 @@ export default function MasterBarang({
     const totalSKU = items.length;
     const totalStok = items.reduce((acc, i) => acc + (Number(i.stok) || 0), 0);
     const totalNilai = items.reduce((acc, i) => acc + ((Number(i.stok) || 0) * (Number(i.harga_barang) || 0)), 0);
-    const lowStockCount = items.filter(i => i.stok <= i.min_stok).length;
+    const lowStockCount = items.filter(i => i.stok > 0 && i.stok <= i.min_stok).length;
     return { totalSKU, totalStok, totalNilai, lowStockCount };
   }, [items]);
 
@@ -451,7 +451,7 @@ export default function MasterBarang({
                 </tr>
               ) : (
                 filteredItems.map((item) => {
-                  const isLow = item.stok <= item.min_stok;
+                  const isLow = (item.stok > 0 && item.stok <= item.min_stok);
                   const totalValue = item.stok * item.harga_barang;
 
                   return (
@@ -496,7 +496,7 @@ export default function MasterBarang({
                       <td className="py-3 px-4 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1.5">
                           <span className={`inline-block px-2 py-0.5 rounded-md font-bold text-xs ${
-                            isLow 
+                            (isLow || item.stok <= 0)
                               ? 'bg-rose-100 text-rose-700 border border-rose-200' 
                               : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
                           }`}>

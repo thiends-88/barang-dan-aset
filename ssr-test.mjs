@@ -310,7 +310,7 @@ console.log('\n=== 21. Bon / Barang Bawaan Teknisi ===');
 
     const docs = await render('/src/components/BonTeknisiPrint.jsx', { loan: fakeLoan, variant: 'surat_jalan' }, 'BonDocument');
     const docr = await render('/src/components/BonTeknisiPrint.jsx', { loan: fakeLoan, variant: 'rekap' }, 'BonDocument');
-    cek('surat jalan memuat No. Bon, teknisi, barang & tanda tangan, tanpa riwayat realisasi', docs.includes('Surat Jalan / Bon Barang Bawaan Teknisi') && docs.includes('BON-202610-0001') && docs.includes('Budi Santoso') && docs.includes('Dibawa oleh') && docs.includes('Divisi FO') && !docs.includes('SN-RENDER-777'));
+    cek('surat jalan memuat No. Bon, teknisi, barang & Note, tanpa riwayat realisasi', docs.includes('Surat Jalan / Bon Barang Bawaan Teknisi') && docs.includes('BON-202610-0001') && docs.includes('Budi Santoso') && docs.includes('Note:') && docs.includes('Divisi FO') && !docs.includes('SN-RENDER-777'));
     cek('rekap bon memuat realisasi (SN, lokasi, teknisi pemasang) & pengembalian', ['SN-RENDER-777', 'Jl. Uji Render No. 9', 'Andi Pemasang', 'TRX-IN-202610-2222', 'Realisasi Pemasangan', 'Pengembalian ke Gudang'].every((t) => docr.includes(t)));
 
     const modal = await render('/src/components/BonTeknisiPrint.jsx', { loan: fakeLoan, variant: 'surat_jalan', onChangeVariant() {}, onClose() {} });
@@ -437,6 +437,187 @@ console.log('\n=== 24. Validasi Input Server & Transparansi Koreksi Stok ===');
     sectionBad(`24.1 render validasi & transparansi gagal: ${String(e.message).split('\n')[0]}`);
   }
 }
+
+// Rekap kategori tidak ditampilkan lagi, meskipun API masih mengirim datanya.
+console.log('\n=== 25. Tampilan Mutasi Tanpa Rekap Kategori ===');
+try {
+  const KM = (await vite.ssrLoadModule('/src/components/KeluarMasukBarang.jsx')).default;
+  const html = renderToString(React.createElement(KM, {
+    items, onRefreshMaster() {},
+    initialSummary: {
+      total_transaksi: 195,
+      total_masuk_qty: 2271.25,
+      total_keluar_qty: 569,
+      per_kategori: [{ kategori_transaksi: 'Kategori uji rekap', total_transaksi: 1, total_qty: 2, total_nilai: 1000 }],
+    },
+  }));
+  if (!html.includes('Rekap per Kategori Mutasi') && !html.includes('Kategori uji rekap')
+      && html.includes('Total Mutasi Transaksi') && html.includes('Total Barang Masuk')
+      && html.includes('Total Barang Keluar') && html.includes('Input Cepat Mutasi')
+      && html.includes('Semua Kategori') && html.includes('Kategori Mutasi')) {
+    sectionOk('25.1 Rekap kategori hilang; kartu ringkasan, input cepat, filter dan tabel transaksi tetap tampil');
+  } else {
+    sectionBad('25.1 Tampilan Mutasi tidak sesuai setelah penghapusan rekap kategori');
+  }
+} catch (e) {
+  sectionBad(`25.1 Render Mutasi gagal: ${String(e.message).split('\n')[0]}`);
+}
+
+console.log('\n=== 26. Surat Jalan Teknisi Tanpa Harga dan Tanda Tangan ===');
+try {
+  const { BonDocument } = await vite.ssrLoadModule('/src/components/BonTeknisiPrint.jsx');
+  const loan = {
+    no_bon: 'BON-202610-0011', tanggal: '2026-10-14', waktu: '10:37',
+    teknisi_nama: 'Teknisi Uji', dibuat_oleh: 'Gudang Uji', status: 'AKTIF',
+    items: [{ id: 1, kode_barang: 'UJI', nama_barang: 'Barang Uji', satuan: 'unit',
+      jumlah_dibawa: 3, harga_barang: 1000000, jumlah_sisa: 3 }],
+    summary: { nilai_dibawa: 3000000, nilai_sisa: 3000000 },
+  };
+  const surat = renderToString(React.createElement(BonDocument, { loan }));
+  const rekap = renderToString(React.createElement(BonDocument, { loan, variant: 'rekap' }));
+  if (!surat.includes('Harga') && !surat.includes('Nilai Dibawa')
+      && !surat.includes('Total Nilai Barang Dibawa') && !surat.includes('Rp')
+      && !surat.includes('Nama jelas &amp; tanda tangan') && !surat.includes('Mengetahui')
+      && surat.includes('Note:') && surat.includes('Barang di atas telah dikeluarkan dari stok gudang')
+      && surat.includes('lewat realisasi pemasangan) atau dikembalikan ke gudang bila tidak terpakai.')
+      && surat.includes('Barang Uji') && surat.includes('Dibawa')
+      && rekap.includes('Total Nilai Barang Dibawa') && rekap.includes('Mengetahui')) {
+    sectionOk('26.1 Surat jalan tanpa harga/nilai/tanda tangan, diganti Note; rekap lengkap tetap utuh');
+  } else {
+    sectionBad('26.1 Surat jalan atau rekap lengkap tidak sesuai');
+  }
+} catch (e) {
+  sectionBad(`26.1 Render dokumen bon gagal: ${String(e.message).split('\n')[0]}`);
+}
+
+console.log('\n=== 27. Stok Nol Tidak Masuk Peringatan Master Barang ===');
+try {
+  const MB = (await vite.ssrLoadModule('/src/components/MasterBarang.jsx')).default;
+  const data = [
+    { id: 1, kode_barang: 'HABIS-0', nama_barang: 'Habis nol', stok: 0, min_stok: 0 },
+    { id: 2, kode_barang: 'HABIS-5', nama_barang: 'Habis lima', stok: 0, min_stok: 5 },
+    { id: 3, kode_barang: 'TIPIS', nama_barang: 'Menipis satu', stok: 1, min_stok: 5 },
+    { id: 4, kode_barang: 'AMAN', nama_barang: 'Aman', stok: 6, min_stok: 5 },
+  ].map(it => ({ ...it, satuan: 'unit', harga_barang: 1000 }));
+  const html = renderToString(React.createElement(MB, { items: data }));
+  const source = fs.readFileSync('src/components/MasterBarang.jsx', 'utf-8');
+  if (/Peringatan Stok Menipis[\s\S]*?>1 <span/.test(html.replace(/<!--.*?-->/g, ''))
+      && source.includes('!showLowStockOnly || (item.stok > 0 && item.stok <= item.min_stok)')
+      && html.includes('HABIS-0') && html.includes('HABIS-5')) {
+    sectionOk('27.1 Hanya stok positif menipis dihitung; stok habis tetap tersedia di daftar umum');
+  } else {
+    sectionBad('27.1 Hitungan peringatan atau filter stok menipis tidak sesuai');
+  }
+} catch (e) {
+  sectionBad(`27.1 Render Master Barang gagal: ${String(e.message).split('\n')[0]}`);
+}
+
+console.log('\n=== 28. Input Cepat Mutasi Khusus Penjualan ===');
+try {
+  const KM = (await vite.ssrLoadModule('/src/components/KeluarMasukBarang.jsx')).default;
+  const html = renderToString(React.createElement(KM, { items, onRefreshMaster() {} }));
+  const source = fs.readFileSync('src/components/KeluarMasukBarang.jsx', 'utf-8');
+  const payload = source.slice(source.indexOf('const payload = {'), source.indexOf('if (isLinkedMode) {', source.indexOf('const payload = {')));
+  if (!html.includes('+ Masuk') && html.includes('Keluar — Dijual')
+      && payload.includes("jenis: 'KELUAR'") && payload.includes("kategori_transaksi: 'Penjualan Barang'")
+      && payload.includes("divisi: 'GUDANG'")
+      && source.includes('readOnly value="Penjualan Barang"')
+      && !source.includes('value={modalData.jenis}') && !source.includes('value={modalData.divisi}')) {
+    sectionOk('28.1 Tombol masuk hilang; jenis, kategori dan gudang penjualan terkunci');
+  } else {
+    sectionBad('28.1 Input cepat tidak terbatas pada penjualan');
+  }
+} catch (e) {
+  sectionBad(`28.1 Render input penjualan gagal: ${String(e.message).split('\n')[0]}`);
+}
+
+console.log('\n=== 29. Pengiriman Servis & Dokumen Historis ===');
+try {
+  const { default: Service, ServiceDocument } = await vite.ssrLoadModule('/src/components/ServiceShipments.jsx');
+  const screen = renderToString(React.createElement(Service, { canEdit: true, onChanged() {} }));
+  const viewer = renderToString(React.createElement(Service, { canEdit: false, onChanged() {} }));
+  const document = renderToString(React.createElement(ServiceDocument, { shipment: {
+    no_surat: 'SRV-20261015-00001', tanggal: '2026-10-15', tujuan: 'Servis Solok', alamat: 'Alamat uji', dibuat_oleh: 'Gudang',
+    items: [{ id: 1, kode_barang: 'UJI-SERVIS', nama_barang: 'Barang pilihan', jumlah: 2, satuan: 'unit', kondisi: 'Rusak Berat', hasil: 'DISERVIS' }],
+  } }));
+  if (screen.includes('Kirim untuk Servis') && screen.includes('Histori') && !viewer.includes('Kirim untuk Servis')
+      && document.includes('SRV-20261015-00001') && document.includes('Servis Solok')
+      && document.includes('Barang pilihan') && document.includes('Rusak Berat') && document.includes('DISERVIS')
+      && !document.includes('Harga') && !document.includes('Rp')) {
+    sectionOk('29.1 Pilih servis sesuai peran; laporan memuat nomor, tujuan dan barang pilihan tanpa harga');
+  } else sectionBad('29.1 Render servis atau laporan tidak sesuai');
+} catch (e) { sectionBad(`29.1 Render servis gagal: ${e.message}`); }
+
+console.log('\n=== 30. Servis Histori Saja dan Input Ulang Kode Baru ===');
+try {
+  const { ServiceDocument, ServiceNewItemForm } = await vite.ssrLoadModule('/src/components/ServiceShipments.jsx');
+  const item = { id: 1, kode_barang: 'KODE-ASAL', nama_barang: 'Radio Sama', jenis_asal: 'Wireless', satuan: 'unit', jumlah: 2,
+    hasil: 'BERHASIL', tanggal_kembali: '2026-10-15', kode_baru: 'KODE-REKONDISI', nama_baru: 'Radio Sama', harga_baru: 1234567 };
+  const document = renderToString(React.createElement(ServiceDocument, { shipment: {
+    no_surat: 'SRV-UJI-HISTORI', tanggal: '2026-10-14', tujuan: 'Servis Solok', items: [item],
+  } }));
+  const form = renderToString(React.createElement(ServiceNewItemForm, { item, onSave() {}, onCancel() {} }));
+  const source = fs.readFileSync('src/components/ServiceShipments.jsx', 'utf-8');
+  if (document.includes('tidak menambah stok kode lama') && document.includes('KODE-ASAL') && document.includes('KODE-REKONDISI')
+      && !document.includes('1234567') && form.includes('Harga Baru per Satuan') && form.includes('Kode Barang Baru')
+      && form.includes('Radio Sama') && form.includes('Hasil Servis / Rekondisi') && source.includes('Belum diinput ke Master Barang')
+      && source.includes('Berhasil — histori saja, belum menambah stok') && source.includes('Gagal — histori saja, tidak menambah stok')) {
+    sectionOk('30.1 Hasil servis hanya histori; form input kode/harga baru terpisah; laporan menghubungkan kode tanpa harga');
+  } else sectionBad('30.1 Tampilan histori / input baru tidak sesuai');
+} catch (e) { sectionBad(`30.1 Render histori servis gagal: ${e.message}`); }
+
+console.log('\n=== 31. Keperluan Bon Beberapa Baris ===');
+try {
+  const { BonBaruModal } = await vite.ssrLoadModule('/src/components/BonTeknisiForms.jsx');
+  const { BonDocument } = await vite.ssrLoadModule('/src/components/BonTeknisiPrint.jsx');
+  const form = renderToString(React.createElement(BonBaruModal, { items, onClose() {}, onSaved() {} }));
+  const keperluan = 'pemasangan PG002323 : instalasi baru\n\nmaintenance PG003434 : perbaikan jaringan';
+  const loan = { no_bon: 'BON-UJI-BARIS', tanggal: '2026-10-15', teknisi_nama: 'Teknisi', keperluan, items: [] };
+  const docs = ['surat_jalan', 'rekap'].map(variant => renderToString(React.createElement(BonDocument, { loan, variant })));
+  if (form.includes('<textarea') && form.includes('id="bon-keperluan"') && form.includes('Tekan Enter')
+      && docs.every(html => html.includes(keperluan) && html.includes('whitespace-pre-wrap break-words'))) {
+    sectionOk('31.1 Form memakai textarea; baris dan urutan keperluan tetap pada Surat Jalan serta Rekap Lengkap');
+  } else sectionBad('31.1 Keperluan bon tidak mendukung beberapa baris');
+} catch (e) { sectionBad(`31.1 Render keperluan multibaris gagal: ${e.message}`); }
+
+console.log('\n=== 32. Realisasi Bon dalam Tampilan Mutasi ===');
+try {
+  const KM = (await vite.ssrLoadModule('/src/components/KeluarMasukBarang.jsx')).default;
+  const html = renderToString(React.createElement(KM, {
+    items, onRefreshMaster() {}, initialSummary: { total_transaksi: 1, total_realisasi_bon: 1, total_realisasi_qty: 2, total_keluar_qty: 0, total_keluar_nilai: 0 },
+    initialTransactions: [{ id: -1, record_key: 'bon-pasang-1', no_transaksi: 'REALISASI-1', tanggal: '2026-10-15', waktu: '10:00:00',
+      jenis: 'REALISASI_BON', kategori_transaksi: 'Realisasi Bon / Pemasangan', no_bon: 'BON-UJI-MUTASI', divisi: 'PELANGGAN',
+      lokasi_penerima: 'Pelanggan Uji Bon', lokasi_tujuan: 'Rumah Uji Lokasi', teknisi_pemasang: 'Pemasang Uji Bon',
+      kode_barang: 'KODE-UJI-BON', nama_barang: 'Radio Uji Bon', serial_number: 'SN-UJI-MUTASI', jumlah: 2, satuan: 'unit', harga_satuan: 1000, total_harga: 2000 }],
+  }));
+  const src = fs.readFileSync('src/components/KeluarMasukBarang.jsx', 'utf-8');
+  if (['REALISASI BON', 'BON-UJI-MUTASI', 'Pelanggan Uji Bon', 'Rumah Uji Lokasi', 'Pemasang Uji Bon', 'SN-UJI-MUTASI',
+      'Nilai aset terpasang', 'tidak mengurangi stok gudang lagi.', 'Total Masuk/Keluar hanya menghitung mutasi gudang'].every(t => html.includes(t))
+      && html.includes('value="REALISASI_BON"') && src.includes("include_bon: '1'")
+      && src.includes('/api/transaction-categories?include_bon=1') && src.includes("'Nilai Aset Terpasang (Rp)'")) {
+    sectionOk('32.1 Realisasi tampil lengkap, filter khusus tersedia, ringkasan/CSV membedakan histori pemasangan dari stok gudang');
+  } else sectionBad('32.1 Tampilan realisasi bon atau pemisahan total tidak sesuai');
+} catch (e) { sectionBad(`32.1 Render realisasi dalam Mutasi gagal: ${e.message}`); }
+
+console.log('\n=== 33. Konfirmasi Pengembalian saat Edit Barang Pelanggan ===');
+try {
+  const { installedItemChanges } = await vite.ssrLoadModule('/shared/installedReturns.js');
+  const Modal = (await vite.ssrLoadModule('/src/components/ReturnInstalledItemsModal.jsx')).default;
+  const old = [{ kode_barang: 'RADIO', nama_barang: 'Radio Pelanggan', satuan: 'unit', jumlah: 3 },
+    { kode_barang: 'RADIO', nama_barang: 'Radio SN', satuan: 'unit', serial_number: 'SN-OLD', jumlah: 1 }];
+  const target = [{ kode_barang: 'radio', jumlah: 1 }, { kode_barang: 'RADIO', serial_number: 'SN-NEW', jumlah: 1 }];
+  const changes = installedItemChanges(old, target);
+  const html = renderToString(React.createElement(Modal, { items: changes.returned, busy: false, onConfirm() {}, onCancel() {} }));
+  const source = fs.readFileSync('src/components/DivisiPelanggan.jsx', 'utf-8');
+  if (changes.returned.length === 2 && changes.returned[0].jumlah === 2 && changes.returned[1].serial_number === 'SN-OLD'
+      && changes.added.length === 1 && changes.added[0].serial_number === 'SN-NEW'
+      && installedItemChanges(old, old).returned.length === 0 && installedItemChanges(old, []).returned.length === 2
+      && ['Konfirmasi Barang Dikurangi / Dihapus', 'SN-OLD', 'Kondisi Pengembalian', 'Keterangan / Alasan Pengembalian',
+          'Baik — kembali ke stok siap pakai', 'Rusak Ringan', 'Rusak Berat', 'Afkir', 'Kembali ke Edit', 'Konfirmasi &amp; Simpan Perubahan'].every(t => html.includes(t))
+      && source.includes('setReturnConfirmation({ items: returned') && source.includes('pengembalian => saveCustomer')) {
+    sectionOk('33.1 Pengurangan/hapus/ganti SN terdeteksi; modal meminta kondisi dan alasan per barang sebelum simpan, dapat dibatalkan');
+  } else sectionBad('33.1 Deteksi pengembalian / formulir kondisi tidak sesuai');
+} catch (e) { sectionBad(`33.1 Render konfirmasi pengembalian gagal: ${e.message}`); }
 
 await vite.close();
 console.log(`\nHasil: ${pass} lolos, ${fail} gagal`);

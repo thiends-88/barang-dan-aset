@@ -78,6 +78,32 @@ Aplikasi enterprise untuk manajemen inventaris barang dan pelacakan aset jaringa
     5. Daftar site divisi Tower mana saja yang memakai barang tersebut.
     6. Riwayat mutasi keluar/masuk barang tersebut lengkap tanggal, bulan, dan tahunnya.
 
+### Pengurangan / penghapusan barang terpasang saat edit pelanggan
+
+Pada **Edit Pelanggan & Barang Terpasang**, mengurangi jumlah, menghapus baris, mengganti kode atau mengganti SN tidak langsung mengembalikan barang ke stok. Saat **Simpan Perubahan**, sistem menampilkan konfirmasi per barang yang ditarik:
+- Pilih **Baik / Rusak Ringan / Rusak Berat / Afkir** (tidak ada pilihan otomatis).
+- Isi **keterangan / alasan pengembalian** untuk setiap kode dan SN.
+- **Baik** menambah stok siap pakai; **rusak/afkir** masuk Gudang Barang Rusak, tanpa menambah stok siap pakai. Kondisi, jumlah, SN dan alasan tercatat pada riwayat mutasi.
+- **Kembali ke Edit** membatalkan konfirmasi tanpa menyimpan perubahan atau mengubah stok.
+
+Pemeriksaan juga dilakukan di server: PUT pelanggan yang mengurangi/mengganti barang wajib membawa `pengembalian` (kode_barang, serial_number, jumlah, kondisi, keterangan) sesuai selisih kode+SN. Penambahan barang atau edit data tanpa pengurangan tidak memerlukan konfirmasi. Unit pengganti tetap membutuhkan stok siap pakai; barang kembali rusak tidak bisa dihitung sebagai stok untuk penggantinya. Semua perubahan disimpan secara atomik.
+
+### Pengiriman servis barang rusak
+
+Di menu **Barang Rusak**, admin / staff gudang dapat memilih **Kirim untuk Servis**:
+1. Isi tempat servis, alamat/kontak, tanggal kirim dan catatan.
+2. Pilih beberapa entri berstatus **DITAMPUNG**, lalu atur jumlah masing-masing (boleh sebagian; maksimal 100 entri per pengiriman).
+3. Simpan untuk mendapatkan nomor surat **SRV-…**, histori, rincian serta **Export CSV / Cetak / Simpan PDF** khusus barang yang dipilih, tanpa harga.
+4. Dari **Detail / Cetak → Catat Hasil**, simpan hasil dan tanggal kembali **sebagai histori saja**. Baik BERHASIL maupun GAGAL tidak otomatis menambah stok siap pakai atau mengembalikan jumlah ke ledger kode lama. Pencatatan seluruh jumlah per baris; baris lain dapat menyusul.
+5. Untuk hasil **BERHASIL**, bila siap didaftarkan, pilih **Input sebagai Barang Baru**. Isi **kode baru yang belum digunakan** dan **harga baru**; nama boleh sama. Setelah disimpan, barang muncul di **Master Barang** dan stok masuk tercatat sebagai **Hasil Servis / Rekondisi**, bukan pembelian supplier. Jumlah mengikuti seluruh baris servis tersebut.
+
+Pengiriman mengurangi persediaan rusak yang tersedia, **tidak mengurangi stok siap pakai lagi**. Jika seluruh barang sudah dikirim, status sumber DISERVIS, lalu SELESAI_SERVIS setelah hasil dicatat; sisa yang belum dikirim tetap DITAMPUNG. Penerimaan hasil tidak menimbulkan mutasi stok. Stok baru hanya muncul setelah tindakan **Simpan sebagai Barang Baru**.
+
+Histori menyimpan surat/tujuan, kode asal, barang/jumlah, petugas, tanggal dan hasil servis, serta referensi kode baru dan mutasi masuk setelah input terpisah. Kode asal dan harga asal tidak diubah. Hasil yang sama tidak dapat didaftarkan dua kali. Laporan surat servis dan CSV tetap tanpa harga; informasi kode baru ikut tampil. Admin/staff gudang boleh mencatat, viewer/teknisi hanya melihat. Tidak ada penghapusan histori dari UI.
+
+**Kompatibilitas data lama:** penerimaan BERHASIL dari versi sebelumnya yang sudah otomatis menambah stok memiliki nomor mutasi. Riwayat dan stok tersebut tidak diubah/dikurangi diam-diam; tombol input ulang diblokir dan diberi keterangan untuk mencegah stok ganda. Aturan histori saja berlaku untuk penerimaan setelah pembaruan ini.
+
+
 ### 6. Bon / Barang Bawaan Teknisi (Stok Transit Lapangan)
 Menu **Bon Teknisi** mencatat barang yang dibawa teknisi dari gudang dalam **3 tahap**:
 1. **Bawa dari gudang** — buat bon (No. Bon otomatis `BON-YYYYMM-NNNN` atau diisi manual), pilih **Divisi** (Pelanggan / Divisi FO / Divisi Tower) lalu **nama teknisi** dari *Data Teknisi*, daftar barang + **scan barcode** (scanner USB / kamera). Stok gudang **berkurang** dan pindah ke *stok dibawa teknisi* (mutasi KELUAR, divisi `TEKNISI`). Surat jalan bisa langsung dicetak.
@@ -87,6 +113,8 @@ Menu **Bon Teknisi** mencatat barang yang dibawa teknisi dari gudang dalam **3 t
 **Data Teknisi** (tab di menu Bon): daftar nama teknisi per divisi (nama, No. HP, aktif/nonaktif) yang dikelola admin/staff gudang — cukup diisi sekali, lalu tinggal dipilih saat membuat bon & mencatat realisasi. Teknisi baru juga bisa ditambah langsung dari form bon (tombol *Tambah Teknisi*). Ganti nama ikut memperbarui bon lama; teknisi yang sudah tercatat di bon tidak bisa dihapus (cukup dinonaktifkan).
 
 Fitur pendukung: riwayat mutasi per bon & lintas bon (cari lewat No. Bon / SN / tujuan), cetak **surat jalan** atau **rekap lengkap** bon (A4), **laporan** (per teknisi pembawa & pemasang, per barang, per divisi tujuan; filter periode/status/divisi/teknisi; rekap per divisi pembawa; CSV & cetak), kolom *dibawa teknisi* di Master Barang, dan kartu *Dibawa Teknisi* di Dashboard. Hak akses: admin & staff gudang membuat bon / mengembalikan / membatalkan; teknisi mencatat realisasi pemasangan; viewer hanya melihat.
+
+**Realisasi Bon di menu Mutasi / Keluar–Masuk:** daftar menampilkan transaksi gudang dan histori pemasangan dari Bon Teknisi, termasuk realisasi yang sudah pernah dicatat. Pilih Jenis **Realisasi Bon / Pemasangan**, atau cari nomor bon, teknisi, SN dan lokasi. Baris realisasi menampilkan tujuan Pelanggan/FO/Tower, teknisi pemasang, jumlah dan nilai aset terpasang. Realisasi **tidak mengurangi stok lagi** dan tidak ikut total barang MASUK/KELUAR atau neto gudang. Jumlah record mencakup kedua jenis aktivitas; jumlah baris/qty realisasi ditampilkan terpisah. CSV memisahkan nilai aset terpasang dari nilai transaksi gudang; hasil cetak mengikuti daftar/filter. Laporan stok gudang di menu Laporan tetap memakai transaksi gudang saja.
 
 ### 7. Laporan Terpadu (Reporting Engine)
 - **Laporan Barang Masuk & Keluar**:
@@ -350,3 +378,8 @@ Aplikasi dirancang agar nyaman dipakai di HP, tablet, dan desktop:
 - **Sentuhan**: area tap tombol dalam tabel diperbesar, highlight biru saat tap dihilangkan, dan animasi dihormati bagi pengguna yang mengaktifkan *reduce motion*.
 - **Notch / safe area**: elemen yang menempel di bawah (toast, bottom sheet) memberi ruang untuk *safe area* perangkat iOS.
 - **Cetak**: hasil cetak (label barcode, berita acara, laporan) tidak terpengaruh perubahan layout layar — lebar minimum tabel dinonaktifkan saat mode cetak.
+
+## Audit & kesiapan deployment (15 Oktober 2026)
+
+Lihat [laporan audit dan checklist update Proxmox](docs/AUDIT-2026-10-15.md).
+Tes operasional lolos, tetapi dependensi pembaca Excel `xlsx` masih memiliki advisory **high** yang belum ditutup. Jangan menganggap CI hijau sebagai persetujuan keamanan tanpa syarat; hindari spreadsheet tidak tepercaya dan selesaikan migrasi parser atau putuskan penerimaan risikonya sebelum rilis produksi.

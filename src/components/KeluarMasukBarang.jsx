@@ -47,15 +47,15 @@ const MONTHS = [
   { val: '12', label: 'Desember' }
 ];
 
-export default function KeluarMasukBarang({ items, onRefreshMaster, initialSummary = null }) {
-  const [transactions, setTransactions] = useState([]);
+export default function KeluarMasukBarang({ items, onRefreshMaster, initialSummary = null, initialTransactions = [] }) {
+  const [transactions, setTransactions] = useState(initialTransactions);
   const [summary, setSummary] = useState(initialSummary);
   const [loading, setLoading] = useState(false);
 
   // Filters
   const [search, setSearch] = useState('');
   const [selectedDivisi, setSelectedDivisi] = useState('SEMUA');
-  const [selectedJenis, setSelectedJenis] = useState(''); // '' | 'MASUK' | 'KELUAR'
+  const [selectedJenis, setSelectedJenis] = useState(''); // '' | 'MASUK' | 'KELUAR' | 'REALISASI_BON'
   const [kategoriOptions, setKategoriOptions] = useState([]);
   const [selectedKategori, setSelectedKategori] = useState('');
   const [filterMode, setFilterMode] = useState('period'); // 'period' | 'custom_range'
@@ -68,8 +68,8 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
   // Manual Transaction Modal
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalData, setModalData] = useState({
-    jenis: 'MASUK',
-    kategori_transaksi: 'Pembelian Supplier',
+    jenis: 'KELUAR',
+    kategori_transaksi: 'Penjualan Barang',
     divisi: 'GUDANG',
     lokasi_penerima: '',
     kode_barang: '',
@@ -155,7 +155,7 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
 
   // Fetch daftar kategori tersedia untuk dropdown
   useEffect(() => {
-    fetch('/api/transaction-categories').then(r => r.json()).then(j => {
+    fetch('/api/transaction-categories?include_bon=1').then(r => r.json()).then(j => {
       if (j.success && Array.isArray(j.data)) setKategoriOptions(j.data);
     }).catch(() => {});
   }, []);
@@ -164,7 +164,7 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
   const fetchTransactions = async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams();
+      const params = new URLSearchParams({ include_bon: '1' });
       if (search) params.append('search', search);
       if (selectedDivisi && selectedDivisi !== 'SEMUA') params.append('divisi', selectedDivisi);
       if (selectedJenis) params.append('jenis', selectedJenis);
@@ -237,7 +237,12 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
       Tanggal: t.tanggal,
       Waktu: t.waktu,
       'No Transaksi': t.no_transaksi,
-      Jenis: t.jenis,
+      Jenis: t.jenis === 'REALISASI_BON' ? 'Realisasi Bon / Pemasangan' : t.jenis,
+      'No Bon': t.no_bon || '',
+      'Teknisi Pemasang': t.teknisi_pemasang || '',
+      'Lokasi Pemasangan': t.lokasi_tujuan || '',
+      'Serial Number': t.serial_number || '',
+      'Perhitungan Ringkasan': t.jenis === 'REALISASI_BON' ? 'Histori saja — tidak dihitung sebagai barang keluar gudang' : 'Mutasi gudang',
       Kategori: t.kategori_transaksi,
       Kondisi: t.kondisi || 'Baik',
       Divisi: t.divisi,
@@ -247,7 +252,8 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
       Qty: t.jumlah,
       Satuan: t.satuan,
       'Harga Satuan': t.harga_satuan,
-      'Total Nilai (Rp)': t.total_harga,
+      'Total Nilai (Rp)': t.jenis === 'REALISASI_BON' ? '' : t.total_harga,
+      'Nilai Aset Terpasang (Rp)': t.jenis === 'REALISASI_BON' ? t.total_harga : '',
       Keterangan: t.keterangan
     }));
     // Tambahkan baris rekap per kategori di akhir CSV (jika ada)
@@ -255,7 +261,9 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
       rows.push({});
       rows.push({ No: 'REKAP PER KATEGORI' });
       for (const k of summary.per_kategori) {
-        rows.push({ No: k.kategori_transaksi, 'No Transaksi': `${k.total_transaksi} trx`, Qty: `${k.total_qty} unit`, 'Total Nilai (Rp)': k.total_nilai });
+        rows.push({ No: k.kategori_transaksi, 'No Transaksi': `${k.jumlah_transaksi ?? k.total_transaksi ?? 0} baris`, Qty: `${k.total_qty} unit`,
+          'Total Nilai (Rp)': k.kategori_transaksi === 'Realisasi Bon / Pemasangan' ? '' : k.total_nilai,
+          'Nilai Aset Terpasang (Rp)': k.kategori_transaksi === 'Realisasi Bon / Pemasangan' ? k.total_nilai : '' });
       }
     }
     exportToCSV(`Laporan_Keluar_Masuk_Barang_${Date.now()}.csv`, rows);
@@ -266,10 +274,10 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
   };
 
   // Open manual transaction modal
-  const handleOpenModal = (jenis = 'MASUK') => {
+  const handleOpenModal = () => {
     setModalData({
-      jenis,
-      kategori_transaksi: jenis === 'MASUK' ? 'Pembelian Supplier' : 'Barang Rusak / Afkir',
+      jenis: 'KELUAR',
+      kategori_transaksi: 'Penjualan Barang',
       divisi: 'GUDANG',
       lokasi_penerima: '',
       kode_barang: items[0]?.kode_barang || '',
@@ -310,9 +318,9 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
 
     try {
       const payload = {
-        jenis: modalData.jenis,
-        kategori_transaksi: modalData.kategori_transaksi,
-        divisi: modalData.divisi,
+        jenis: 'KELUAR',
+        kategori_transaksi: 'Penjualan Barang',
+        divisi: 'GUDANG',
         kode_barang: modalData.kode_barang,
         jumlah: modalData.jumlah,
         tanggal: modalData.tanggal,
@@ -361,7 +369,7 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
             <div className="text-2xl font-bold text-slate-900 mt-1">
               {formatNumber(summary?.total_transaksi || 0)} <span className="text-xs font-normal text-slate-500">Record</span>
             </div>
-            <span className="text-[11px] text-slate-400 mt-0.5 block">Sesuai filter terpilih</span>
+            <span className="text-[11px] text-slate-400 mt-0.5 block">Transaksi gudang + histori realisasi, sesuai filter</span>
           </div>
           <div className="w-12 h-12 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-600">
             <ArrowLeftRight className="w-6 h-6" />
@@ -406,18 +414,11 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
             <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider block">Input Cepat Mutasi</span>
             <div className="flex items-center gap-2 mt-2">
               <button
-                onClick={() => handleOpenModal('MASUK')}
-                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1 shadow-sm transition"
-              >
-                <ArrowDownLeft className="w-3.5 h-3.5" />
-                <span>+ Masuk</span>
-              </button>
-              <button
-                onClick={() => handleOpenModal('KELUAR')}
+                onClick={handleOpenModal}
                 className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1 shadow-sm transition"
               >
                 <ArrowUpRight className="w-3.5 h-3.5" />
-                <span>- Keluar</span>
+                <span>Keluar — Dijual</span>
               </button>
             </div>
           </div>
@@ -427,37 +428,11 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
         </div>
       </div>
 
-      {/* Rekap per Kategori */}
-      {summary && Array.isArray(summary.per_kategori) && summary.per_kategori.length > 0 && (
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">Rekap per Kategori Mutasi</h3>
-            <span className="text-[11px] text-slate-500">Dihitung utuh dari seluruh {formatNumber(summary.total_transaksi)} transaksi (tidak terpotong 5000)</span>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 text-slate-600 border-b font-semibold">
-                <tr>
-                  <th className="py-2 px-4">Kategori</th>
-                  <th className="py-2 px-4 text-right">Jumlah Transaksi</th>
-                  <th className="py-2 px-4 text-right">Total Qty</th>
-                  <th className="py-2 px-4 text-right">Total Nilai (Rp)</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {summary.per_kategori.map((k) => (
-                  <tr key={k.kategori_transaksi} className="hover:bg-slate-50">
-                    <td className="py-2 px-4 font-semibold text-slate-800">{k.kategori_transaksi}</td>
-                    <td className="py-2 px-4 text-right">{formatNumber(k.total_transaksi)}</td>
-                    <td className="py-2 px-4 text-right font-bold">{formatNumber(k.total_qty)}</td>
-                    <td className="py-2 px-4 text-right font-bold text-indigo-700">{formatRupiah(k.total_nilai)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+      <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 text-xs text-indigo-900">
+        <strong>Realisasi Bon / Pemasangan</strong> ikut ditampilkan sebagai histori, termasuk realisasi yang sudah pernah dicatat.
+        Total Masuk/Keluar hanya menghitung mutasi gudang, bukan realisasi dari barang yang sudah dibawa teknisi.
+        {summary && <span className="block mt-1 font-semibold">Sesuai filter: {formatNumber(summary.total_realisasi_bon || 0)} baris realisasi bon • {formatNumber(summary.total_realisasi_qty || 0)} unit/qty terpasang.</span>}
+      </div>
 
       {/* Main Table & Filter Container */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
@@ -468,7 +443,7 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
             <div className="relative flex-1 max-w-md">
               <input
                 type="text"
-                placeholder="Cari kode, nama, no transaksi, kategori, kondisi, penerima..."
+                placeholder="Cari barang, no transaksi/bon, teknisi, SN, lokasi pemasangan..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-300 focus:bg-white focus:border-indigo-500 rounded-xl text-sm transition"
@@ -555,9 +530,10 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
                 onChange={(e) => setSelectedJenis(e.target.value)}
                 className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-700 font-medium focus:bg-white"
               >
-                <option value="">Semua (Masuk & Keluar)</option>
+                <option value="">Semua (Masuk, Keluar & Realisasi Bon)</option>
                 <option value="MASUK">Hanya Barang MASUK</option>
                 <option value="KELUAR">Hanya Barang KELUAR</option>
+                <option value="REALISASI_BON">Realisasi Bon / Pemasangan</option>
               </select>
             </div>
 
@@ -700,7 +676,7 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
                 </tr>
               ) : (
                 transactions.map((tx) => (
-                  <tr key={tx.id} className="hover:bg-slate-50 transition">
+                  <tr key={tx.record_key || tx.id} className="hover:bg-slate-50 transition">
                     {/* Tanggal & Waktu */}
                     <td className="py-3 px-4 whitespace-nowrap">
                       <div className="font-semibold text-slate-800">{formatDate(tx.tanggal)}</div>
@@ -710,17 +686,20 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
                     {/* No Transaksi */}
                     <td className="py-3 px-4 whitespace-nowrap font-mono text-[11px] text-slate-700">
                       {tx.no_transaksi}
+                      {tx.no_bon && <div className="font-bold text-indigo-700 mt-1">{tx.no_bon}</div>}
                     </td>
 
                     {/* Jenis (Masuk / Keluar Badge) */}
                     <td className="py-3 px-4 whitespace-nowrap">
                       <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-bold tracking-wider ${
-                        tx.jenis === 'MASUK'
+                        tx.jenis === 'REALISASI_BON'
+                          ? 'bg-indigo-100 text-indigo-800 border border-indigo-200'
+                          : tx.jenis === 'MASUK'
                           ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
                           : 'bg-rose-100 text-rose-800 border border-rose-200'
                       }`}>
-                        {tx.jenis === 'MASUK' ? <ArrowDownLeft className="w-3 h-3" /> : <ArrowUpRight className="w-3 h-3" />}
-                        {tx.jenis}
+                        {tx.jenis === 'REALISASI_BON' ? <ArrowLeftRight className="w-3 h-3" /> : tx.jenis === 'MASUK' ? <ArrowDownLeft className="w-3 h-3" /> : <ArrowUpRight className="w-3 h-3" />}
+                        {tx.jenis === 'REALISASI_BON' ? 'REALISASI BON' : tx.jenis}
                       </span>
                     </td>
 
@@ -742,12 +721,15 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
                         </span>
                         <span className="font-semibold text-slate-900 truncate max-w-xs">{tx.lokasi_penerima}</span>
                       </div>
+                      {tx.lokasi_tujuan && <div className="text-[11px] text-slate-600 mt-1 whitespace-pre-wrap break-words">Lokasi: {tx.lokasi_tujuan}</div>}
+                      {tx.teknisi_pemasang && <div className="text-[11px] text-indigo-700">Pemasang: {tx.teknisi_pemasang}</div>}
                     </td>
 
                     {/* Kode & Nama Barang */}
                     <td className="py-3 px-4">
                       <div className="font-semibold text-slate-900 truncate max-w-xs">{tx.nama_barang}</div>
                       <div className="text-[10px] font-mono text-indigo-700">{tx.kode_barang}</div>
+                      {tx.serial_number && <div className="text-[10px] font-mono text-slate-600">SN: {tx.serial_number}</div>}
                     </td>
 
                     {/* Jumlah */}
@@ -763,11 +745,13 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
                     {/* Total Nilai Rp */}
                     <td className="py-3 px-4 text-right whitespace-nowrap font-bold text-indigo-700">
                       {formatRupiah(tx.total_harga)}
+                      {tx.jenis === 'REALISASI_BON' && <div className="text-[10px] font-normal">Nilai aset terpasang</div>}
                     </td>
 
                     {/* Keterangan */}
-                    <td className="py-3 px-4 text-slate-500 max-w-xs truncate">
+                    <td className="py-3 px-4 text-slate-500 max-w-xs whitespace-pre-wrap break-words">
                       {tx.keterangan || '-'}
+                      {tx.jenis === 'REALISASI_BON' && <div className="text-indigo-700 font-semibold text-[10px] mt-1">Histori pemasangan — tidak mengurangi stok gudang lagi.</div>}
                     </td>
                   </tr>
                 ))
@@ -804,9 +788,9 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
                 </div>
                 <div>
                   <h3 className="font-bold text-sm">
-                    {modalData.jenis === 'MASUK' ? 'Catat Barang Masuk' : 'Catat Barang Keluar'}
+                    Catat Penjualan Barang
                   </h3>
-                  <p className="text-[11px] text-white/80">Scan stiker barcode → barang terisi otomatis → pilih divisi & tujuan</p>
+                  <p className="text-[11px] text-white/80">Barang dijual dari stok gudang — isi jumlah dan nama pembeli</p>
                 </div>
               </div>
               <button
@@ -874,70 +858,14 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Jenis Mutasi *
                   </label>
-                  <select
-                    value={modalData.jenis}
-                    onChange={(e) => {
-                      const j = e.target.value;
-                      const linked = modalData.divisi !== 'GUDANG';
-                      setModalData({
-                        ...modalData,
-                        jenis: j,
-                        kategori_transaksi: j === 'MASUK'
-                          ? (linked ? 'Pengembalian / Dismantle' : 'Pembelian Supplier')
-                          : (linked ? `Pemasangan ${DIVISI_LINK_LABEL[modalData.divisi]}` : 'Barang Rusak / Afkir')
-                      });
-                    }}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold focus:bg-white"
-                  >
-                    <option value="MASUK">MASUK (+)</option>
-                    <option value="KELUAR">KELUAR (-)</option>
-                  </select>
+                  <input readOnly value="KELUAR (-)" className="w-full px-3 py-2 bg-slate-100 border border-slate-300 rounded-xl text-xs font-bold" />
                 </div>
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Kategori Mutasi *
                   </label>
-                  <select
-                    value={modalData.kategori_transaksi}
-                    onChange={(e) => setModalData({ ...modalData, kategori_transaksi: e.target.value })}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:bg-white"
-                  >
-                    {modalData.jenis === 'MASUK' ? (
-                      isLinkedMode ? (
-                        <>
-                          <option value="Pengembalian / Dismantle">Pengembalian / Dismantle</option>
-                          <option value="Retur">Retur</option>
-                        </>
-                      ) : (
-                        <>
-                          <option value="Pembelian Supplier">Pembelian Supplier</option>
-                          <option value="Pengembalian / Dismantle">Pengembalian / Dismantle</option>
-                          <option value="Retur">Retur</option>
-                          <option value="Koreksi Stok">Koreksi Stok / Opname</option>
-                        </>
-                      )
-                    ) : (
-                      isLinkedMode ? (
-                        <>
-                          <option value={`Pemasangan ${DIVISI_LINK_LABEL[modalData.divisi]}`}>
-                            {`Pemasangan ${DIVISI_LINK_LABEL[modalData.divisi]}`}
-                          </option>
-                          <option value="Maintenance / Penggantian">Maintenance / Penggantian</option>
-                          <option value="Mutasi">Mutasi / Pemindahan</option>
-                        </>
-                      ) : (
-                        <>
-                          <option value="Pemasangan Pelanggan">Pemasangan Pelanggan</option>
-                          <option value="Pemasangan Divisi FO">Pemasangan Divisi FO</option>
-                          <option value="Pemasangan Divisi Tower">Pemasangan Divisi Tower</option>
-                          <option value="Barang Rusak / Afkir">Barang Rusak / Afkir</option>
-                          <option value="Maintenance / Penggantian">Maintenance / Penggantian</option>
-                          <option value="Mutasi">Mutasi / Pemindahan</option>
-                        </>
-                      )
-                    )}
-                  </select>
+                  <input readOnly value="Penjualan Barang" className="w-full px-3 py-2 bg-slate-100 border border-slate-300 rounded-xl text-xs" />
                 </div>
               </div>
 
@@ -946,30 +874,7 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Divisi Terkait *
                   </label>
-                  <select
-                    value={modalData.divisi}
-                    onChange={(e) => {
-                      const d = e.target.value;
-                      if (d === 'GUDANG') {
-                        setModalData({ ...modalData, divisi: d, tujuan_id: '' });
-                      } else {
-                        setModalData({
-                          ...modalData,
-                          divisi: d,
-                          tujuan_id: '',
-                          kategori_transaksi: modalData.jenis === 'MASUK'
-                            ? 'Pengembalian / Dismantle'
-                            : `Pemasangan ${DIVISI_LINK_LABEL[d]}`
-                        });
-                      }
-                    }}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:bg-white font-semibold"
-                  >
-                    <option value="GUDANG">GUDANG / PUSAT</option>
-                    <option value="PELANGGAN">DIVISI PELANGGAN</option>
-                    <option value="DIVISI FO">DIVISI FO</option>
-                    <option value="DIVISI TOWER">DIVISI TOWER</option>
-                  </select>
+                  <input readOnly value="GUDANG / PUSAT" className="w-full px-3 py-2 bg-slate-100 border border-slate-300 rounded-xl text-xs font-semibold" />
                 </div>
 
                 <div>
@@ -1078,14 +983,14 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
                 ) : (
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      {modalData.jenis === 'MASUK' ? 'Suplayer / Asal Barang *' : 'Lokasi / Penerima *'}
+                      Nama / Lokasi Pembeli *
                     </label>
                     <input
                       type="text"
                       required
                       value={modalData.lokasi_penerima}
                       onChange={(e) => setModalData({ ...modalData, lokasi_penerima: e.target.value })}
-                      placeholder="Nama suplayer, site, atau teknisi"
+                      placeholder="Nama pembeli dan lokasi penyerahan"
                       className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:bg-white"
                     />
                   </div>

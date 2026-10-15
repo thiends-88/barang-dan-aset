@@ -800,6 +800,74 @@ di README, info versi build (`/api/version`,
 - Ringkasan login publik `/api/public/summary` dan `LoginPage` live (polling 15 detik): pills SKU/pelanggan/FO/tower, mutasi, valuasi aset, dan stok gudang bersumber dari DB.
 - Tes: **163/163 API + 49/49 render**, build frontend sukses.
 
+**Selesai di sesi 15 Oktober 2026 (branch `arena/444dbd84-barang-dan-aset`):**
+- Sesuai permintaan pemilik, panel **Rekap per Kategori Mutasi** di halaman Mutasi dihapus dari tampilan (termasuk hasil cetak halaman).
+- Kartu ringkasan, input cepat, filter kategori, daftar transaksi, data API dan rekap pada ekspor CSV tetap dipertahankan; tidak ada perubahan stok/database.
+- Tes regresi Seksi **25** memastikan panel tidak muncul walaupun `summary.per_kategori` berisi data, sementara kontrol lainnya tetap tampil. `npm test` lolos dan `dist/` di-build ulang.
+
+**Penyesuaian cetak Bon Teknisi (15 Oktober 2026, sesi yang sama):**
+- Varian **Surat Jalan (barang dibawa)** tidak lagi menampilkan harga, nilai dibawa, maupun total nilai barang, baik di pratinjau maupun cetak/PDF.
+- Blok tanda tangan diganti **Note:** berisi tanggung jawab teknisi atas barang sampai dipasang atau dikembalikan; catatan lama yang sama dipindahkan, tidak diduplikasi.
+- **Rekap Lengkap** tetap memiliki kolom nilai dan tanda tangan. Data harga/valuasi di API dan halaman lain tidak diubah.
+- Regresi render Seksi 21 disesuaikan dan Seksi 26 ditambahkan.
+
+**Penyesuaian peringatan stok menipis (15 Oktober 2026):**
+- Definisi terbaru: **stok > 0 dan stok <= min_stok**. Stok 0 tidak masuk hitungan/peringatan maupun filter menipis pada Master Barang, Dashboard, dan laporan gudang/sebaran.
+- Batas `min_stok` tiap barang tetap dipakai (tidak diubah massal menjadi 1); stok pecahan positif juga mengikuti aturan ini.
+- Stok habis tetap terlihat di daftar umum dengan warna peringatan, status HABIS dan `out_of_stock_count` laporan tetap tersedia.
+- Tes API menambahkan kasus stok 0 dengan minimum 0/5 dan regresi render Seksi 27; verifikasi terakhir 164 API dan 52 render lolos.
+
+**Input Cepat Mutasi khusus penjualan (15 Oktober 2026):**
+- Tombol **+ Masuk** dihapus; tombol keluar menjadi **Keluar — Dijual**.
+- Formulir input cepat dikunci ke `KELUAR` / `Penjualan Barang` / `GUDANG`; tidak bisa dialihkan menjadi stok masuk, pemasangan, mutasi divisi, atau afkir. Identitas pembeli dicatat di `lokasi_penerima`.
+- Memakai endpoint transaksi yang sudah ada: stok berkurang dengan jejak transaksi dan validasi stok tersedia. Endpoint umum tetap mendukung alur lain agar fitur lain tidak rusak.
+- Tidak menambahkan harga jual/profit: nilai transaksi tetap mengikuti harga barang dari sistem yang sudah ada.
+- Regresi penjualan normal dan melebihi stok ditambahkan pada tes API; Seksi 28 render memeriksa tombol masuk hilang dan kategori terkunci. Hasil: **166 API + 53 render lolos**.
+
+**Pengiriman servis barang rusak (15 Oktober 2026, sesi yang sama):**
+- Modul `ServiceShipments.jsx` pada halaman Barang Rusak: pilih banyak entri DITAMPUNG, cari + paginasi kandidat, jumlah per entri (sebagian/seluruh), tujuan/alamat/kontak servis, tanggal, catatan. Nomor unik `SRV-YYYYMMDD-ID`; histori, detail, CSV, pratinjau dan dokumen `.print-doc` tanpa harga.
+- Tabel baru `service_shipments` / `service_shipment_items` menyimpan snapshot barang, jumlah dikirim, hasil, tanggal kembali, petugas dan no mutasi. Migrasi otomatis; disertakan pada reset-seed dan Kosongkan Semua Data dengan urutan FK aman.
+- Endpoint di `server/serviceShipments.js`, didaftarkan di index: GET list/detail, POST pengiriman, POST `/:id/items/:itemId/receive`. Tulis hanya admin/staff_gudang (aturan untuk damaged-items juga diperjelas); peran lain boleh baca.
+- Pengiriman mengurangi jumlah tersedia di ledger rusak, **tidak** menyentuh stok siap pakai. Sumber yang habis dikirim menjadi DISERVIS; sisa tetap DITAMPUNG. Semua pemilihan divalidasi di transaksi SQLite, sehingga salah satu baris gagal = seluruh pengiriman dibatalkan. Jumlah minimal 0,001, maks 3 desimal.
+- Penerimaan **seluruh jumlah per baris** (bukan sebagian dalam satu baris): BERHASIL → tambah stok siap pakai + mutasi MASUK kategori Perbaikan Barang Rusak; GAGAL → pulihkan ke ledger rusak. Baris lain boleh menyusul. Penerimaan ganda dan tanggal kembali sebelum kirim ditolak. Tidak ada edit/hapus histori.
+- Menemukan bug lama saat test: POST damaged-items mengembalikan ID mentah, bukan objek entri; sekarang mengembalikan entri lengkap dan dibungkus transaksi atomik agar pengurangan stok/log/ledger tidak bisa terpisah.
+- Tes regresi API Seksi 6E.2 mencakup rollback multi barang, validasi, kirim ulang, histori, penerimaan berhasil/gagal/ganda, tanggal dan peran. Render Seksi 29 untuk dokumen/peran. Uji interaksi jsdom: pilih → simpan → pratinjau/cetak → terima → histori selesai, stok kembali tepat (skrip sementara, tidak menambah dependensi proyek).
+- Verifikasi akhir: **182/182 API + 54/54 render lolos**, 12 pemeriksaan interaksi jsdom lolos, `npm run build` berhasil. Master barang di App ikut dimuat ulang setelah perubahan stok.
+- Belum mencakup biaya servis, pengembalian sebagian dalam satu baris, atau pembatalan pengiriman. Bila perlu jumlah kembali bertahap, pisahkan menjadi entri/pengiriman berbeda terlebih dahulu.
+
+**Keputusan TERBARU: servis hanya histori + input ulang sebagai kode/harga baru (15 Oktober 2026):**
+- **Menggantikan aturan penerimaan pada bagian Pengiriman Servis di atas.** Pemilik tidak ingin barang hasil servis masuk kembali ke kode/harga lama.
+- POST `/:id/items/:itemId/receive` hanya menyimpan hasil, tanggal, catatan dan petugas; baik BERHASIL maupun GAGAL **tidak** menambah stok siap pakai, tidak memulihkan jumlah ledger rusak dan tidak membuat mutasi. Sumber tanpa sisa/pengiriman berjalan ditutup sebagai `SELESAI_SERVIS`; sisa tetap DITAMPUNG. Pengiriman tetap mengurangi jumlah tersedia di ledger rusak (bukan stok siap pakai).
+- Setelah BERHASIL, tombol **Input sebagai Barang Baru** menawarkan tindakan terpisah. Kode/harga baru kosong wajib diisi; nama/kategori/satuan boleh mengikuti asal. Jumlah mengikuti seluruh jumlah per baris servis, bukan input bebas. Simpan membuat master baru, mendaftarkan kategori, dan mutasi MASUK **Hasil Servis / Rekondisi** dengan tanggal input serta harga baru. Kode lama tidak berubah. Semua perubahan atomik.
+- Endpoint baru POST `/api/service-shipments/:id/items/:itemId/new-item`, hanya admin/staff gudang; menolak belum selesai/gagal, kode asal/kode sudah terpakai (case-insensitive), harga/tanggal tidak valid dan input ganda. Barang hasil servis langsung terlihat di Master Barang melalui refresh data global.
+- Migrasi aman menambah `kode_baru`, `nama_baru`, `harga_baru`, `tanggal_input_baru`, `diinput_oleh` pada service_shipment_items. Nomor mutasi baru memakai field `no_transaksi`. Snapshot referensi kode/nomor surat asal disimpan di catatan master dan mutasi; kode baru tampil di histori/CSV/cetak, harga tidak tampil di surat/CSV servis.
+- Data versi lama yang BERHASIL dan sudah bermutasikan stok otomatis (`no_transaksi` terisi, `kode_baru` kosong) tetap dipertahankan, tidak ada pengurangan stok retroaktif. Input ulang dari servis diblokir dengan pesan histori lama untuk mencegah duplikasi.
+- Perbaikan langsung pada barang DITAMPUNG yang **belum dikirim servis** tetap memakai alur Perbaiki lama; aturan histori saja khusus pengiriman servis.
+- Verifikasi: **196 API + 55 render lolos**, 14 pemeriksaan interaksi jsdom (terima tanpa stok → input kode/harga baru → referensi cetak; nama sama dan input ganda) lolos. Dependensi jsdom dipasang terpisah, tidak mengubah package/lockfile proyek.
+
+**Keperluan Bon Teknisi beberapa baris (15 Oktober 2026):**
+- Isian Keperluan / Tujuan Pekerjaan di BonBaruModal menjadi textarea 4 baris, dapat diperbesar, dengan petunjuk Enter.
+- Baris baru, baris kosong, dan urutan dipertahankan lewat `whitespace-pre-wrap break-words` pada Surat Jalan, Rekap Lengkap, detail bon dan kolom laporan. Bagian keperluan pada detail/dokumen memakai lebar penuh. Ringkasan daftar bon tetap ringkas (truncate).
+- Backend sudah menyimpan baris baru di field `keperluan` (trim hanya pada awal/akhir), sehingga tidak perlu migrasi atau perubahan stok.
+- Tes API memastikan isi multibaris utuh saat buat/baca detail; render Seksi 31 memastikan textarea dan dokumen kedua varian mempertahankan baris. Verifikasi: **197 API + 56 render lolos**, build produksi diperbarui. Pada percobaan pertama tes cleanup teknisi lama sempat gagal (1 tersisa); pengulangan rangkaian lengkap lolos.
+
+**Realisasi Bon tampil di Mutasi / Keluar–Masuk (15 Oktober 2026):**
+- Menindaklanjuti temuan pemilik: realisasi PASANG sebelumnya hanya tampak di riwayat Bon, bukan daftar Mutasi. Kini tampilan Mutasi menyatukan keduanya sebagai **riwayat baca-saja**, bukan membuat transaksi stok baru.
+- GET `/api/transactions?include_bon=1` membaca UNION transaksi gudang dengan `technician_loan_movements.jenis=PASANG` + nomor bon. Realisasi lama otomatis ikut terbaca tanpa migrasi/backfill. Identitas virtual negatif + record_key mencegah bentrok; jenis `REALISASI_BON`, kategori `Realisasi Bon / Pemasangan`. BAWA/KEMBALI/BATAL tidak digandakan.
+- Parameter opt-in hanya dipakai KeluarMasukBarang. Endpoint default tanpa parameter (dipakai Laporan/klien lama) tetap transaksi gudang. Endpoint kategori beserta alias juga mendukung include_bon=1.
+- Tanggal/tahun/bulan/minggu/divisi/jenis/kategori/pencarian/limit diterapkan ke riwayat gabungan. Pencarian tambahan mencakup nomor bon, pemasang, lokasi dan SN. Ringkasan dihitung sebelum LIMIT 5.000; total record mencakup seluruh aktivitas, tetapi total masuk/keluar/neto hanya SUM jenis MASUK/KELUAR. Field tambahan: total_transaksi_gudang, total_realisasi_bon, total_realisasi_qty.
+- UI: badge indigo REALISASI BON, nomor bon, nama tujuan, lokasi, pemasang dan SN; catatan tidak terpotong. Filter khusus realisasi + penjelasan bahwa tidak mengurangi stok lagi. Nilai di baris realisasi diberi label nilai aset terpasang. CSV menaruh nilai realisasi pada kolom terpisah dari Total Nilai transaksi gudang (termasuk rekap kategori); cetak mengikuti tampilan.
+- Tidak mengubah alur install bon, stok, transaksi tersimpan atau valuasi gudang. Tes memastikan realisasi Pelanggan/FO/Tower lengkap, nilai/qty masuk-keluar-neto tidak dobel, filter, limit dan kompatibilitas endpoint default. Tes render Seksi 32; 8 pemeriksaan interaksi jsdom untuk baca histori/filter/cari/CSV/stok lolos. Verifikasi akhir **212 API + 57 render lolos**, build produksi berhasil.
+
+**Konfirmasi kondisi saat edit barang pelanggan (15 Oktober 2026):**
+- Permintaan screenshot Edit Pelanggan: ketika jumlah berkurang, baris dihapus, kode atau SN diganti, **Simpan Perubahan** membuka `ReturnInstalledItemsModal`. Setiap unit/kelompok kode+SN yang ditarik wajib kondisi (tanpa default) dan alasan. Cancel kembali ke edit tanpa request PUT / perubahan stok.
+- `shared/installedReturns.js` dipakai UI dan server untuk agregasi/diff kode+SN (case-insensitive); menangani baris duplikat, pengurangan sebagian, ganti SN, hapus semua. Normalisasi di server tetap melalui validateInstalledItems terlebih dahulu.
+- PUT `/api/customers/:id` menerima `pengembalian: [{kode_barang, serial_number, jumlah, kondisi, keterangan}]`. Metadata wajib cocok tepat dengan pengurangan terbaru; hilang/berlebih/duplikat/jumlah atau SN salah/kondisi kosong/alasan kosong ditolak. Edit tanpa pengurangan tetap bisa tanpa metadata.
+- Reconcile khusus pelanggan: Baik menambah stok siap pakai + log MASUK Penyesuaian Pengembalian; rusak/afkir hanya log MASUK berkondisi dan ledger rusak (sumber Edit Barang Terpasang Pelanggan), tidak menambah stok siap pakai. Keterangan/SN/asal pelanggan tercatat. Tambahan pemasangan tetap mengambil stok dan log KELUAR; pengganti tidak boleh memakai stok semu dari barang kembali rusak.
+- Semua langkah di transaksi PUT pelanggan yang sudah ada; kegagalan mutasi di tengah membatalkan stok, ledger rusak, barang terpasang dan nilai pelanggan. Jejak no_bon/pemasang yang masih terpasang tetap dipertahankan.
+- Cakupan perubahan: **edit daftar barang pelanggan**, bukan DELETE seluruh pelanggan, dismantle seluruh pelanggan, atau edit FO/Tower (alur tersebut tetap seperti sebelumnya).
+- Tes API Seksi 2 disesuaikan + Seksi 6H: validasi metadata, rollback, kondisi campuran, SN, pengganti stok nol dan edit biasa. Render Seksi 33. Uji interaksi jsdom 11 pemeriksaan: kurang → konfirmasi → batal → rusak tersimpan → hapus → Baik, stok dan ledger tepat. Verifikasi akhir **227 API + 58 render lolos**, build produksi berhasil.
+
 **Belum dikerjakan / kandidat sesi berikutnya:**
 
 0. Bon Teknisi: opsi **tambah barang ke bon yang sudah berjalan**, pembatasan teknisi hanya melihat/merealisasi bon sendiri,
@@ -847,3 +915,15 @@ gh pr create --fill --base main          # jangan merge sendiri
 
 *Dokumen ini hidup: setiap keputusan baru yang disepakati bersama pemilik repo sebaiknya
 ditambahkan di sini pada sesi yang sama, supaya sesi Arena berikutnya tidak perlu menebak.*
+
+## Tambahan audit 15 Oktober 2026 — PR #18
+
+Laporan lengkap dan panduan deployment: [AUDIT-2026-10-15.md](AUDIT-2026-10-15.md).
+
+- Audit memperbaiki akumulasi dua baris realisasi/pengembalian bon untuk item sama (snapshot lama menimpa jumlah); edit ledger rusak kini metadata saja; master aktif pada ledger tidak dapat dihapus dan ganti kode mengikutkan ledger; repair tanpa master ditolak; tanggal ledger invalid ditolak.
+- UI Catatan pada Barang Rusak memakai catatan lama dan hanya mengirim metadata. Jumlah berubah lewat tampung/perbaiki/musnahkan/servis, tidak lewat edit bebas.
+- Migrasi hanya mengabaikan kolom duplikat. Updater memakai npm ci, health-check/commit mismatch gagal, dan enumerasi cadangan tanpa ls/process-substitution error semu; rollback wajib stop sebelum mengganti DB.
+- Validasi terbaru: **234 API + 58 render**, **4 interaksi jsdom audit**, build, migrasi skema basis/idempoten/integritas, bash syntax dan dry-run updater lolos. Suite 233 API sebelum tambahan satu kasus diulang lima kali tanpa gagal.
+- **Jangan mengklaim seluruh keamanan bersih/langsung rekomendasikan merge produksi:** npm audit masih **1 high di xlsx (dua advisory)**, tidak ada patched version di registry npm yang digunakan. Source-map-js sudah diperbaiki. Jangan ganti fork tanpa verifikasi atau hapus format impor diam-diam. Butuh migrasi parser atau penerimaan risiko eksplisit pemilik.
+- Flake pembersihan teknisi sesi lama tidak terulang lima putaran; belum ada bukti akar masalah/perbaikan, hanya diagnostik record tertinggal ditambah.
+- Tidak dilakukan merge atau update Proxmox. Cadangkan DB di luar server dan pakai updater dari main setelah merge, bukan reset/pull mentah.

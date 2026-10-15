@@ -1,12 +1,13 @@
+import ServiceShipments from './ServiceShipments';
 import React, { useState, useEffect, useCallback } from 'react';
 import { PackageX, Wrench, Trash2, Search, Filter, Plus, Download, RefreshCw, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { formatRupiah, formatNumber, formatDate, exportToCSV, todayLocal } from '../utils/formatters';
 import { notify } from '../utils/notify';
 
-const STATUS_OPTS = ['SEMUA', 'DITAMPUNG', 'DIPERBAIKI', 'DIMUSNAHKAN'];
+const STATUS_OPTS = ['SEMUA', 'SELESAI_SERVIS', 'DISERVIS', 'DITAMPUNG', 'DIPERBAIKI', 'DIMUSNAHKAN'];
 const KONDISI_OPTS = ['SEMUA', 'Rusak Ringan', 'Rusak Berat', 'Afkir'];
 
-export default function BarangRusak({ items }) {
+export default function BarangRusak({ items, canEdit = false, onRefreshMaster }) {
   const [data, setData] = useState([]);
   const [pagination, setPagination] = useState(null);
   const [summary, setSummary] = useState([]);
@@ -55,7 +56,7 @@ export default function BarangRusak({ items }) {
       notify(json.message || 'Barang rusak berhasil ditampung', 'success');
       setIsAddOpen(false);
       setAddForm({ kode_barang: '', jumlah: 1, kondisi: 'Rusak Ringan', keterangan: '', sumber: 'MANUAL', sumber_nama: '' });
-      fetchData();
+      fetchData(); onRefreshMaster?.();
     } catch (err) { notify(err.message, 'error'); }
     finally { setSubmitting(false); }
   };
@@ -63,7 +64,7 @@ export default function BarangRusak({ items }) {
   const openAction = (row, type) => {
     setActionRow(row);
     setActionType(type);
-    setActionForm({ jumlah: String(row.jumlah), keterangan: '', tanggal: todayLocal() });
+    setActionForm({ jumlah: String(row.jumlah), keterangan: type === 'edit' ? (row.keterangan || '') : '', tanggal: todayLocal() });
   };
 
   const handleAction = async (e) => {
@@ -76,17 +77,17 @@ export default function BarangRusak({ items }) {
       if (actionType === 'repair') url = `/api/damaged-items/${actionRow.id}/repair`;
       else if (actionType === 'destroy') url = `/api/damaged-items/${actionRow.id}/destroy`;
       else if (actionType === 'edit') {
-        const res = await fetch(`/api/damaged-items/${actionRow.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jumlah: payload.jumlah, kondisi: actionRow.kondisi, keterangan: payload.keterangan }) });
+        const res = await fetch(`/api/damaged-items/${actionRow.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keterangan: payload.keterangan }) });
         const json = await res.json();
         if (!res.ok || !json.success) throw new Error(json.error || 'Gagal memperbarui');
         notify('Catatan barang rusak diperbarui', 'success');
-        setActionRow(null); setActionType(null); fetchData(); return;
+        setActionRow(null); setActionType(null); fetchData(); onRefreshMaster?.(); return;
       }
       const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || 'Gagal');
       notify(json.message, 'success');
-      setActionRow(null); setActionType(null); fetchData();
+      setActionRow(null); setActionType(null); fetchData(); onRefreshMaster?.();
     } catch (err) { notify(err.message, 'error'); }
     finally { setSubmitting(false); }
   };
@@ -102,16 +103,18 @@ export default function BarangRusak({ items }) {
   const totalNilaiTampung = data.filter(d => d.status === 'DITAMPUNG').reduce((a, d) => a + d.jumlah * d.harga_barang, 0);
 
   return (
-    <div className="space-y-4">
+    <>
+    <ServiceShipments canEdit={canEdit} onChanged={() => { fetchData(); onRefreshMaster?.(); }} />
+    <div className="space-y-4 no-print">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-black text-slate-900 flex items-center gap-2"><PackageX className="w-5 h-5 text-rose-600" /> Gudang Barang Rusak / Afkir</h2>
-          <p className="text-xs text-slate-500">Ledger terpisah — barang tidak masuk stok siap pakai. Alur: DITAMPUNG → DIPERBAIKI (kembali ke stok) atau DIMUSNAHKAN.</p>
+          <p className="text-xs text-slate-500">Ledger terpisah — barang tidak masuk stok siap pakai. Alur: DITAMPUNG → DISERVIS → SELESAI_SERVIS (histori saja). Hasil servis diinput terpisah memakai kode dan harga baru. Perbaikan langsung / pemusnahan tetap tersedia untuk barang yang belum dikirim.</p>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={fetchData} className="p-2 bg-white border border-slate-200 rounded-xl hover:bg-slate-50"><RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></button>
           <button onClick={handleExport} className="px-3 py-2 bg-slate-100 border border-slate-300 rounded-xl text-xs font-semibold flex items-center gap-1.5"><Download className="w-4 h-4" />Export CSV</button>
-          <button onClick={() => setIsAddOpen(true)} className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5"><Plus className="w-4 h-4" />Tampung Barang Rusak</button>
+          {canEdit && <button onClick={() => setIsAddOpen(true)} className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5"><Plus className="w-4 h-4" />Tampung Barang Rusak</button>}
         </div>
       </div>
 
@@ -173,10 +176,11 @@ export default function BarangRusak({ items }) {
                   <td className="py-2.5 px-3 text-right font-bold text-indigo-700 whitespace-nowrap">{formatRupiah(r.jumlah * r.harga_barang)}</td>
                   <td className="py-2.5 px-3 max-w-[200px] truncate text-slate-500">{r.keterangan || '-'}</td>
                   <td className="py-2.5 px-3 text-center">
-                    {r.status === 'DITAMPUNG' ? (
-                      <div className="flex items-center justify-center gap-1">
+                    {canEdit && r.status === 'DITAMPUNG' ? (
+                      <div className="flex flex-wrap items-center justify-center gap-1">
                         <button onClick={() => openAction(r, 'repair')} className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-bold flex items-center gap-1"><Wrench className="w-3 h-3" />Perbaiki</button>
                         <button onClick={() => openAction(r, 'destroy')} className="px-2 py-1 bg-slate-800 hover:bg-black text-white rounded-lg text-[11px] font-bold flex items-center gap-1"><Trash2 className="w-3 h-3" />Musnahkan</button>
+                        <button onClick={() => openAction(r, 'edit')} className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-[11px] font-bold">Catatan</button>
                       </div>
                     ) : <span className="text-[10px] text-slate-400">—</span>}
                   </td>
@@ -222,8 +226,8 @@ export default function BarangRusak({ items }) {
             </div>
             <div className="p-4 bg-amber-50 border-b text-xs text-amber-900">{actionRow.kode_barang} — {actionRow.nama_barang} • {formatNumber(actionRow.jumlah)} {actionRow.satuan} • Kondisi: {actionRow.kondisi}</div>
             <form onSubmit={handleAction} className="p-5 space-y-3">
-              <div><label className="block text-xs font-semibold mb-1">Jumlah {actionType === 'destroy' ? 'dimusnahkan' : 'diperbaiki'} *</label><input type="number" min="0.01" max={actionRow.jumlah} step="any" value={actionForm.jumlah} onChange={e => setActionForm({ ...actionForm, jumlah: e.target.value })} className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs" required /></div>
-              <div><label className="block text-xs font-semibold mb-1">Tanggal</label><input type="date" value={actionForm.tanggal} onChange={e => setActionForm({ ...actionForm, tanggal: e.target.value })} className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs" /></div>
+              {actionType !== 'edit' && <div><label className="block text-xs font-semibold mb-1">Jumlah {actionType === 'destroy' ? 'dimusnahkan' : 'diperbaiki'} *</label><input type="number" min="0.01" max={actionRow.jumlah} step="any" value={actionForm.jumlah} onChange={e => setActionForm({ ...actionForm, jumlah: e.target.value })} className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs" required /></div>}
+              {actionType !== 'edit' && <div><label className="block text-xs font-semibold mb-1">Tanggal</label><input type="date" value={actionForm.tanggal} onChange={e => setActionForm({ ...actionForm, tanggal: e.target.value })} className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs" /></div>}
               <div><label className="block text-xs font-semibold mb-1">{actionType === 'destroy' ? 'Berita Acara / Keterangan *' : 'Keterangan'}</label><textarea rows="2" value={actionForm.keterangan} onChange={e => setActionForm({ ...actionForm, keterangan: e.target.value })} className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs" required={actionType === 'destroy'} placeholder={actionType === 'destroy' ? 'Wajib isi: alasan / BA pemusnahan' : ''} /></div>
               {actionType === 'repair' && <p className="text-[11px] text-emerald-700 bg-emerald-50 p-2 rounded-lg border border-emerald-200">Barang akan ditambahkan kembali ke stok siap pakai (stok gudang bertambah). Mutasi MASUK kategori “Perbaikan Barang Rusak” akan tercatat.</p>}
               {actionType === 'destroy' && <p className="text-[11px] text-rose-700 bg-rose-50 p-2 rounded-lg border border-rose-200">Barang tidak kembali ke stok. Mutasi KELUAR kategori “Pemusnahan Barang Afkir” akan tercatat.</p>}
@@ -233,5 +237,6 @@ export default function BarangRusak({ items }) {
         </div>
       )}
     </div>
+    </>
   );
 }

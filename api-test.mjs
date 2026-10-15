@@ -397,8 +397,12 @@ else bad('Edit melebihi stok ditolak', `HTTP ${r.status} — stok jadi minus!`);
 if (stockOf(KODE) === STOK_AWAL - 2) ok('Stok utuh setelah edit ditolak (rollback)');
 else bad('Stok utuh setelah edit ditolak', `stok=${stockOf(KODE)}`);
 
+r = await req('PUT', `/api/customers/${idPelanggan}`, { items: [{ kode_barang: KODE, jumlah: 1 }] });
+if (r.status === 400 && stockOf(KODE) === STOK_AWAL - 2 && trxSince(mark).length === 0) ok('Edit pengurangan/hapus barang wajib kondisi dan keterangan, tidak otomatis kembali ke stok');
+else bad('Edit pengurangan tanpa kondisi harus ditolak');
 r = await req('PUT', `/api/customers/${idPelanggan}`, {
   items: [{ kode_barang: KODE, jumlah: 1 }],
+  pengembalian: [{ kode_barang: KODE, jumlah: 1, kondisi: 'Baik', keterangan: 'Pengurangan perangkat pelanggan masih baik' }],
 });
 if (r.status === 200) ok('Edit wajar berhasil', `HTTP 200`);
 else bad('Edit wajar berhasil', `HTTP ${r.status}`);
@@ -988,6 +992,22 @@ console.log('\n=== 6E. LAPORAN STOK GUDANG LOGISTIK (STOK TERSEDIA & BARANG STOK
     referensi_suplayer: 'PT. Uji Logistik'
   });
 
+  // Stok habis tidak termasuk peringatan, baik batas minimumnya 0 maupun 5.
+  for (const min of [0, 5]) {
+    await req('POST', '/api/items', {
+      kode_barang: `BRG-UJI-HABIS-${min}`, nama_barang: `Barang habis ${min}`,
+      satuan: 'pcs', jenis_barang: 'Aksesoris & Pasif FO', stok: 0, min_stok: min,
+    });
+  }
+  const dashboardLow = await req('GET', '/api/reports/dashboard-summary');
+  const warningItems = dashboardLow.json?.data?.warehouse?.low_stock_list;
+  if (Array.isArray(warningItems) && warningItems.some(it => it.kode_barang === kodeMenipis)
+      && warningItems.every(it => it.stok > 0 && it.stok <= it.min_stok)) {
+    ok('Peringatan dashboard hanya memuat stok positif yang menipis, bukan stok 0');
+  } else {
+    bad('Peringatan dashboard harus mengecualikan stok 0');
+  }
+
   const rMenipis = await req('GET', '/api/reports/warehouse-stock?filter=menipis');
   const dMenipis = rMenipis.json?.data || [];
   const itemMenipis = dMenipis.find((it) => it.kode_barang === kodeMenipis);
@@ -997,7 +1017,7 @@ console.log('\n=== 6E. LAPORAN STOK GUDANG LOGISTIK (STOK TERSEDIA & BARANG STOK
     itemMenipis &&
     itemMenipis.status_stok === 'MENIPIS' &&
     itemMenipis.kekurangan_stok === 8 &&
-    dMenipis.every((it) => Number(it.stok) <= Number(it.min_stok))
+    dMenipis.every((it) => Number(it.stok) > 0 && Number(it.stok) <= Number(it.min_stok))
   ) {
     ok('Laporan Barang Stok Menipis mengembalikan barang dengan stok <= min_stok beserta status & kekurangan', `${dMenipis.length} SKU menipis`);
   } else {
@@ -1017,6 +1037,148 @@ console.log('\n=== 6E. LAPORAN STOK GUDANG LOGISTIK (STOK TERSEDIA & BARANG STOK
     ok('Filter pencarian/kategori stok gudang & filter STOK_MENIPIS pada sebaran berfungsi akurat');
   } else {
     bad('Filter pencarian/kategori stok gudang', `searchLen=${rSearch.json?.data?.length}`);
+  }
+}
+
+console.log('\n=== 6E.1 PENJUALAN BARANG DARI GUDANG ===');
+{
+  const kode = 'BRG-UJI-MENIPIS-01';
+  const stokAwal = stockOf(kode);
+  const jual = await req('POST', '/api/transactions', {
+    jenis: 'KELUAR', kategori_transaksi: 'Penjualan Barang', divisi: 'GUDANG',
+    kode_barang: kode, jumlah: 1, lokasi_penerima: 'Pembeli Uji', keterangan: 'Uji penjualan',
+  });
+  const riwayat = await req('GET', '/api/transactions?kategori_transaksi=Penjualan%20Barang');
+  const tercatat = (riwayat.json?.data || []).some(t => t.kode_barang === kode
+    && t.jenis === 'KELUAR' && t.divisi === 'GUDANG' && t.lokasi_penerima === 'Pembeli Uji'
+    && t.jumlah === 1 && t.kategori_transaksi === 'Penjualan Barang');
+  if (jual.status === 201 && stockOf(kode) === stokAwal - 1 && tercatat) {
+    ok('Penjualan mengurangi stok gudang dan tercatat sebagai KELUAR / Penjualan Barang');
+  } else {
+    bad('Pencatatan penjualan dari gudang', `status=${jual.status} tercatat=${tercatat}`);
+  }
+  const lebih = await req('POST', '/api/transactions', {
+    jenis: 'KELUAR', kategori_transaksi: 'Penjualan Barang', divisi: 'GUDANG',
+    kode_barang: kode, jumlah: stokAwal + 1, lokasi_penerima: 'Pembeli Uji',
+  });
+  if (lebih.status === 400 && stockOf(kode) === stokAwal - 1) {
+    ok('Penjualan melebihi stok ditolak tanpa mengubah stok');
+  } else {
+    bad('Penjualan tidak boleh melebihi stok');
+  }
+}
+
+console.log('\n=== 6E.2 PENGIRIMAN SERVIS BARANG RUSAK ===');
+{
+  const kode = 'BRG-UJI-SERVIS';
+  await req('POST', '/api/items', { kode_barang: kode, nama_barang: 'Barang Servis Uji', satuan: 'unit', jenis_barang: 'Aksesoris & Pasif FO', stok: 20, min_stok: 1, harga_barang: 1000 });
+  const a = await req('POST', '/api/damaged-items', { kode_barang: kode, jumlah: 6, kondisi: 'Rusak Ringan' });
+  const b = await req('POST', '/api/damaged-items', { kode_barang: kode, jumlah: 3, kondisi: 'Rusak Berat' });
+  const aid = a.json?.data?.id, bid = b.json?.data?.id;
+  const damaged = id => db.prepare('SELECT * FROM damaged_items WHERE id = ?').get(id);
+  const countBefore = db.prepare('SELECT COUNT(*) AS n FROM service_shipments').get().n;
+  const stockBefore = stockOf(kode);
+  const payload = { tujuan: 'Pusat Servis Uji', alamat: 'Solok', kontak: 'Teknisi Vendor', tanggal: '2026-10-15', catatan: 'Uji servis', items: [{ damaged_id: aid, jumlah: 4 }, { damaged_id: bid, jumlah: 3 }] };
+  for (const body of [
+    { ...payload, tujuan: '' }, { ...payload, tanggal: 'bukan-tanggal' },
+    { ...payload, items: [] }, { ...payload, items: [{ damaged_id: aid, jumlah: 1 }, { damaged_id: aid, jumlah: 1 }] },
+    { ...payload, items: [{ damaged_id: aid, jumlah: 2 }, { damaged_id: bid, jumlah: 99 }] },
+    { ...payload, items: [{ damaged_id: aid, jumlah: -1 }] },
+  ]) {
+    const invalid = await req('POST', '/api/service-shipments', body);
+    if (invalid.status === 400 && damaged(aid).jumlah === 6 && damaged(bid).jumlah === 3
+        && db.prepare('SELECT COUNT(*) AS n FROM service_shipments').get().n === countBefore) {
+      ok('Servis: input tidak valid ditolak atomik tanpa perubahan ledger');
+    } else bad('Servis: validasi / rollback gagal', JSON.stringify(body));
+  }
+  const created = await req('POST', '/api/service-shipments', payload);
+  const shipment = created.json?.data;
+  if (created.status === 201 && shipment?.items.length === 2 && shipment.no_surat.startsWith('SRV-')
+      && damaged(aid).jumlah === 2 && damaged(bid).jumlah === 0 && damaged(bid).status === 'DISERVIS'
+      && stockOf(kode) === stockBefore) ok('Servis: pilih multi barang, kirim sebagian/seluruh tanpa mengurangi stok siap pakai lagi');
+  else bad('Servis: pengiriman multi barang', JSON.stringify(created.json));
+  if (shipment) {
+    const ulang = await req('POST', '/api/service-shipments', { ...payload, items: [{ damaged_id: bid, jumlah: 1 }] });
+    const repairPending = await req('POST', `/api/damaged-items/${bid}/repair`, { jumlah: 1 });
+    const destroyPending = await req('POST', `/api/damaged-items/${bid}/destroy`, { jumlah: 1, keterangan: 'Tidak boleh' });
+    if (ulang.status === 400 && repairPending.status === 400 && destroyPending.status === 400) ok('Servis: barang dalam pengiriman tidak bisa dikirim ulang/diperbaiki/dimusnahkan langsung');
+    else bad('Servis: barang diservis harus terkunci');
+    const list = await req('GET', '/api/service-shipments');
+    const get = await req('GET', `/api/service-shipments/${shipment.id}`);
+    if (get.json?.data?.items.length === 2 && list.json?.data?.some(s => s.id === shipment.id && s.qty_diservis === 7)) ok('Servis: histori dan detail memuat hanya barang yang dipilih');
+    else bad('Servis: histori/detail tidak lengkap');
+    const i1 = shipment.items[0], i2 = shipment.items[1];
+    const backdated = await req('POST', `/api/service-shipments/${shipment.id}/items/${i1.id}/receive`, { hasil: 'BERHASIL', tanggal: '2026-10-14' });
+    if (backdated.status === 400 && stockOf(kode) === stockBefore) ok('Servis: tanggal penerimaan sebelum kirim ditolak'); else bad('Servis: validasi tanggal kembali');
+    const mark = maxTrxId();
+    const success = await req('POST', `/api/service-shipments/${shipment.id}/items/${i1.id}/receive`, { hasil: 'BERHASIL', tanggal: '2026-10-16', catatan: 'Normal kembali' });
+    if (success.status === 200 && stockOf(kode) === stockBefore && trxSince(mark).length === 0 && !success.json?.data?.items[0]?.no_transaksi) ok('Servis: hasil berhasil hanya histori, stok dan mutasi kode asal tidak berubah'); else bad('Servis: penerimaan harus histori saja');
+    const duplicate = await req('POST', `/api/service-shipments/${shipment.id}/items/${i1.id}/receive`, { hasil: 'BERHASIL' });
+    if (duplicate.status === 400 && stockOf(kode) === stockBefore) ok('Servis: penerimaan ganda ditolak'); else bad('Servis: stok terduplikasi');
+    const failed = await req('POST', `/api/service-shipments/${shipment.id}/items/${i2.id}/receive`, { hasil: 'GAGAL', tanggal: '2026-10-16', catatan: 'Tidak dapat diperbaiki' });
+    if (failed.status === 200 && damaged(bid).jumlah === 0 && damaged(bid).status === 'SELESAI_SERVIS'
+        && stockOf(kode) === stockBefore && trxSince(mark).length === 0 && failed.json?.data?.status === 'SELESAI') ok('Servis: hasil gagal hanya histori, tidak mengembalikan stok/ledger kode lama'); else bad('Servis: penerimaan gagal');
+    // Input barang hasil servis adalah tindakan eksplisit yang terpisah dari penerimaan.
+    const newUrl = `/api/service-shipments/${shipment.id}/items/${i1.id}/new-item`;
+    const newBody = { kode_barang: 'BRG-UJI-REKONDISI', nama_barang: 'Barang Servis Uji', jenis_barang: 'Hasil Rekondisi Uji',
+      satuan: 'unit', harga_barang: 1750, min_stok: 1, tanggal: '2026-10-16', catatan: 'Input ulang hasil servis', stok: 999 };
+    const tryFailed = await req('POST', `/api/service-shipments/${shipment.id}/items/${i2.id}/new-item`, newBody);
+    if (tryFailed.status === 400) ok('Servis: hasil gagal tidak boleh didaftarkan sebagai barang hasil servis berhasil'); else bad('Servis: input baru dari hasil gagal harus ditolak');
+    for (const invalidBody of [
+      { ...newBody, kode_barang: kode.toLowerCase() },
+      { ...newBody, harga_barang: -1 }, { ...newBody, harga_barang: '' },
+      { ...newBody, harga_barang: null }, { ...newBody, harga_barang: 'bukan-harga' },
+      { ...newBody, tanggal: '2026-10-14' }, { ...newBody, jenis_barang: '' },
+    ]) {
+      const response = await req('POST', newUrl, invalidBody);
+      if (response.status === 400 && !stockOf(newBody.kode_barang) && stockOf(kode) === stockBefore && trxSince(mark).length === 0) {
+        ok('Servis: input kode/harga/tanggal/kategori baru tidak valid ditolak tanpa stok atau mutasi');
+      } else bad('Servis: validasi input barang baru tidak atomik', JSON.stringify(invalidBody));
+    }
+    const oldToken = TOKEN;
+    for (const role of ['viewer', 'teknisi']) {
+      TOKEN = (await req('POST', '/api/auth/login', { username: role, password: `${role}123` }, { noAuth: true })).json?.data?.token;
+      const response = await req('POST', newUrl, newBody);
+      if (response.status === 403) ok(`Servis: ${role} tidak boleh input barang rekondisi`); else bad(`Servis: input rekondisi oleh ${role} harus ditolak`);
+    }
+    TOKEN = oldToken;
+    // Kegagalan log mutasi harus membatalkan master, kategori dan tautan sekaligus.
+    db.exec(`CREATE TRIGGER test_fail_rekondisi BEFORE INSERT ON transactions
+      WHEN NEW.kategori_transaksi = 'Hasil Servis / Rekondisi'
+      BEGIN SELECT RAISE(ABORT, 'Uji rollback rekondisi'); END`);
+    try {
+      const failedInsert = await req('POST', newUrl, newBody);
+      const freshLink = db.prepare('SELECT * FROM service_shipment_items WHERE id = ?').get(i1.id);
+      const category = db.prepare('SELECT * FROM categories WHERE nama_kategori = ?').get(newBody.jenis_barang);
+      if (failedInsert.status === 400 && stockOf(newBody.kode_barang) === undefined && !category && !freshLink.kode_baru
+          && stockOf(kode) === stockBefore && trxSince(mark).length === 0) ok('Servis: gagal mencatat mutasi membatalkan master baru, kategori dan referensi secara atomik');
+      else bad('Servis: rollback saat log mutasi gagal');
+    } finally { db.exec('DROP TRIGGER IF EXISTS test_fail_rekondisi'); }
+    const registered = await req('POST', newUrl, newBody);
+    const newMaster = registered.json?.data?.item;
+    const link = registered.json?.data?.shipment?.items.find(i => i.id === i1.id);
+    const logs = trxSince(mark);
+    if (registered.status === 201 && newMaster?.kode_barang === newBody.kode_barang && newMaster.nama_barang === 'Barang Servis Uji'
+        && newMaster.stok === 4 && newMaster.harga_barang === 1750 && stockOf(kode) === stockBefore
+        && newMaster.catatan.includes(shipment.no_surat) && newMaster.catatan.includes(kode)
+        && link?.kode_baru === newBody.kode_barang && link.harga_baru === 1750
+        && logs.length === 1 && logs[0].kode_barang === newBody.kode_barang && logs[0].jenis === 'MASUK'
+        && logs[0].kategori_transaksi === 'Hasil Servis / Rekondisi' && logs[0].jumlah === 4 && logs[0].harga_satuan === 1750) {
+      ok('Servis: input terpisah membuat master kode/harga baru, nama sama, jumlah sesuai hasil, referensi dan mutasi tersambung');
+    } else bad('Servis: input hasil rekondisi', JSON.stringify(registered.json));
+    const again = await req('POST', newUrl, { ...newBody, kode_barang: 'KODE-DUPLIKASI-REKONDISI' });
+    if (again.status === 400 && !stockOf('KODE-DUPLIKASI-REKONDISI') && stockOf(newBody.kode_barang) === 4 && trxSince(mark).length === 1) ok('Servis: hasil yang sama tidak boleh diinput dua kali'); else bad('Servis: input barang baru ganda harus ditolak');
+    // Histori lama yang pernah menambah stok otomatis tidak boleh didaftarkan ulang.
+    db.prepare("UPDATE service_shipment_items SET kode_baru = '', no_transaksi = 'TRX-LEGACY-UJI' WHERE id = ?").run(i1.id);
+    const legacy = await req('POST', newUrl, { ...newBody, kode_barang: 'KODE-LEGACY' });
+    if (legacy.status === 400 && !stockOf('KODE-LEGACY')) ok('Servis: histori versi lama bermutasikan stok otomatis dilindungi dari input ulang'); else bad('Servis: pengaman histori lama');
+    db.prepare('UPDATE service_shipment_items SET kode_baru = ?, no_transaksi = ? WHERE id = ?').run(newBody.kode_barang, link?.no_transaksi || '', i1.id);
+    for (const role of ['viewer', 'teknisi', 'gudang']) {
+      const login = await req('POST', '/api/auth/login', { username: role, password: `${role}123` }, { noAuth: true });
+      const token = login.json?.data?.token;
+      const res = await fetch(API + '/api/service-shipments', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ ...payload, items: [{ damaged_id: aid, jumlah: 1 }] }) });
+      if (res.status === (role === 'gudang' ? 201 : 403)) ok(`Servis: hak akses ${role} sesuai`); else bad(`Servis: hak akses ${role}`, String(res.status));
+    }
   }
 }
 
@@ -1066,10 +1228,15 @@ console.log('\n=== 6F. BON / BARANG BAWAAN TEKNISI (3 tahap: bawa → pasang →
 
   // --- Tahap 1: bon sah (ONT 5 + PATCH 20 + SLING 100 m); kode ONT dobel digabung ---
   rb = await req('POST', '/api/technician-loans', {
-    divisi: 'DIVISI FO', teknisi_nama: 'Budi Santoso', keperluan: 'Instalasi baru Solok Selatan', no_bon: 'bon-uji-001',
+    divisi: 'DIVISI FO', teknisi_nama: 'Budi Santoso', keperluan: 'pemasangan PG002323 : instalasi baru\nmaintenance PG003434 : perbaikan jaringan', no_bon: 'bon-uji-001',
     items: [{ kode_barang: ONT, jumlah: 3 }, { kode_barang: PATCH, jumlah: 20 }, { kode_barang: SLING, jumlah: 100 }, { kode_barang: ONT.toLowerCase(), jumlah: 2 }]
   });
   const bon = rb.json?.data;
+  const keperluanMultibaris = 'pemasangan PG002323 : instalasi baru\nmaintenance PG003434 : perbaikan jaringan';
+  const detailMultibaris = await req('GET', `/api/technician-loans/${bon?.id}`);
+  if (bon?.keperluan === keperluanMultibaris && detailMultibaris.json?.data?.keperluan === keperluanMultibaris) {
+    ok('Bon: keperluan beberapa baris tersimpan dan dibaca kembali tanpa kehilangan urutan/baris baru');
+  } else bad('Bon: keperluan multibaris berubah saat simpan/baca');
   if (rb.status === 201 && bon?.no_bon === 'BON-UJI-001' && bon.status === 'AKTIF' && bon.items.length === 3) ok('Bon: dibuat dengan No. Bon, teknisi, & barang digabung per kode', bon?.no_bon);
   else bad('Bon: dibuat dengan No. Bon, teknisi, & barang digabung per kode', `HTTP ${rb.status} ${rb.json?.error}`);
   const liOnt = bon?.items.find((i) => i.kode_barang === ONT);
@@ -1148,6 +1315,56 @@ console.log('\n=== 6F. BON / BARANG BAWAAN TEKNISI (3 tahap: bawa → pasang →
   const foRow = db.prepare('SELECT * FROM fo_items WHERE fo_id = ? AND kode_barang = ? AND no_bon = ?').get(fo.id, PATCH, 'BON-UJI-001');
   const twRow = db.prepare('SELECT * FROM tower_items WHERE tower_id = ? AND kode_barang = ? AND no_bon = ?').get(twr.id, SLING, 'BON-UJI-001');
   if (foRow?.jumlah === 5 && twRow?.jumlah === 40.5 && twRow.dipasang_oleh === 'Tim Tower') ok('Tahap 2: baris terpasang FO & Tower mencatat bon + teknisi pemasang'); else bad('Tahap 2: baris terpasang FO/Tower', JSON.stringify([foRow, twRow]));
+
+  // Riwayat Mutasi gabungan membaca realisasi yang SUDAH tercatat, tanpa backfill transaksi.
+  {
+    const raw = await req('GET', '/api/transactions');
+    const combined = await req('GET', '/api/transactions?include_bon=1');
+    const rs = combined.json?.summary || {}, baseline = raw.json?.summary || {};
+    const events = (combined.json?.data || []).filter(t => t.jenis === 'REALISASI_BON' && t.no_bon === bon.no_bon);
+    if (combined.status === 200 && events.length === 4 && new Set(events.map(t => t.record_key)).size === 4
+        && events.every(t => t.sumber_aktivitas === 'REALISASI_BON' && t.kategori_transaksi === 'Realisasi Bon / Pemasangan')
+        && events.some(t => t.divisi === 'PELANGGAN' && t.lokasi_penerima === cust.nama_pelanggan && t.lokasi_tujuan === 'Rumah pelanggan, Jl. Contoh No. 5'
+          && t.teknisi_pemasang === 'Andi Pratama' && t.serial_number === 'SN-UJI-AA')
+        && events.some(t => t.divisi === 'DIVISI FO' && t.jumlah === 5)
+        && events.some(t => t.divisi === 'DIVISI TOWER' && t.jumlah === 40.5)) {
+      ok('Mutasi gabungan: realisasi bon historis Pelanggan/FO/Tower tampil lengkap nomor bon, tujuan, lokasi, teknisi, SN dan jumlah');
+    } else bad('Mutasi gabungan: rincian realisasi bon tidak lengkap', JSON.stringify(combined.json).slice(0, 200));
+    const totals = ['total_masuk_qty', 'total_masuk_nilai', 'total_keluar_qty', 'total_keluar_nilai', 'net_qty', 'net_nilai'];
+    if (totals.every(k => rs[k] === baseline[k]) && rs.total_transaksi === baseline.total_transaksi + 4
+        && rs.total_transaksi_gudang === baseline.total_transaksi && rs.total_realisasi_bon === 4 && rs.total_realisasi_qty === 48.5
+        && stockOf(ONT) === sOntSebelumPasang && trxSince(mark2).length === 0) {
+      ok('Mutasi gabungan: ringkasan masuk/keluar/neto dan stok tetap; realisasi dihitung terpisah tanpa transaksi gudang baru');
+    } else bad('Mutasi gabungan: ringkasan terduplikasi', JSON.stringify(rs));
+    const limited = await req('GET', '/api/transactions?include_bon=1&limit=1');
+    if (limited.json?.data?.length === 1 && limited.json.summary.terpotong && limited.json.summary.total_transaksi === rs.total_transaksi
+        && limited.json.summary.total_realisasi_bon === 4 && limited.json.summary.total_keluar_nilai === baseline.total_keluar_nilai) {
+      ok('Mutasi gabungan: LIMIT rincian tidak memotong ringkasan stok maupun jumlah realisasi');
+    } else bad('Mutasi gabungan: batas baris/ringkasan');
+    for (const [filter, expected] of [
+      ['jenis=REALISASI_BON', 4], ['kategori_transaksi=Realisasi%20Bon%20%2F%20Pemasangan', 4],
+      ['jenis=REALISASI_BON&divisi=PELANGGAN', 2], ['jenis=REALISASI_BON&divisi=DIVISI%20FO', 1],
+      ['jenis=REALISASI_BON&divisi=DIVISI%20TOWER', 1], ['search=SN-UJI-AA', 1],
+      ['search=Rumah%20pelanggan%2C%20Jl.%20Contoh%20No.%205', 2],
+      ['search=Tim%20Tower', 1], ['jenis=REALISASI_BON&search=BON-UJI-001', 4],
+      ['jenis=REALISASI_BON&start_date=1900-01-01&end_date=1900-01-02', 0],
+    ]) {
+      const filtered = await req('GET', `/api/transactions?include_bon=1&${filter}`);
+      if (filtered.status === 200 && filtered.json?.data?.length === expected) ok(`Mutasi gabungan: filter ${filter} sesuai`);
+      else bad(`Mutasi gabungan: filter ${filter}`, `baris=${filtered.json?.data?.length}`);
+    }
+    const [yr, mo, day] = String(events[0]?.tanggal || '').split('-').map(Number);
+    const periode = await req('GET', `/api/transactions?include_bon=1&jenis=REALISASI_BON&year=${yr}&month=${mo}&week=${Math.ceil(day / 7)}`);
+    if (periode.status === 200 && periode.json?.data?.length === 4) ok('Mutasi gabungan: filter tahun/bulan/minggu berlaku untuk realisasi historis');
+    else bad('Mutasi gabungan: filter periode realisasi');
+    const jenisKeluar = await req('GET', '/api/transactions?include_bon=1&jenis=KELUAR');
+    const categories = await req('GET', '/api/transaction-categories?include_bon=1');
+    const catsRaw = await req('GET', '/api/transaction-categories');
+    if (jenisKeluar.json?.data?.every(t => t.jenis === 'KELUAR') && !raw.json?.data?.some(t => t.jenis === 'REALISASI_BON')
+        && categories.json?.data?.includes('Realisasi Bon / Pemasangan') && !catsRaw.json?.data?.includes('Realisasi Bon / Pemasangan')) {
+      ok('Mutasi gabungan: filter KELUAR tetap transaksi gudang; endpoint default dan kategori laporan lama tidak berubah');
+    } else bad('Mutasi gabungan: kompatibilitas endpoint transaksi gudang');
+  }
 
   // PUT pelanggan tidak menghapus jejak teknisi pemasang
   {
@@ -1327,7 +1544,130 @@ console.log('\n=== 6G. DATA TEKNISI & DIVISI PADA BON (pilih divisi → nama tek
   await req('POST', '/api/reset-seed');
   for (const t of [andi, tower]) await req('DELETE', `/api/teknisi/${t.id}`);
   const sisa = db.prepare('SELECT COUNT(*) AS c FROM technicians').get().c;
-  if (sisa === 0) ok('Teknisi uji dibersihkan setelah tes'); else bad('Teknisi uji dibersihkan', `${sisa} tersisa`);
+  if (sisa === 0) ok('Teknisi uji dibersihkan setelah tes'); else bad('Teknisi uji dibersihkan', `${sisa} tersisa: ${JSON.stringify(db.prepare('SELECT * FROM technicians').all())}`);
+}
+
+console.log('\n=== 6G.2 REGRESI AUDIT: BARIS BON BERULANG & LEDGER RUSAK ===');
+{
+  await req('POST', '/api/reset-seed');
+  const code = 'UJI-AUDIT-BON';
+  await req('POST', '/api/items', { kode_barang: code, nama_barang: 'Audit Bon', satuan: 'unit', jenis_barang: 'Aksesoris & Pasif FO', stok: 10, harga_barang: 1000 });
+  const customer = (await req('GET', '/api/customers')).json.data[0];
+  const bon = (await req('POST', '/api/technician-loans', { divisi: 'PELANGGAN', teknisi_nama: 'Audit', items: [{ kode_barang: code, jumlah: 4 }] })).json.data;
+  const line = bon.items[0];
+  const installed = await req('POST', `/api/technician-loans/${bon.id}/install`, { divisi: 'PELANGGAN', tujuan_id: customer.id, items: [
+    { loan_item_id: line.id, jumlah: 1, serial_number: 'AUDIT-A' },
+    { loan_item_id: line.id, jumlah: 1, serial_number: 'AUDIT-B' }
+  ] });
+  if (installed.status === 201 && installed.json.data.items[0].jumlah_terpasang === 2 && stockOf(code) === 6) ok('Audit bon: dua SN kode sama dalam satu permintaan terakumulasi tanpa mengurangi stok dua kali');
+  else bad('Audit bon: akumulasi pemasangan', JSON.stringify(installed));
+  const returned = await req('POST', `/api/technician-loans/${bon.id}/return`, { items: [
+    { loan_item_id: line.id, jumlah: 1, kondisi: 'Baik' },
+    { loan_item_id: line.id, jumlah: 1, kondisi: 'Rusak Ringan' }
+  ] });
+  const repeat = await req('POST', `/api/technician-loans/${bon.id}/return`, { semua_sisa: true });
+  const qtyMov = db.prepare("SELECT SUM(jumlah) AS n FROM technician_loan_movements WHERE loan_id = ? AND jenis = 'KEMBALI'").get(bon.id).n;
+  if (returned.status === 201 && returned.json.data.status === 'SELESAI' && returned.json.data.items[0].jumlah_kembali === 2 && stockOf(code) === 7 && qtyMov === 2 && repeat.status === 400) ok('Audit bon: pengembalian campuran berulang terakumulasi; bon selesai dan tidak bisa mengembalikan stok lagi');
+  else bad('Audit bon: akumulasi pengembalian', JSON.stringify(returned));
+  const row = db.prepare('SELECT * FROM damaged_items WHERE kode_barang = ?').get(code);
+  const beforeTrx = maxTrxId();
+  const editQty = await req('PUT', `/api/damaged-items/${row.id}`, { jumlah: 0.5, kondisi: 'Baik' });
+  const editCondition = await req('PUT', `/api/damaged-items/${row.id}`, { kondisi: 'Baik' });
+  const editNote = await req('PUT', `/api/damaged-items/${row.id}`, { keterangan: 'Catatan tetap, stok tidak berubah' });
+  if (editQty.status === 400 && editCondition.status === 400 && editNote.status === 200 && editNote.json.data.jumlah === 1 && stockOf(code) === 7 && maxTrxId() === beforeTrx) ok('Audit rusak: edit jumlah/kondisi tidak valid ditolak tanpa efek samping; catatan tetap dapat disimpan');
+  else bad('Audit rusak: edit metadata', JSON.stringify({ editQty, editCondition, editNote }));
+  const badRepair = await req('POST', `/api/damaged-items/${row.id}/repair`, { tanggal: '2026-02-30' });
+  const badDestroy = await req('POST', `/api/damaged-items/${row.id}/destroy`, { tanggal: 'salah', keterangan: 'Uji' });
+  const badIntake = await req('POST', '/api/damaged-items', { kode_barang: code, jumlah: 1, kondisi: 'Rusak Berat', tanggal: '2026-02-30' });
+  if (badRepair.status === 400 && badDestroy.status === 400 && badIntake.status === 400 && stockOf(code) === 7 && maxTrxId() === beforeTrx) ok('Audit rusak: tanggal tidak sah ditolak pada tampung, perbaiki dan musnahkan tanpa perubahan data');
+  else bad('Audit rusak: tanggal', JSON.stringify({ badRepair, badDestroy, badIntake }));
+  // Simulasikan ledger lama yang sudah kehilangan master (bukan operasi normal baru).
+  const master = db.prepare('SELECT * FROM items WHERE kode_barang = ?').get(code);
+  db.prepare('DELETE FROM items WHERE id = ?').run(master.id);
+  const orphanRepair = await req('POST', `/api/damaged-items/${row.id}/repair`, {});
+  if (orphanRepair.status === 400 && db.prepare('SELECT jumlah FROM damaged_items WHERE id = ?').get(row.id).jumlah === 1 && maxTrxId() === beforeTrx) ok('Audit rusak: ledger tanpa master tidak boleh dinyatakan diperbaiki tanpa stok tujuan');
+  else bad('Audit rusak: master hilang', JSON.stringify(orphanRepair));
+  await req('POST', '/api/items', { ...master, stok: 7 });
+  const renamed = await req('PUT', `/api/items/${db.prepare('SELECT id FROM items WHERE kode_barang = ?').get(code).id}`, { ...master, kode_barang: 'UJI-AUDIT-GANTI', stok: 7 });
+  const id = renamed.json?.data?.id;
+  const removed = await req('DELETE', `/api/items/${id}`);
+  if (renamed.status === 200 && db.prepare('SELECT kode_barang FROM damaged_items WHERE id = ?').get(row.id).kode_barang === 'UJI-AUDIT-GANTI' && removed.status === 400) ok('Audit master: ganti kode ikut memperbarui ledger rusak; master yang masih dipakai tidak dapat dihapus');
+  else bad('Audit master: rujukan ledger', JSON.stringify({ renamed, removed }));
+  const onlyCode = 'UJI-AUDIT-HANYA-RUSAK';
+  const onlyMaster = (await req('POST', '/api/items', { kode_barang: onlyCode, nama_barang: 'Hanya ledger rusak', satuan: 'unit', jenis_barang: 'FO', stok: 2, harga_barang: 1000 })).json.data;
+  await req('POST', '/api/damaged-items', { kode_barang: onlyCode, jumlah: 1, kondisi: 'Rusak Ringan' });
+  const deleteOnly = await req('DELETE', `/api/items/${onlyMaster.id}`);
+  if (deleteOnly.status === 400 && /gudang rusak/.test(deleteOnly.json?.error || '') && stockOf(onlyCode) === 1) ok('Audit master: ledger rusak saja (tanpa instalasi/bon) sudah cukup untuk mencegah penghapusan master');
+  else bad('Audit master: larangan hapus master ledger saja', JSON.stringify(deleteOnly));
+  await req('POST', '/api/reset-seed');
+}
+
+console.log('\n=== 6H. EDIT BARANG PELANGGAN: KONDISI PENGEMBALIAN PER BARANG ===');
+{
+  const code = 'UJI-EDIT-RETURN', code2 = 'UJI-EDIT-AFKIR';
+  await req('POST', '/api/items', { kode_barang: code, nama_barang: 'Radio Pengembalian', satuan: 'unit', jenis_barang: 'Wireless', stok: 20, harga_barang: 1000 });
+  await req('POST', '/api/items', { kode_barang: code2, nama_barang: 'Barang Afkir Edit', satuan: 'unit', jenis_barang: 'Wireless', stok: 10, harga_barang: 500 });
+  const made = await req('POST', '/api/customers', { id_pelanggan: 'PG-EDIT-RETURN', nama_pelanggan: 'Pelanggan Uji Return',
+    items: [{ kode_barang: code, jumlah: 3 }, { kode_barang: code, jumlah: 1, serial_number: 'SN-EDIT-B' }, { kode_barang: code2, jumlah: 2 }] });
+  const id = made.json?.data?.id;
+  const target = [{ kode_barang: code, jumlah: 1 }, { kode_barang: code2, jumlah: 1 }];
+  const returns = [
+    { kode_barang: code, jumlah: 2, kondisi: 'Baik', keterangan: 'Dikurangi, perangkat masih baik' },
+    { kode_barang: code, serial_number: 'SN-EDIT-B', jumlah: 1, kondisi: 'Rusak Berat', keterangan: 'Perangkat mati setelah petir' },
+    { kode_barang: code2, jumlah: 1, kondisi: 'Afkir', keterangan: 'Tidak layak pakai' },
+  ];
+  const start = maxTrxId();
+  for (const pengembalian of [undefined, [], returns.slice(1), [...returns, returns[0]],
+    returns.map((r, n) => n === 0 ? { ...r, jumlah: 99 } : r),
+    returns.map((r, n) => n === 0 ? { ...r, kondisi: '' } : r),
+    returns.map((r, n) => n === 0 ? { ...r, keterangan: '   ' } : r),
+    returns.map((r, n) => n === 1 ? { ...r, serial_number: 'SN-SALAH' } : r)]) {
+    const invalid = await req('PUT', `/api/customers/${id}`, { items: target, pengembalian });
+    const current = (await req('GET', `/api/customers/${id}`)).json?.data;
+    if (invalid.status === 400 && current?.items.length === 3 && current.total_harga === 5000 && stockOf(code) === 16 && stockOf(code2) === 8 && trxSince(start).length === 0) {
+      ok('Edit pelanggan: rincian pengembalian kosong/salah ditolak tanpa perubahan barang, stok, nilai atau mutasi');
+    } else bad('Edit pelanggan: rollback pengembalian tidak valid', JSON.stringify(invalid.json));
+  }
+  db.exec(`CREATE TRIGGER test_fail_customer_return BEFORE INSERT ON transactions
+    WHEN NEW.kondisi = 'Afkir' AND NEW.divisi = 'PELANGGAN' AND NEW.ref_id = ${Number(id)}
+    BEGIN SELECT RAISE(ABORT, 'Uji rollback pengembalian pelanggan'); END`);
+  try {
+    const rejected = await req('PUT', `/api/customers/${id}`, { items: target, pengembalian: returns });
+    const original = (await req('GET', `/api/customers/${id}`)).json?.data;
+    const ledger = db.prepare('SELECT COUNT(*) AS n FROM damaged_items WHERE sumber = ? AND sumber_id = ?').get('Edit Barang Terpasang Pelanggan', id).n;
+    if (rejected.status === 400 && stockOf(code) === 16 && stockOf(code2) === 8 && original?.items.length === 3 && original.total_harga === 5000
+        && trxSince(start).length === 0 && ledger === 0) ok('Edit pelanggan: gagal di tengah pengembalian campuran membatalkan stok, ledger rusak, mutasi dan barang terpasang');
+    else bad('Edit pelanggan: pengembalian campuran harus atomik');
+  } finally { db.exec('DROP TRIGGER IF EXISTS test_fail_customer_return'); }
+  const changed = await req('PUT', `/api/customers/${id}`, { items: target, pengembalian: returns });
+  const logged = trxSince(start);
+  const damaged = db.prepare('SELECT * FROM damaged_items WHERE sumber_id = ? AND sumber = ?').all(id, 'Edit Barang Terpasang Pelanggan');
+  if (changed.status === 200 && stockOf(code) === 18 && stockOf(code2) === 8 && changed.json?.data?.items.length === 2 && changed.json.data.total_harga === 1500
+      && logged.length === 3 && logged.some(t => t.kondisi === 'Baik' && t.jumlah === 2 && t.keterangan.includes(returns[0].keterangan))
+      && logged.some(t => t.kondisi === 'Rusak Berat' && t.serial_number === 'SN-EDIT-B' && t.keterangan.includes(returns[1].keterangan))
+      && logged.some(t => t.kondisi === 'Afkir') && damaged.length === 2
+      && damaged.some(d => d.kondisi === 'Rusak Berat' && d.keterangan.includes('SN-EDIT-B')) && damaged.some(d => d.kondisi === 'Afkir')) {
+    ok('Edit pelanggan: kondisi campuran per kode/SN, Baik masuk stok; rusak/afkir masuk ledger rusak; alasan dan SN tercatat');
+  } else bad('Edit pelanggan: pemisahan pengembalian berdasarkan kondisi', JSON.stringify(changed.json));
+  // Mengganti SN (jumlah kode sama) juga merupakan pengembalian unit lama + pemasangan baru.
+  const serial = await req('POST', '/api/customers', { id_pelanggan: 'PG-EDIT-SN', nama_pelanggan: 'Pelanggan SN', items: [{ kode_barang: code, jumlah: 1, serial_number: 'SN-LAMA' }] });
+  const sid = serial.json?.data?.id, beforeSwap = stockOf(code), markSwap = maxTrxId();
+  const replacement = [{ kode_barang: code, jumlah: 1, serial_number: 'SN-BARU' }];
+  const noCondition = await req('PUT', `/api/customers/${sid}`, { items: replacement });
+  if (noCondition.status === 400 && stockOf(code) === beforeSwap && trxSince(markSwap).length === 0) ok('Edit pelanggan: ganti SN wajib konfirmasi penarikan unit lama meskipun jumlah kode tetap');
+  else bad('Edit pelanggan: ganti SN tanpa konfirmasi');
+  const swap = await req('PUT', `/api/customers/${sid}`, { items: replacement, pengembalian: [{ kode_barang: code, serial_number: 'SN-LAMA', jumlah: 1, kondisi: 'Rusak Ringan', keterangan: 'Unit lama putus-putus, diganti unit lain' }] });
+  if (swap.status === 200 && stockOf(code) === beforeSwap - 1 && trxSince(markSwap).length === 2) ok('Edit pelanggan: penggantian SN rusak memakai stok unit baru, bukan mengembalikan unit rusak ke stok'); else bad('Edit pelanggan: ganti SN rusak');
+  // Pengembalian rusak tidak boleh menjadi stok semu untuk memasang penggantinya.
+  const zeroCode = 'UJI-RETURN-NO-STOCK';
+  await req('POST', '/api/items', { kode_barang: zeroCode, nama_barang: 'Stok Uji Habis', satuan: 'unit', jenis_barang: 'Wireless', stok: 1 });
+  const last = await req('POST', '/api/customers', { id_pelanggan: 'PG-NO-STOCK', nama_pelanggan: 'Pelanggan Stok Habis', items: [{ kode_barang: zeroCode, jumlah: 1, serial_number: 'OLD' }] });
+  const blocked = await req('PUT', `/api/customers/${last.json?.data?.id}`, { items: [{ kode_barang: zeroCode, jumlah: 1, serial_number: 'NEW' }],
+    pengembalian: [{ kode_barang: zeroCode, serial_number: 'OLD', jumlah: 1, kondisi: 'Rusak Berat', keterangan: 'Rusak, perlu pengganti' }] });
+  if (blocked.status === 400 && stockOf(zeroCode) === 0 && (await req('GET', `/api/customers/${last.json?.data?.id}`)).json?.data?.items[0].serial_number === 'OLD') ok('Edit pelanggan: stok nol menolak pengganti jika unit kembali rusak; perubahan atomik'); else bad('Edit pelanggan: stok rusak dipakai untuk pengganti');
+  const same = await req('PUT', `/api/customers/${id}`, { catatan: 'Edit catatan saja', items: target });
+  if (same.status === 200) ok('Edit pelanggan: tanpa pengurangan tidak membutuhkan konfirmasi pengembalian'); else bad('Edit pelanggan: edit biasa tidak boleh diblokir');
+  await req('POST', '/api/reset-seed');
 }
 
 console.log('\n=== PEMBERSIHAN: ringkasan publik, kosongkan data & pulihkan seed ===');

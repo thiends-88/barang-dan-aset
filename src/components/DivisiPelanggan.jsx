@@ -1,3 +1,5 @@
+import ReturnInstalledItemsModal from './ReturnInstalledItemsModal';
+import { installedItemChanges } from '../../shared/installedReturns';
 import React, { useState, useMemo } from 'react';
 import { 
   Users, 
@@ -63,6 +65,7 @@ export default function DivisiPelanggan({
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState(null);
+  const [returnConfirmation, setReturnConfirmation] = useState(null);
   const [printCust, setPrintCust] = useState(null);
 
   // Form State
@@ -284,6 +287,16 @@ export default function DivisiPelanggan({
       return;
     }
 
+    const returned = editingCustomer ? installedItemChanges(editingCustomer.items || [], formData.items).returned : [];
+    if (returned.length) {
+      setFormError('');
+      setReturnConfirmation({ items: returned, payload: JSON.parse(JSON.stringify(formData)) });
+      return;
+    }
+    await saveCustomer(formData);
+  };
+
+  const saveCustomer = async (payload) => {
     setIsSubmitting(true);
     setFormError('');
 
@@ -294,7 +307,7 @@ export default function DivisiPelanggan({
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData)
+        body: JSON.stringify(payload)
       });
 
       const data = await res.json();
@@ -303,6 +316,7 @@ export default function DivisiPelanggan({
       }
 
       setIsFormModalOpen(false);
+      setReturnConfirmation(null);
       notify(editingCustomer ? 'Data pelanggan berhasil diperbarui' : 'Pelanggan baru berhasil disimpan', 'success');
       onRefresh();
     } catch (err) {
@@ -1008,6 +1022,7 @@ export default function DivisiPelanggan({
                     <p className="text-[11px] text-slate-500">
                       Pilih atau ketik kode barang: jenis barang, harga, dan referensi akan langsung muncul otomatis.
                     </p>
+                    {editingCustomer && <p className="text-[11px] text-amber-700 mt-1">Jika jumlah dikurangi, baris dihapus, atau SN diganti, saat Simpan Perubahan Anda wajib memilih kondisi dan mengisi alasan pengembalian.</p>}
                   </div>
                   <button
                     type="button"
@@ -1185,6 +1200,14 @@ export default function DivisiPelanggan({
           </div>
         </div>
       )}
+
+      {returnConfirmation && <ReturnInstalledItemsModal
+        items={returnConfirmation.items}
+        busy={isSubmitting}
+        error={formError}
+        onCancel={() => { setReturnConfirmation(null); setFormError(''); }}
+        onConfirm={pengembalian => saveCustomer({ ...returnConfirmation.payload, pengembalian })}
+      />}
 
       {/* Work Order / BASTP Print Modal */}
       <WorkOrderPrintModal

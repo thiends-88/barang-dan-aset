@@ -324,7 +324,7 @@ export default function App() {
             )}
 
             {currentTab === 'rusak' && (
-              <BarangRusak items={items} />
+              <BarangRusak items={items} canEdit={canManageInventory(userRole)} onRefreshMaster={loadAllData} />
             )}
 
             {currentTab === 'laporan' && (
