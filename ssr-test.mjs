@@ -619,6 +619,67 @@ try {
   } else sectionBad('33.1 Deteksi pengembalian / formulir kondisi tidak sesuai');
 } catch (e) { sectionBad(`33.1 Render konfirmasi pengembalian gagal: ${e.message}`); }
 
+console.log('\n=== 34. Konfirmasi Pengembalian saat Edit Barang FO & Tower ===');
+{
+  const masalah = [];
+  const berkas = [
+    { path: 'src/components/DivisiFO.jsx', simpan: 'saveFOSite' },
+    { path: 'src/components/DivisiTower.jsx', simpan: 'saveTowerSite' },
+  ];
+  for (const { path: file, simpan } of berkas) {
+    const source = fs.readFileSync(file, 'utf-8');
+    const wajib = [
+      ['helper installedItemChanges diimpor dari shared/installedReturns', /import\s*\{\s*installedItemChanges\s*\}\s*from\s*'\.\.\/\.\.\/shared\/installedReturns'/.test(source)],
+      ['modal ReturnInstalledItemsModal diimpor', /import\s+ReturnInstalledItemsModal\s+from\s*'\.\/ReturnInstalledItemsModal'/.test(source)],
+      ['selisih dihitung dari barang terpasang lama (editingSite.items)', source.includes('installedItemChanges(editingSite.items || [], formData.items)')],
+      ['tidak membandingkan formData dengan dirinya sendiri', !source.includes('installedItemChanges(formData.items')],
+      [`konfirmasi menyimpan lewat ${simpan} dengan data pengembalian`, source.includes(`onConfirm={pengembalian => ${simpan}({ ...returnConfirmation.payload, pengembalian })}`)],
+      ['jalur simpan biasa tidak mengirim pengembalian kosong', !source.includes('pengembalian: returnConfirmation ? returnConfirmation.items : undefined')],
+      ['state returnPayload yang tak terpakai sudah dibuang', !source.includes('returnPayload')],
+      ['petunjuk kondisi/alasan tampil saat mengedit', source.includes('wajib memilih kondisi dan mengisi alasan pengembalian')],
+    ];
+    for (const [label, lolos] of wajib) if (!lolos) masalah.push(`${file}: ${label}`);
+  }
+  // Anti-regresi umum: identifier dipakai tanpa impor pernah membuat form FO/Tower gagal menyimpan (ReferenceError).
+  for (const nama of fs.readdirSync('src/components').filter(f => f.endsWith('.jsx'))) {
+    const source = fs.readFileSync(`src/components/${nama}`, 'utf-8');
+    if (/installedItemChanges\(/.test(source) && !/import\s*\{[^}]*installedItemChanges[^}]*\}\s*from/.test(source)) {
+      masalah.push(`src/components/${nama}: installedItemChanges dipakai tanpa impor`);
+    }
+    if (/<ReturnInstalledItemsModal/.test(source) && !/import\s+ReturnInstalledItemsModal\s+from/.test(source)) {
+      masalah.push(`src/components/${nama}: ReturnInstalledItemsModal dipakai tanpa impor`);
+    }
+  }
+  try {
+    const fo = (await vite.ssrLoadModule('/src/components/DivisiFO.jsx')).default;
+    const tower = (await vite.ssrLoadModule('/src/components/DivisiTower.jsx')).default;
+    const htmlFo = renderToString(React.createElement(fo, { foSites, items, onRefresh() {}, canEdit: false }));
+    const htmlTower = renderToString(React.createElement(tower, { towerSites, items, onRefresh() {}, canEdit: false }));
+    if (!htmlFo.includes('Total Titik / Node FO') || !htmlTower.includes('Total Site Tower')) masalah.push('render DivisiFO/DivisiTower tidak lengkap setelah perubahan');
+  } catch (e) { masalah.push(`render DivisiFO/DivisiTower gagal: ${e.message}`); }
+
+  if (masalah.length === 0) sectionOk('34.1 Edit FO & Tower wajib konfirmasi kondisi/alasan lewat helper bersama; tidak ada identifier dipakai tanpa impor');
+  else sectionBad(`34.1 Alur konfirmasi FO/Tower: ${masalah.join('; ')}`);
+}
+
+console.log('\n=== 35. Tanggal Pasang Barang Terpasang Dipertahankan Saat Edit ===');
+{
+  const masalah = [];
+  const server = fs.readFileSync('server/index.js', 'utf-8');
+  const jumlahPemakaian = (server.match(/validateInstalledItems\(items, installDate, petaTanggalTerpasang\(oldItems\)\)/g) || []).length;
+  const wajib = [
+    ['helper petaTanggalTerpasang tersedia', /function petaTanggalTerpasang\(oldItems\)\s*\{/.test(server)],
+    ['peta memakai kunci kode barang + SN yang sama dengan perhitungan selisih', /map\.set\(installedItemKey\(it\)/.test(server)],
+    ['validateInstalledItems menerima tanggal lama', /function validateInstalledItems\(items, installDate, tanggalLama\)/.test(server)],
+    ['tanggal barang lama dipakai lebih dulu, tanggal induk hanya untuk unit baru', /tanggal_pasang:\s*tanggalLamaItem \|\| installDate/.test(server)],
+    ['ketiga divisi (pelanggan, FO, tower) mengirim peta tanggal saat edit', jumlahPemakaian === 3],
+    ['baris tanggal pada insert tidak lagi selalu installDate', !/tanggal_pasang:\s*installDate\s*$/.test(server)],
+  ];
+  for (const [label, lolos] of wajib) if (!lolos) masalah.push(label);
+  if (masalah.length === 0) sectionOk('35.1 Edit data pokok tidak menulis ulang tanggal pasang barang terpasang di ketiga divisi');
+  else sectionBad(`35.1 Tanggal pasang barang terpasang: ${masalah.join('; ')}`);
+}
+
 await vite.close();
 console.log(`\nHasil: ${pass} lolos, ${fail} gagal`);
 process.exit(fail ? 1 : 0);

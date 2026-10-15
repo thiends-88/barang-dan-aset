@@ -88,6 +88,16 @@ Pada **Edit Pelanggan & Barang Terpasang**, mengurangi jumlah, menghapus baris, 
 
 Pemeriksaan juga dilakukan di server: PUT pelanggan yang mengurangi/mengganti barang wajib membawa `pengembalian` (kode_barang, serial_number, jumlah, kondisi, keterangan) sesuai selisih kode+SN. Penambahan barang atau edit data tanpa pengurangan tidak memerlukan konfirmasi. Unit pengganti tetap membutuhkan stok siap pakai; barang kembali rusak tidak bisa dihitung sebagai stok untuk penggantinya. Semua perubahan disimpan secara atomik.
 
+**Berlaku sama untuk Divisi FO dan Divisi Tower.** Mengurangi jumlah, menghapus baris, atau mengganti SN pada *Edit Titik Divisi FO* / *Edit Site Divisi Tower* juga memunculkan konfirmasi kondisi + alasan sebelum **Simpan Perubahan**, diperiksa dengan aturan yang sama di server (`PUT /api/fo/:id` dan `PUT /api/tower/:id`), dan barang rusak/afkir dicatat di Gudang Barang Rusak dengan sumber **Edit Barang Terpasang FO** / **Edit Barang Terpasang Tower**. Kode+SN yang sama di divisi mana pun memakai satu jalur pemeriksaan (`processInstalledItemChanges`), sehingga tidak ada pengurangan diam-diam di ketiga divisi.
+
+### Riwayat tanggal pasang barang terpasang
+
+Setiap baris barang terpasang (pelanggan, Divisi FO, Divisi Tower) menyimpan **tanggal pasangnya sendiri**. Unit yang dipasang lewat realisasi Bon Teknisi memakai tanggal pemasangan itu, yang bisa berbeda dari tanggal titik/site tempatnya dipasang.
+
+Menyimpan ulang data pokok **tidak** menulis ulang tanggal tersebut. Mengubah catatan, PIC, atau metadata lain pada *Edit* pelanggan/titik FO/site Tower mempertahankan tanggal pasang setiap barang yang sudah terpasang; hanya barang yang benar-benar baru (atau SN baru) yang memakai tanggal data induk. Tanggal pasang di data induk sendiri tetap dapat dikoreksi dan tersimpan.
+
+Di server, `validateInstalledItems(items, installDate, tanggalLama)` menerima peta tanggal lama (`petaTanggalTerpasang(oldItems)`, berkunci kode barang + SN) dari ketiga handler edit (`PUT /api/customers/:id`, `PUT /api/fo/:id`, `PUT /api/tower/:id`), sehingga riwayat tetap utuh dan tanggal yang tampil di Pemindai Barcode serta laporan tidak menyesatkan.
+
 ### Pengiriman servis barang rusak
 
 Di menu **Barang Rusak**, admin / staff gudang dapat memilih **Kirim untuk Servis**:
