@@ -811,6 +811,12 @@ di README, info versi build (`/api/version`,
 - **Rekap Lengkap** tetap memiliki kolom nilai dan tanda tangan. Data harga/valuasi di API dan halaman lain tidak diubah.
 - Regresi render Seksi 21 disesuaikan dan Seksi 26 ditambahkan.
 
+**Penyesuaian peringatan stok menipis (15 Oktober 2026):**
+- Definisi terbaru: **stok > 0 dan stok <= min_stok**. Stok 0 tidak masuk hitungan/peringatan maupun filter menipis pada Master Barang, Dashboard, dan laporan gudang/sebaran.
+- Batas `min_stok` tiap barang tetap dipakai (tidak diubah massal menjadi 1); stok pecahan positif juga mengikuti aturan ini.
+- Stok habis tetap terlihat di daftar umum dengan warna peringatan, status HABIS dan `out_of_stock_count` laporan tetap tersedia.
+- Tes API menambahkan kasus stok 0 dengan minimum 0/5 dan regresi render Seksi 27; verifikasi terakhir 164 API dan 52 render lolos.
+
 **Belum dikerjakan / kandidat sesi berikutnya:**
 
 0. Bon Teknisi: opsi **tambah barang ke bon yang sudah berjalan**, pembatasan teknisi hanya melihat/merealisasi bon sendiri,

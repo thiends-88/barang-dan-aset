@@ -988,6 +988,22 @@ console.log('\n=== 6E. LAPORAN STOK GUDANG LOGISTIK (STOK TERSEDIA & BARANG STOK
     referensi_suplayer: 'PT. Uji Logistik'
   });
 
+  // Stok habis tidak termasuk peringatan, baik batas minimumnya 0 maupun 5.
+  for (const min of [0, 5]) {
+    await req('POST', '/api/items', {
+      kode_barang: `BRG-UJI-HABIS-${min}`, nama_barang: `Barang habis ${min}`,
+      satuan: 'pcs', jenis_barang: 'Aksesoris & Pasif FO', stok: 0, min_stok: min,
+    });
+  }
+  const dashboardLow = await req('GET', '/api/reports/dashboard-summary');
+  const warningItems = dashboardLow.json?.data?.warehouse?.low_stock_list;
+  if (Array.isArray(warningItems) && warningItems.some(it => it.kode_barang === kodeMenipis)
+      && warningItems.every(it => it.stok > 0 && it.stok <= it.min_stok)) {
+    ok('Peringatan dashboard hanya memuat stok positif yang menipis, bukan stok 0');
+  } else {
+    bad('Peringatan dashboard harus mengecualikan stok 0');
+  }
+
   const rMenipis = await req('GET', '/api/reports/warehouse-stock?filter=menipis');
   const dMenipis = rMenipis.json?.data || [];
   const itemMenipis = dMenipis.find((it) => it.kode_barang === kodeMenipis);
@@ -997,7 +1013,7 @@ console.log('\n=== 6E. LAPORAN STOK GUDANG LOGISTIK (STOK TERSEDIA & BARANG STOK
     itemMenipis &&
     itemMenipis.status_stok === 'MENIPIS' &&
     itemMenipis.kekurangan_stok === 8 &&
-    dMenipis.every((it) => Number(it.stok) <= Number(it.min_stok))
+    dMenipis.every((it) => Number(it.stok) > 0 && Number(it.stok) <= Number(it.min_stok))
   ) {
     ok('Laporan Barang Stok Menipis mengembalikan barang dengan stok <= min_stok beserta status & kekurangan', `${dMenipis.length} SKU menipis`);
   } else {

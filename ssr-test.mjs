@@ -490,6 +490,28 @@ try {
   sectionBad(`26.1 Render dokumen bon gagal: ${String(e.message).split('\n')[0]}`);
 }
 
+console.log('\n=== 27. Stok Nol Tidak Masuk Peringatan Master Barang ===');
+try {
+  const MB = (await vite.ssrLoadModule('/src/components/MasterBarang.jsx')).default;
+  const data = [
+    { id: 1, kode_barang: 'HABIS-0', nama_barang: 'Habis nol', stok: 0, min_stok: 0 },
+    { id: 2, kode_barang: 'HABIS-5', nama_barang: 'Habis lima', stok: 0, min_stok: 5 },
+    { id: 3, kode_barang: 'TIPIS', nama_barang: 'Menipis satu', stok: 1, min_stok: 5 },
+    { id: 4, kode_barang: 'AMAN', nama_barang: 'Aman', stok: 6, min_stok: 5 },
+  ].map(it => ({ ...it, satuan: 'unit', harga_barang: 1000 }));
+  const html = renderToString(React.createElement(MB, { items: data }));
+  const source = fs.readFileSync('src/components/MasterBarang.jsx', 'utf-8');
+  if (/Peringatan Stok Menipis[\s\S]*?>1 <span/.test(html.replace(/<!--.*?-->/g, ''))
+      && source.includes('!showLowStockOnly || (item.stok > 0 && item.stok <= item.min_stok)')
+      && html.includes('HABIS-0') && html.includes('HABIS-5')) {
+    sectionOk('27.1 Hanya stok positif menipis dihitung; stok habis tetap tersedia di daftar umum');
+  } else {
+    sectionBad('27.1 Hitungan peringatan atau filter stok menipis tidak sesuai');
+  }
+} catch (e) {
+  sectionBad(`27.1 Render Master Barang gagal: ${String(e.message).split('\n')[0]}`);
+}
+
 await vite.close();
 console.log(`\nHasil: ${pass} lolos, ${fail} gagal`);
 process.exit(fail ? 1 : 0);

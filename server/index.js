@@ -4189,7 +4189,7 @@ app.get('/api/reports/installed-assets', (req, res) => {
     } else if (divisi === 'GUDANG') {
       filteredResult = result.filter(r => r.stok_gudang > 0);
     } else if (divisi === 'STOK_MENIPIS') {
-      filteredResult = result.filter(r => r.stok_gudang <= r.min_stok);
+      filteredResult = result.filter(r => r.stok_gudang > 0 && r.stok_gudang <= r.min_stok);
     }
 
     res.json({ success: true, data: filteredResult });
@@ -4240,15 +4240,15 @@ app.get('/api/reports/warehouse-stock', (req, res) => {
       sku_tersedia: enriched.filter(i => i.stok > 0).length,
       total_stok_tersedia: enriched.filter(i => i.stok > 0).reduce((a, b) => a + b.stok, 0),
       total_nilai_gudang: enriched.reduce((a, b) => a + b.nilai_stok, 0),
-      low_stock_count: enriched.filter(i => i.stok <= i.min_stok).length,
+      low_stock_count: enriched.filter(i => i.stok > 0 && i.stok <= i.min_stok).length,
       out_of_stock_count: enriched.filter(i => i.stok <= 0).length,
-      total_nilai_menipis: enriched.filter(i => i.stok <= i.min_stok).reduce((a, b) => a + b.nilai_stok, 0)
+      total_nilai_menipis: enriched.filter(i => i.stok > 0 && i.stok <= i.min_stok).reduce((a, b) => a + b.nilai_stok, 0)
     };
 
     let filtered = enriched;
 
     if (filter === 'menipis') {
-      filtered = filtered.filter(i => i.stok <= i.min_stok);
+      filtered = filtered.filter(i => i.stok > 0 && i.stok <= i.min_stok);
       filtered.sort((a, b) => a.stok - b.stok || a.nama_barang.localeCompare(b.nama_barang));
     } else if (filter === 'tersedia') {
       filtered = filtered.filter(i => i.stok > 0);
@@ -4287,7 +4287,7 @@ app.get('/api/reports/warehouse-stock', (req, res) => {
 app.get('/api/reports/dashboard-summary', (req, res) => {
   try {
     const totalItems = db.prepare('SELECT COUNT(*) as c, SUM(stok) as total_stok, SUM(stok * harga_barang) as total_nilai_gudang FROM items').get();
-    const lowStockItems = db.prepare('SELECT * FROM items WHERE stok <= min_stok ORDER BY stok ASC').all();
+    const lowStockItems = db.prepare('SELECT * FROM items WHERE stok > 0 AND stok <= min_stok ORDER BY stok ASC').all();
 
     const totalCust = db.prepare('SELECT COUNT(*) as c, SUM(total_harga) as total_nilai FROM customers').get();
     const totalFO = db.prepare('SELECT COUNT(*) as c, SUM(total_harga) as total_nilai FROM fo_sites').get();
