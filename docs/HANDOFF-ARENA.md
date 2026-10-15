@@ -845,6 +845,12 @@ di README, info versi build (`/api/version`,
 - Perbaikan langsung pada barang DITAMPUNG yang **belum dikirim servis** tetap memakai alur Perbaiki lama; aturan histori saja khusus pengiriman servis.
 - Verifikasi: **196 API + 55 render lolos**, 14 pemeriksaan interaksi jsdom (terima tanpa stok → input kode/harga baru → referensi cetak; nama sama dan input ganda) lolos. Dependensi jsdom dipasang terpisah, tidak mengubah package/lockfile proyek.
 
+**Keperluan Bon Teknisi beberapa baris (15 Oktober 2026):**
+- Isian Keperluan / Tujuan Pekerjaan di BonBaruModal menjadi textarea 4 baris, dapat diperbesar, dengan petunjuk Enter.
+- Baris baru, baris kosong, dan urutan dipertahankan lewat `whitespace-pre-wrap break-words` pada Surat Jalan, Rekap Lengkap, detail bon dan kolom laporan. Bagian keperluan pada detail/dokumen memakai lebar penuh. Ringkasan daftar bon tetap ringkas (truncate).
+- Backend sudah menyimpan baris baru di field `keperluan` (trim hanya pada awal/akhir), sehingga tidak perlu migrasi atau perubahan stok.
+- Tes API memastikan isi multibaris utuh saat buat/baca detail; render Seksi 31 memastikan textarea dan dokumen kedua varian mempertahankan baris. Verifikasi: **197 API + 56 render lolos**, build produksi diperbarui. Pada percobaan pertama tes cleanup teknisi lama sempat gagal (1 tersisa); pengulangan rangkaian lengkap lolos.
+
 **Belum dikerjakan / kandidat sesi berikutnya:**
 
 0. Bon Teknisi: opsi **tambah barang ke bon yang sudah berjalan**, pembatasan teknisi hanya melihat/merealisasi bon sendiri,

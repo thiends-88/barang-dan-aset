@@ -103,7 +103,7 @@ function BonDetailModal({ loan, onClose, canManage, canInstall, onInstall, onRet
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
             <div><span className="text-slate-500 block text-[10px] uppercase font-bold">Status</span><StatusBadge status={loan.status} /></div>
             <div><span className="text-slate-500 block text-[10px] uppercase font-bold">Teknisi Pembawa</span><span className="font-semibold">{loan.teknisi_nama}</span>{loan.divisi && <span className="ml-1.5"><DivisiBadge divisi={loan.divisi} /></span>}</div>
-            <div><span className="text-slate-500 block text-[10px] uppercase font-bold">Keperluan</span><span className="font-medium">{loan.keperluan || '-'}</span></div>
+            <div className="col-span-2"><span className="text-slate-500 block text-[10px] uppercase font-bold">Keperluan</span><span className="block font-medium whitespace-pre-wrap break-words">{loan.keperluan || '-'}</span></div>
             <div><span className="text-slate-500 block text-[10px] uppercase font-bold">Dicatat Oleh</span><span className="font-medium">{loan.dibuat_oleh || '-'}</span></div>
             {loan.catatan && <div className="col-span-2 sm:col-span-4"><span className="text-slate-500 block text-[10px] uppercase font-bold">Catatan</span><span>{loan.catatan}</span></div>}
           </div>
@@ -879,7 +879,7 @@ export default function BonTeknisi({
                             <td className="px-3 py-2 font-mono font-bold">{l.no_bon}</td>
                             <td className="px-3 py-2 whitespace-nowrap">{formatDate(l.tanggal)}</td>
                             <td className="px-3 py-2">{l.teknisi_nama}{l.divisi ? <span className="text-slate-500"> ({DIVISI_LABEL[l.divisi] || l.divisi})</span> : ''}</td>
-                            <td className="px-3 py-2">{l.keperluan || '-'}</td>
+                            <td className="px-3 py-2 whitespace-pre-wrap break-words">{l.keperluan || '-'}</td>
                             <td className="px-3 py-2 text-right">{formatRupiah(l.nilai_dibawa)}</td>
                             <td className="px-3 py-2 text-right">{formatRupiah(l.nilai_terpasang)}</td>
                             <td className="px-3 py-2 text-right">{formatRupiah(l.nilai_kembali)}</td>

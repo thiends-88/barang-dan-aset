@@ -66,7 +66,7 @@ export function BonDocument({ loan, variant = 'surat_jalan' }) {
         <div><span className="text-slate-500 block text-[10px] uppercase">Teknisi yang Membawa</span><span className="font-bold">{loan.teknisi_nama}</span></div>
         {loan.divisi && <div><span className="text-slate-500 block text-[10px] uppercase">Divisi</span><span className="font-bold">{DIVISI_LABEL[loan.divisi] || loan.divisi}</span></div>}
         <div><span className="text-slate-500 block text-[10px] uppercase">Status Bon</span><span className="font-bold">{STATUS_LABEL[loan.status] || loan.status}</span></div>
-        <div><span className="text-slate-500 block text-[10px] uppercase">Keperluan / Tujuan Pekerjaan</span><span className="font-medium">{loan.keperluan || '-'}</span></div>
+        <div className="col-span-2"><span className="text-slate-500 block text-[10px] uppercase">Keperluan / Tujuan Pekerjaan</span><span className="block font-medium whitespace-pre-wrap break-words">{loan.keperluan || '-'}</span></div>
         <div><span className="text-slate-500 block text-[10px] uppercase">Dicatat Oleh (Gudang)</span><span className="font-medium">{loan.dibuat_oleh || '-'}</span></div>
         {loan.catatan ? <div className="col-span-2"><span className="text-slate-500 block text-[10px] uppercase">Catatan</span><span className="font-medium">{loan.catatan}</span></div> : null}
       </div>

@@ -1224,10 +1224,15 @@ console.log('\n=== 6F. BON / BARANG BAWAAN TEKNISI (3 tahap: bawa → pasang →
 
   // --- Tahap 1: bon sah (ONT 5 + PATCH 20 + SLING 100 m); kode ONT dobel digabung ---
   rb = await req('POST', '/api/technician-loans', {
-    divisi: 'DIVISI FO', teknisi_nama: 'Budi Santoso', keperluan: 'Instalasi baru Solok Selatan', no_bon: 'bon-uji-001',
+    divisi: 'DIVISI FO', teknisi_nama: 'Budi Santoso', keperluan: 'pemasangan PG002323 : instalasi baru\nmaintenance PG003434 : perbaikan jaringan', no_bon: 'bon-uji-001',
     items: [{ kode_barang: ONT, jumlah: 3 }, { kode_barang: PATCH, jumlah: 20 }, { kode_barang: SLING, jumlah: 100 }, { kode_barang: ONT.toLowerCase(), jumlah: 2 }]
   });
   const bon = rb.json?.data;
+  const keperluanMultibaris = 'pemasangan PG002323 : instalasi baru\nmaintenance PG003434 : perbaikan jaringan';
+  const detailMultibaris = await req('GET', `/api/technician-loans/${bon?.id}`);
+  if (bon?.keperluan === keperluanMultibaris && detailMultibaris.json?.data?.keperluan === keperluanMultibaris) {
+    ok('Bon: keperluan beberapa baris tersimpan dan dibaca kembali tanpa kehilangan urutan/baris baru');
+  } else bad('Bon: keperluan multibaris berubah saat simpan/baca');
   if (rb.status === 201 && bon?.no_bon === 'BON-UJI-001' && bon.status === 'AKTIF' && bon.items.length === 3) ok('Bon: dibuat dengan No. Bon, teknisi, & barang digabung per kode', bon?.no_bon);
   else bad('Bon: dibuat dengan No. Bon, teknisi, & barang digabung per kode', `HTTP ${rb.status} ${rb.json?.error}`);
   const liOnt = bon?.items.find((i) => i.kode_barang === ONT);

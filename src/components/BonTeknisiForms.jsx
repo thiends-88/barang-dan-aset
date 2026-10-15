@@ -324,8 +324,9 @@ export function BonBaruModal({ onClose, items, roster = [], onRosterChange = asy
             <input value={catatan} onChange={(e) => setCatatan(e.target.value)} className={inputCls} />
           </div>
           <div className="sm:col-span-3">
-            <label className={labelCls}>Keperluan / Tujuan Pekerjaan</label>
-            <input value={keperluan} onChange={(e) => setKeperluan(e.target.value)} placeholder="mis. Instalasi pelanggan baru area Tanah Garam" className={inputCls} />
+            <label htmlFor="bon-keperluan" className={labelCls}>Keperluan / Tujuan Pekerjaan</label>
+            <textarea id="bon-keperluan" rows={4} value={keperluan} onChange={(e) => setKeperluan(e.target.value)} placeholder={'pemasangan PG002323 : ...\nmaintenance PG003434 : ...'} className={`${inputCls} resize-y`} />
+            <p className="text-[11px] text-slate-500 mt-1">Tekan Enter untuk menambah baris. Susunan baris akan mengikuti isian ini pada hasil cetak.</p>
           </div>
         </div>
 

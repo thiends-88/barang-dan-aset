@@ -566,6 +566,20 @@ try {
   } else sectionBad('30.1 Tampilan histori / input baru tidak sesuai');
 } catch (e) { sectionBad(`30.1 Render histori servis gagal: ${e.message}`); }
 
+console.log('\n=== 31. Keperluan Bon Beberapa Baris ===');
+try {
+  const { BonBaruModal } = await vite.ssrLoadModule('/src/components/BonTeknisiForms.jsx');
+  const { BonDocument } = await vite.ssrLoadModule('/src/components/BonTeknisiPrint.jsx');
+  const form = renderToString(React.createElement(BonBaruModal, { items, onClose() {}, onSaved() {} }));
+  const keperluan = 'pemasangan PG002323 : instalasi baru\n\nmaintenance PG003434 : perbaikan jaringan';
+  const loan = { no_bon: 'BON-UJI-BARIS', tanggal: '2026-10-15', teknisi_nama: 'Teknisi', keperluan, items: [] };
+  const docs = ['surat_jalan', 'rekap'].map(variant => renderToString(React.createElement(BonDocument, { loan, variant })));
+  if (form.includes('<textarea') && form.includes('id="bon-keperluan"') && form.includes('Tekan Enter')
+      && docs.every(html => html.includes(keperluan) && html.includes('whitespace-pre-wrap break-words'))) {
+    sectionOk('31.1 Form memakai textarea; baris dan urutan keperluan tetap pada Surat Jalan serta Rekap Lengkap');
+  } else sectionBad('31.1 Keperluan bon tidak mendukung beberapa baris');
+} catch (e) { sectionBad(`31.1 Render keperluan multibaris gagal: ${e.message}`); }
+
 await vite.close();
 console.log(`\nHasil: ${pass} lolos, ${fail} gagal`);
 process.exit(fail ? 1 : 0);
