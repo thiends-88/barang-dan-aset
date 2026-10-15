@@ -1036,6 +1036,34 @@ console.log('\n=== 6E. LAPORAN STOK GUDANG LOGISTIK (STOK TERSEDIA & BARANG STOK
   }
 }
 
+console.log('\n=== 6E.1 PENJUALAN BARANG DARI GUDANG ===');
+{
+  const kode = 'BRG-UJI-MENIPIS-01';
+  const stokAwal = stockOf(kode);
+  const jual = await req('POST', '/api/transactions', {
+    jenis: 'KELUAR', kategori_transaksi: 'Penjualan Barang', divisi: 'GUDANG',
+    kode_barang: kode, jumlah: 1, lokasi_penerima: 'Pembeli Uji', keterangan: 'Uji penjualan',
+  });
+  const riwayat = await req('GET', '/api/transactions?kategori_transaksi=Penjualan%20Barang');
+  const tercatat = (riwayat.json?.data || []).some(t => t.kode_barang === kode
+    && t.jenis === 'KELUAR' && t.divisi === 'GUDANG' && t.lokasi_penerima === 'Pembeli Uji'
+    && t.jumlah === 1 && t.kategori_transaksi === 'Penjualan Barang');
+  if (jual.status === 201 && stockOf(kode) === stokAwal - 1 && tercatat) {
+    ok('Penjualan mengurangi stok gudang dan tercatat sebagai KELUAR / Penjualan Barang');
+  } else {
+    bad('Pencatatan penjualan dari gudang', `status=${jual.status} tercatat=${tercatat}`);
+  }
+  const lebih = await req('POST', '/api/transactions', {
+    jenis: 'KELUAR', kategori_transaksi: 'Penjualan Barang', divisi: 'GUDANG',
+    kode_barang: kode, jumlah: stokAwal + 1, lokasi_penerima: 'Pembeli Uji',
+  });
+  if (lebih.status === 400 && stockOf(kode) === stokAwal - 1) {
+    ok('Penjualan melebihi stok ditolak tanpa mengubah stok');
+  } else {
+    bad('Penjualan tidak boleh melebihi stok');
+  }
+}
+
 console.log('\n=== 6F. BON / BARANG BAWAAN TEKNISI (3 tahap: bawa → pasang → kembali) ===');
 {
   const ONT = 'BRG-ONT-HG8546M';        // stok seed 45

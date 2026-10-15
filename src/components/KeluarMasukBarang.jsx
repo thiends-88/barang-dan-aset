@@ -68,8 +68,8 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
   // Manual Transaction Modal
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalData, setModalData] = useState({
-    jenis: 'MASUK',
-    kategori_transaksi: 'Pembelian Supplier',
+    jenis: 'KELUAR',
+    kategori_transaksi: 'Penjualan Barang',
     divisi: 'GUDANG',
     lokasi_penerima: '',
     kode_barang: '',
@@ -266,10 +266,10 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
   };
 
   // Open manual transaction modal
-  const handleOpenModal = (jenis = 'MASUK') => {
+  const handleOpenModal = () => {
     setModalData({
-      jenis,
-      kategori_transaksi: jenis === 'MASUK' ? 'Pembelian Supplier' : 'Barang Rusak / Afkir',
+      jenis: 'KELUAR',
+      kategori_transaksi: 'Penjualan Barang',
       divisi: 'GUDANG',
       lokasi_penerima: '',
       kode_barang: items[0]?.kode_barang || '',
@@ -310,9 +310,9 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
 
     try {
       const payload = {
-        jenis: modalData.jenis,
-        kategori_transaksi: modalData.kategori_transaksi,
-        divisi: modalData.divisi,
+        jenis: 'KELUAR',
+        kategori_transaksi: 'Penjualan Barang',
+        divisi: 'GUDANG',
         kode_barang: modalData.kode_barang,
         jumlah: modalData.jumlah,
         tanggal: modalData.tanggal,
@@ -406,18 +406,11 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
             <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider block">Input Cepat Mutasi</span>
             <div className="flex items-center gap-2 mt-2">
               <button
-                onClick={() => handleOpenModal('MASUK')}
-                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1 shadow-sm transition"
-              >
-                <ArrowDownLeft className="w-3.5 h-3.5" />
-                <span>+ Masuk</span>
-              </button>
-              <button
-                onClick={() => handleOpenModal('KELUAR')}
+                onClick={handleOpenModal}
                 className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1 shadow-sm transition"
               >
                 <ArrowUpRight className="w-3.5 h-3.5" />
-                <span>- Keluar</span>
+                <span>Keluar — Dijual</span>
               </button>
             </div>
           </div>
@@ -772,9 +765,9 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
                 </div>
                 <div>
                   <h3 className="font-bold text-sm">
-                    {modalData.jenis === 'MASUK' ? 'Catat Barang Masuk' : 'Catat Barang Keluar'}
+                    Catat Penjualan Barang
                   </h3>
-                  <p className="text-[11px] text-white/80">Scan stiker barcode → barang terisi otomatis → pilih divisi & tujuan</p>
+                  <p className="text-[11px] text-white/80">Barang dijual dari stok gudang — isi jumlah dan nama pembeli</p>
                 </div>
               </div>
               <button
@@ -842,70 +835,14 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Jenis Mutasi *
                   </label>
-                  <select
-                    value={modalData.jenis}
-                    onChange={(e) => {
-                      const j = e.target.value;
-                      const linked = modalData.divisi !== 'GUDANG';
-                      setModalData({
-                        ...modalData,
-                        jenis: j,
-                        kategori_transaksi: j === 'MASUK'
-                          ? (linked ? 'Pengembalian / Dismantle' : 'Pembelian Supplier')
-                          : (linked ? `Pemasangan ${DIVISI_LINK_LABEL[modalData.divisi]}` : 'Barang Rusak / Afkir')
-                      });
-                    }}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold focus:bg-white"
-                  >
-                    <option value="MASUK">MASUK (+)</option>
-                    <option value="KELUAR">KELUAR (-)</option>
-                  </select>
+                  <input readOnly value="KELUAR (-)" className="w-full px-3 py-2 bg-slate-100 border border-slate-300 rounded-xl text-xs font-bold" />
                 </div>
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Kategori Mutasi *
                   </label>
-                  <select
-                    value={modalData.kategori_transaksi}
-                    onChange={(e) => setModalData({ ...modalData, kategori_transaksi: e.target.value })}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:bg-white"
-                  >
-                    {modalData.jenis === 'MASUK' ? (
-                      isLinkedMode ? (
-                        <>
-                          <option value="Pengembalian / Dismantle">Pengembalian / Dismantle</option>
-                          <option value="Retur">Retur</option>
-                        </>
-                      ) : (
-                        <>
-                          <option value="Pembelian Supplier">Pembelian Supplier</option>
-                          <option value="Pengembalian / Dismantle">Pengembalian / Dismantle</option>
-                          <option value="Retur">Retur</option>
-                          <option value="Koreksi Stok">Koreksi Stok / Opname</option>
-                        </>
-                      )
-                    ) : (
-                      isLinkedMode ? (
-                        <>
-                          <option value={`Pemasangan ${DIVISI_LINK_LABEL[modalData.divisi]}`}>
-                            {`Pemasangan ${DIVISI_LINK_LABEL[modalData.divisi]}`}
-                          </option>
-                          <option value="Maintenance / Penggantian">Maintenance / Penggantian</option>
-                          <option value="Mutasi">Mutasi / Pemindahan</option>
-                        </>
-                      ) : (
-                        <>
-                          <option value="Pemasangan Pelanggan">Pemasangan Pelanggan</option>
-                          <option value="Pemasangan Divisi FO">Pemasangan Divisi FO</option>
-                          <option value="Pemasangan Divisi Tower">Pemasangan Divisi Tower</option>
-                          <option value="Barang Rusak / Afkir">Barang Rusak / Afkir</option>
-                          <option value="Maintenance / Penggantian">Maintenance / Penggantian</option>
-                          <option value="Mutasi">Mutasi / Pemindahan</option>
-                        </>
-                      )
-                    )}
-                  </select>
+                  <input readOnly value="Penjualan Barang" className="w-full px-3 py-2 bg-slate-100 border border-slate-300 rounded-xl text-xs" />
                 </div>
               </div>
 
@@ -914,30 +851,7 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Divisi Terkait *
                   </label>
-                  <select
-                    value={modalData.divisi}
-                    onChange={(e) => {
-                      const d = e.target.value;
-                      if (d === 'GUDANG') {
-                        setModalData({ ...modalData, divisi: d, tujuan_id: '' });
-                      } else {
-                        setModalData({
-                          ...modalData,
-                          divisi: d,
-                          tujuan_id: '',
-                          kategori_transaksi: modalData.jenis === 'MASUK'
-                            ? 'Pengembalian / Dismantle'
-                            : `Pemasangan ${DIVISI_LINK_LABEL[d]}`
-                        });
-                      }
-                    }}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:bg-white font-semibold"
-                  >
-                    <option value="GUDANG">GUDANG / PUSAT</option>
-                    <option value="PELANGGAN">DIVISI PELANGGAN</option>
-                    <option value="DIVISI FO">DIVISI FO</option>
-                    <option value="DIVISI TOWER">DIVISI TOWER</option>
-                  </select>
+                  <input readOnly value="GUDANG / PUSAT" className="w-full px-3 py-2 bg-slate-100 border border-slate-300 rounded-xl text-xs font-semibold" />
                 </div>
 
                 <div>
@@ -1046,14 +960,14 @@ export default function KeluarMasukBarang({ items, onRefreshMaster, initialSumma
                 ) : (
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      {modalData.jenis === 'MASUK' ? 'Suplayer / Asal Barang *' : 'Lokasi / Penerima *'}
+                      Nama / Lokasi Pembeli *
                     </label>
                     <input
                       type="text"
                       required
                       value={modalData.lokasi_penerima}
                       onChange={(e) => setModalData({ ...modalData, lokasi_penerima: e.target.value })}
-                      placeholder="Nama suplayer, site, atau teknisi"
+                      placeholder="Nama pembeli dan lokasi penyerahan"
                       className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:bg-white"
                     />
                   </div>

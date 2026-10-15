@@ -512,6 +512,25 @@ try {
   sectionBad(`27.1 Render Master Barang gagal: ${String(e.message).split('\n')[0]}`);
 }
 
+console.log('\n=== 28. Input Cepat Mutasi Khusus Penjualan ===');
+try {
+  const KM = (await vite.ssrLoadModule('/src/components/KeluarMasukBarang.jsx')).default;
+  const html = renderToString(React.createElement(KM, { items, onRefreshMaster() {} }));
+  const source = fs.readFileSync('src/components/KeluarMasukBarang.jsx', 'utf-8');
+  const payload = source.slice(source.indexOf('const payload = {'), source.indexOf('if (isLinkedMode) {', source.indexOf('const payload = {')));
+  if (!html.includes('+ Masuk') && html.includes('Keluar — Dijual')
+      && payload.includes("jenis: 'KELUAR'") && payload.includes("kategori_transaksi: 'Penjualan Barang'")
+      && payload.includes("divisi: 'GUDANG'")
+      && source.includes('readOnly value="Penjualan Barang"')
+      && !source.includes('value={modalData.jenis}') && !source.includes('value={modalData.divisi}')) {
+    sectionOk('28.1 Tombol masuk hilang; jenis, kategori dan gudang penjualan terkunci');
+  } else {
+    sectionBad('28.1 Input cepat tidak terbatas pada penjualan');
+  }
+} catch (e) {
+  sectionBad(`28.1 Render input penjualan gagal: ${String(e.message).split('\n')[0]}`);
+}
+
 await vite.close();
 console.log(`\nHasil: ${pass} lolos, ${fail} gagal`);
 process.exit(fail ? 1 : 0);

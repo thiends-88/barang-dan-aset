@@ -817,6 +817,13 @@ di README, info versi build (`/api/version`,
 - Stok habis tetap terlihat di daftar umum dengan warna peringatan, status HABIS dan `out_of_stock_count` laporan tetap tersedia.
 - Tes API menambahkan kasus stok 0 dengan minimum 0/5 dan regresi render Seksi 27; verifikasi terakhir 164 API dan 52 render lolos.
 
+**Input Cepat Mutasi khusus penjualan (15 Oktober 2026):**
+- Tombol **+ Masuk** dihapus; tombol keluar menjadi **Keluar — Dijual**.
+- Formulir input cepat dikunci ke `KELUAR` / `Penjualan Barang` / `GUDANG`; tidak bisa dialihkan menjadi stok masuk, pemasangan, mutasi divisi, atau afkir. Identitas pembeli dicatat di `lokasi_penerima`.
+- Memakai endpoint transaksi yang sudah ada: stok berkurang dengan jejak transaksi dan validasi stok tersedia. Endpoint umum tetap mendukung alur lain agar fitur lain tidak rusak.
+- Tidak menambahkan harga jual/profit: nilai transaksi tetap mengikuti harga barang dari sistem yang sudah ada.
+- Regresi penjualan normal dan melebihi stok ditambahkan pada tes API; Seksi 28 render memeriksa tombol masuk hilang dan kategori terkunci. Hasil: **166 API + 53 render lolos**.
+
 **Belum dikerjakan / kandidat sesi berikutnya:**
 
 0. Bon Teknisi: opsi **tambah barang ke bon yang sudah berjalan**, pembatasan teknisi hanya melihat/merealisasi bon sendiri,
