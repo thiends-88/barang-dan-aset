@@ -1,9 +1,9 @@
 // Ledger servis: pengiriman tidak mengurangi stok siap pakai lagi karena sudah di gudang rusak.
-export function registerServiceShipments(app, { db, todayLocal, tanggalOpsional, logStockMutation, getMasterItem }) {
+export function registerServiceShipments(app, { db, todayLocal, tanggalOpsional, logStockMutation }) {
   const detail = (id) => {
     const row = db.prepare('SELECT * FROM service_shipments WHERE id = ?').get(Number(id));
     if (!row) throw new Error('Pengiriman servis tidak ditemukan');
-    const items = db.prepare('SELECT * FROM service_shipment_items WHERE shipment_id = ? ORDER BY id').all(row.id);
+    const items = db.prepare('SELECT i.*, d.jenis_barang AS jenis_asal FROM service_shipment_items i JOIN damaged_items d ON d.id = i.damaged_id WHERE i.shipment_id = ? ORDER BY i.id').all(row.id);
     return { ...row, items, status: items.every(i => i.hasil !== 'DISERVIS') ? 'SELESAI' : 'DISERVIS' };
   };
   const text = (value, label, required = false) => {
@@ -73,25 +73,56 @@ export function registerServiceShipments(app, { db, todayLocal, tanggalOpsional,
         const tanggal = tanggalOpsional(req.body.tanggal, 'Tanggal kembali') || todayLocal();
         if (tanggal < shipment.tanggal) throw new Error('Tanggal kembali tidak boleh sebelum tanggal pengiriman');
         const catatan = text(req.body.catatan, 'Catatan hasil');
-        let trx = '';
-        if (hasil === 'BERHASIL') {
-          const master = getMasterItem(item.kode_barang);
-          if (!master) throw new Error('Master barang tidak ditemukan; pulihkan master sebelum menerima hasil servis');
-          db.prepare("UPDATE items SET stok = stok + ?, updated_at = datetime('now','localtime') WHERE id = ?").run(item.jumlah, master.id);
-          trx = logStockMutation({ jenis: 'MASUK', kategori: 'Perbaikan Barang Rusak', divisi: 'GUDANG', item: master,
-            jumlah: item.jumlah, harga_satuan: item.harga_barang, tanggal, lokasi: shipment.tujuan,
-            keterangan: `${shipment.no_surat} — hasil servis berhasil. ${catatan}`, kondisi: 'Baik' });
-          // Status sumber hanya ditutup jika tidak ada sisa maupun kiriman lain yang masih berjalan.
-          const pending = db.prepare("SELECT COUNT(*) AS n FROM service_shipment_items WHERE damaged_id = ? AND hasil = 'DISERVIS' AND id != ?").get(item.damaged_id, item.id).n;
-          db.prepare("UPDATE damaged_items SET status = CASE WHEN jumlah > 0 THEN 'DITAMPUNG' WHEN ? > 0 THEN 'DISERVIS' ELSE 'DIPERBAIKI' END WHERE id = ?").run(pending, item.damaged_id);
-        } else {
-          db.prepare("UPDATE damaged_items SET jumlah = jumlah + ?, status = 'DITAMPUNG', updated_at = datetime('now','localtime') WHERE id = ?").run(item.jumlah, item.damaged_id);
-        }
-        db.prepare(`UPDATE service_shipment_items SET hasil = ?, tanggal_kembali = ?, catatan_hasil = ?, diterima_oleh = ?, no_transaksi = ? WHERE id = ?`)
-          .run(hasil, tanggal, catatan, req.user.nama_lengkap || req.user.username, trx, item.id);
+        // Penerimaan hanya histori: kode/harga lama tidak boleh dipakai untuk stok hasil servis.
+        // Bahkan hasil gagal tidak otomatis masuk ledger lagi; keputusan selanjutnya dicatat terpisah.
+        const pending = db.prepare("SELECT COUNT(*) AS n FROM service_shipment_items WHERE damaged_id = ? AND hasil = 'DISERVIS' AND id != ?").get(item.damaged_id, item.id).n;
+        db.prepare("UPDATE damaged_items SET status = CASE WHEN jumlah > 0 THEN 'DITAMPUNG' WHEN ? > 0 THEN 'DISERVIS' ELSE 'SELESAI_SERVIS' END, updated_at = datetime('now','localtime') WHERE id = ?").run(pending, item.damaged_id);
+        db.prepare(`UPDATE service_shipment_items SET hasil = ?, tanggal_kembali = ?, catatan_hasil = ?, diterima_oleh = ? WHERE id = ?`)
+          .run(hasil, tanggal, catatan, req.user.nama_lengkap || req.user.username, item.id);
         return detail(shipment.id);
       })();
       res.json({ success: true, data: result });
     } catch (err) { res.status(400).json({ success: false, error: err.message }); }
   });
+  // Input ulang merupakan tindakan terpisah, bukan efek samping "Catat Hasil".
+  // Snapshot tautan tetap tersimpan walaupun master baru kemudian diubah.
+  app.post('/api/service-shipments/:id/items/:itemId/new-item', (req, res) => {
+    try {
+      const result = db.transaction(() => {
+        const shipment = detail(req.params.id);
+        const source = shipment.items.find(i => i.id === Number(req.params.itemId));
+        if (!source || source.hasil !== 'BERHASIL') throw new Error('Hanya hasil servis BERHASIL yang dapat diinput sebagai barang baru');
+        if (source.kode_baru) throw new Error('Hasil servis ini sudah diinput sebagai barang baru');
+        // Data dari versi lama pernah otomatis menambah stok kode asal. Jangan gandakan stok itu.
+        if (source.no_transaksi) throw new Error('Histori lama ini sudah memiliki mutasi stok otomatis; tidak boleh diinput ulang dari servis');
+        const body = req.body || {};
+        const kode = text(body.kode_barang, 'Kode barang baru', true).toUpperCase();
+        const nama = text(body.nama_barang, 'Nama barang', true);
+        const jenis = text(body.jenis_barang, 'Kategori barang', true);
+        const satuan = text(body.satuan, 'Satuan', true);
+        if (kode.length > 60 || nama.length > 200 || jenis.length > 100 || satuan.length > 30) throw new Error('Batas kode 60, nama 200, kategori 100 dan satuan 30 karakter');
+        if (kode === source.kode_barang.toUpperCase()) throw new Error('Kode baru harus berbeda dari kode barang asal');
+        if (db.prepare('SELECT id FROM items WHERE LOWER(kode_barang) = LOWER(?)').get(kode)) throw new Error('Kode barang baru sudah digunakan');
+        const harga = Number(body.harga_barang);
+        const min = Number(body.min_stok ?? 5);
+        if (!['string', 'number'].includes(typeof body.harga_barang) || body.harga_barang === null || String(body.harga_barang).trim() === '' || !Number.isFinite(harga) || harga < 0 || !Number.isFinite(harga * source.jumlah)) throw new Error('Harga baru wajib berupa angka minimal 0');
+        if (!Number.isFinite(min) || min < 0) throw new Error('Batas minimum stok harus berupa angka minimal 0');
+        const tanggal = tanggalOpsional(body.tanggal, 'Tanggal input barang baru') || todayLocal();
+        if (tanggal < source.tanggal_kembali) throw new Error('Tanggal input barang baru tidak boleh sebelum tanggal kembali servis');
+        const catatan = `Hasil Servis / Rekondisi — ${shipment.no_surat}; kode asal ${source.kode_barang}; baris servis ${source.id}. ${text(body.catatan, 'Catatan')}`;
+        const author = req.user.nama_lengkap || req.user.username;
+        const insert = db.prepare(`INSERT INTO items (kode_barang, nama_barang, jenis_barang, satuan, stok, min_stok, harga_barang, referensi_suplayer, catatan)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(kode, nama, jenis, satuan, source.jumlah, min, harga, shipment.tujuan, catatan);
+        db.prepare('INSERT OR IGNORE INTO categories (nama_kategori) VALUES (?)').run(jenis);
+        const master = db.prepare('SELECT * FROM items WHERE id = ?').get(Number(insert.lastInsertRowid));
+        const trx = logStockMutation({ jenis: 'MASUK', kategori: 'Hasil Servis / Rekondisi', divisi: 'GUDANG', item: master,
+          refId: master.id, jumlah: source.jumlah, harga_satuan: harga, tanggal, lokasi: shipment.tujuan, keterangan: catatan, kondisi: 'Baik' });
+        db.prepare(`UPDATE service_shipment_items SET kode_baru = ?, nama_baru = ?, harga_baru = ?, tanggal_input_baru = ?, diinput_oleh = ?, no_transaksi = ? WHERE id = ?`)
+          .run(kode, nama, harga, tanggal, author, trx, source.id);
+        return { shipment: detail(shipment.id), item: master };
+      })();
+      res.status(201).json({ success: true, data: result });
+    } catch (err) { res.status(400).json({ success: false, error: err.message }); }
+  });
+
 }

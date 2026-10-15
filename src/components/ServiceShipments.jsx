@@ -26,11 +26,33 @@ export function ServiceDocument({ shipment }) {
       <tbody>{shipment.items.map((i, n) => <tr key={i.id} style={{ breakInside: 'avoid' }}>
         <td className="border border-slate-300 p-2">{n + 1}</td><td className="border border-slate-300 p-2">{i.kode_barang}<br />{i.nama_barang}</td>
         <td className="border border-slate-300 p-2">{i.kondisi}</td><td className="border border-slate-300 p-2">{formatNumber(i.jumlah)} {i.satuan}</td>
-        <td className="border border-slate-300 p-2">{i.hasil}{i.tanggal_kembali && <><br />{formatDate(i.tanggal_kembali)}<br />{i.catatan_hasil}</>}</td>
+        <td className="border border-slate-300 p-2">{i.hasil}{i.tanggal_kembali && <><br />{formatDate(i.tanggal_kembali)}<br />{i.catatan_hasil}</>}{i.kode_baru && <><br />Kode baru: <b>{i.kode_baru}</b><br />{i.nama_baru}</>}</td>
       </tr>)}</tbody>
     </table>
-    <p className="text-xs mt-5">Note: Barang di atas dikirim untuk servis. Barang hanya kembali ke stok siap pakai setelah hasil servis dinyatakan berhasil dan diterima gudang.</p>
+    <p className="text-xs mt-5">Note: Pengiriman dan hasil servis hanya menjadi histori, tidak menambah stok kode lama. Barang hasil servis diinput terpisah ke Master Barang dengan kode dan harga baru serta referensi surat servis ini.</p>
   </div>;
+}
+
+// Input terpisah dan disengaja: kode/harga baru tidak diisi otomatis dari kode/harga asal.
+export function ServiceNewItemForm({ item, busy, error, onSave, onCancel }) {
+  const [form, setForm] = useState({ kode_barang: '', nama_barang: item.nama_barang,
+    jenis_barang: item.jenis_asal || '', satuan: item.satuan, harga_barang: '', min_stok: 5,
+    tanggal: item.tanggal_kembali > todayLocal() ? item.tanggal_kembali : todayLocal(), catatan: '' });
+  const inputs = [
+    ['kode_barang', 'Kode Barang Baru *', 'text', 60], ['nama_barang', 'Nama Barang *', 'text', 200],
+    ['jenis_barang', 'Kategori / Jenis *', 'text', 100], ['satuan', 'Satuan *', 'text', 30],
+    ['harga_barang', 'Harga Baru per Satuan (Rp) *', 'number'], ['min_stok', 'Batas Minimum Stok *', 'number'],
+    ['tanggal', 'Tanggal Input *', 'date'],
+  ];
+  return <form onSubmit={e => { e.preventDefault(); onSave(form); }} className="bg-emerald-50 border border-emerald-200 p-4 rounded-xl space-y-3">
+    <h4 className="font-bold text-sm">Input Barang Hasil Servis — Kode & Harga Baru</h4>
+    <p className="text-xs">Kode asal: <b>{item.kode_barang}</b>. Jumlah yang masuk: <b>{formatNumber(item.jumlah)} {item.satuan}</b> (seluruh jumlah baris hasil servis). Nama boleh sama; kode harus baru dan belum digunakan.</p>
+    {error && <p role="alert" className="text-rose-700 text-xs">{error}</p>}
+    <div className="grid sm:grid-cols-2 gap-3">{inputs.map(([key, label, type, maxLength]) => <label key={key} className="text-xs font-semibold">{label}<input required className={field} type={type} maxLength={maxLength} min={type === 'number' ? 0 : type === 'date' ? item.tanggal_kembali : undefined} step={type === 'number' ? 'any' : undefined} value={form[key]} onChange={e => setForm({ ...form, [key]: e.target.value })} /></label>)}</div>
+    <label className="block text-xs">Catatan Tambahan<textarea className={field} maxLength={2000} value={form.catatan} onChange={e => setForm({ ...form, catatan: e.target.value })} /></label>
+    <p className="text-xs text-emerald-800">Tindakan ini membuat Master Barang baru dan mutasi MASUK “Hasil Servis / Rekondisi”. Kode asal tidak berubah. Referensi surat dan kode asal tersimpan otomatis.</p>
+    <div className="flex gap-2"><button disabled={busy} className={button}>{busy ? 'Menyimpan...' : 'Simpan sebagai Barang Baru'}</button><button type="button" disabled={busy} className={button} onClick={onCancel}>Batal</button></div>
+  </form>;
 }
 
 export default function ServiceShipments({ canEdit, onChanged }) {
@@ -46,6 +68,7 @@ export default function ServiceShipments({ canEdit, onChanged }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [receive, setReceive] = useState(null);
+  const [newItem, setNewItem] = useState(null);
   const [result, setResult] = useState({ hasil: 'BERHASIL', tanggal: todayLocal(), catatan: '' });
   const loadHistory = async () => {
     try { setHistory((await api('/api/service-shipments')).data); }
@@ -79,7 +102,16 @@ export default function ServiceShipments({ canEdit, onChanged }) {
     try {
       const j = await api(`/api/service-shipments/${detail.id}/items/${receive.id}/receive`, result);
       setDetail(j.data); setReceive(null); loadHistory(); onChanged();
-      notify('Hasil servis tersimpan', 'success');
+      notify('Hasil servis tersimpan sebagai histori; stok tidak berubah', 'success');
+    } catch (e) { setError(e.message); }
+    finally { setBusy(false); }
+  };
+  const saveNewItem = async form => {
+    setBusy(true); setError('');
+    try {
+      const j = await api(`/api/service-shipments/${detail.id}/items/${newItem.id}/new-item`, form);
+      setDetail(j.data.shipment); setNewItem(null); loadHistory(); onChanged();
+      notify('Barang hasil servis tersimpan dengan kode dan harga baru', 'success');
     } catch (e) { setError(e.message); }
     finally { setBusy(false); }
   };
@@ -87,7 +119,8 @@ export default function ServiceShipments({ canEdit, onChanged }) {
     'No Surat': detail.no_surat, Tanggal: detail.tanggal, Tujuan: detail.tujuan, Alamat: detail.alamat,
     Kontak: detail.kontak, Catatan: detail.catatan, 'Dibuat Oleh': detail.dibuat_oleh,
     Kode: i.kode_barang, Barang: i.nama_barang, Kondisi: i.kondisi, Jumlah: i.jumlah, Satuan: i.satuan,
-    Hasil: i.hasil, 'Tanggal Kembali': i.tanggal_kembali || '', 'Catatan Hasil': i.catatan_hasil,
+    Hasil: i.hasil, 'Tanggal Kembali': i.tanggal_kembali || '', 'Catatan Hasil': i.catatan_hasil, 'Kode Baru': i.kode_baru || '', 'Nama Baru': i.nama_baru || '',
+    'Tanggal Input Barang Baru': i.tanggal_input_baru || '', 'Diinput Oleh': i.diinput_oleh || '', 'No Mutasi': i.no_transaksi || '',
   })));
   return <>
     <section className="no-print bg-white border border-indigo-200 rounded-2xl p-4 space-y-3 mb-4">
@@ -113,10 +146,21 @@ export default function ServiceShipments({ canEdit, onChanged }) {
     {detail && <>
       <div className="print-doc"><ServiceDocument shipment={detail} /></div>
       <div className="no-print fixed inset-0 z-50 bg-slate-900/60 p-3 flex items-center justify-center"><div className="bg-white rounded-2xl max-w-4xl w-full max-h-[94vh] overflow-y-auto p-4 space-y-3">
-        <div className="flex flex-wrap justify-end gap-2"><button className={button} onClick={exportDetail}>Export CSV</button><button className={button} onClick={() => window.print()}>Cetak / Simpan PDF</button><button className={button} onClick={() => { setDetail(null); setReceive(null); }}>Tutup</button></div>
+        <div className="flex flex-wrap justify-end gap-2"><button className={button} onClick={exportDetail}>Export CSV</button><button className={button} onClick={() => window.print()}>Cetak / Simpan PDF</button><button className={button} onClick={() => { setDetail(null); setReceive(null); setNewItem(null); }}>Tutup</button></div>
         <ServiceDocument shipment={detail} />
-        {canEdit && <div className="border-t pt-3 space-y-2"><h4 className="font-bold text-sm">Terima Hasil Servis (per baris, seluruh jumlah)</h4>{detail.items.filter(i => i.hasil === 'DISERVIS').map(i => <div key={i.id} className="text-xs flex justify-between gap-2"><span>{i.nama_barang} — {formatNumber(i.jumlah)} {i.satuan}</span><button className={button} onClick={() => { setReceive(i); setError(''); setResult({ hasil: 'BERHASIL', tanggal: todayLocal(), catatan: '' }); }}>Catat Hasil</button></div>)}</div>}
-        {receive && <form onSubmit={receiveItem} className="bg-indigo-50 p-3 rounded-xl space-y-2"><h4 className="font-bold text-xs">Hasil: {receive.nama_barang}</h4>{error && <p role="alert" className="text-rose-700 text-xs">{error}</p>}<select className={field} value={result.hasil} onChange={e => setResult({ ...result, hasil: e.target.value })}><option value="BERHASIL">Berhasil — kembali ke stok siap pakai</option><option value="GAGAL">Gagal — kembali ke gudang rusak</option></select><input aria-label="Tanggal kembali" className={field} type="date" required min={detail.tanggal} value={result.tanggal} onChange={e => setResult({ ...result, tanggal: e.target.value })} /><textarea aria-label="Catatan hasil servis" className={field} placeholder="Catatan hasil servis" value={result.catatan} onChange={e => setResult({ ...result, catatan: e.target.value })} /><button disabled={busy} className={button}>Konfirmasi Penerimaan</button><button type="button" disabled={busy} className={button} onClick={() => setReceive(null)}>Batal</button></form>}
+        {canEdit && <div className="border-t pt-3 space-y-2"><h4 className="font-bold text-sm">Catat Hasil Servis — Histori Saja (per baris)</h4>{detail.items.filter(i => i.hasil === 'DISERVIS').map(i => <div key={i.id} className="text-xs flex justify-between gap-2"><span>{i.nama_barang} — {formatNumber(i.jumlah)} {i.satuan}</span><button className={button} onClick={() => { setReceive(i); setNewItem(null); setError(''); setResult({ hasil: 'BERHASIL', tanggal: todayLocal(), catatan: '' }); }}>Catat Hasil</button></div>)}</div>}
+        <div className="border-t pt-3 space-y-2 text-xs">
+          <h4 className="font-bold text-sm">Barang Hasil Servis — Input Terpisah</h4>
+          <p className="text-slate-600">Hasil servis tidak otomatis masuk stok. Gunakan kode baru dan harga baru saat siap didaftarkan ke Master Barang.</p>
+          {detail.items.filter(i => i.hasil === 'BERHASIL').map(i => <div key={i.id} className="flex flex-wrap justify-between items-center gap-2 border rounded-lg p-2">
+            <span>{i.nama_barang} • Asal: {i.kode_barang} • {formatNumber(i.jumlah)} {i.satuan}</span>
+            {i.kode_baru ? <span className="font-bold text-emerald-700">Sudah diinput: {i.kode_baru} • {i.tanggal_input_baru && formatDate(i.tanggal_input_baru)}</span>
+              : i.no_transaksi ? <span className="text-amber-800">Histori versi lama: stok pernah masuk otomatis ({i.no_transaksi}). Tidak diinput ulang.</span>
+              : <><span className="text-amber-700">Belum diinput ke Master Barang</span>{canEdit && <button className={button} onClick={() => { setNewItem(i); setReceive(null); setError(''); }}>Input sebagai Barang Baru</button>}</>}
+          </div>)}
+        </div>
+        {newItem && <ServiceNewItemForm key={newItem.id} item={newItem} busy={busy} error={error} onSave={saveNewItem} onCancel={() => setNewItem(null)} />}
+        {receive && <form onSubmit={receiveItem} className="bg-indigo-50 p-3 rounded-xl space-y-2"><h4 className="font-bold text-xs">Hasil: {receive.nama_barang}</h4><p className="text-xs">Menyimpan hasil tidak menambah stok kode lama. Jika berhasil, input barang baru dilakukan terpisah setelah ini.</p>{error && <p role="alert" className="text-rose-700 text-xs">{error}</p>}<select className={field} value={result.hasil} onChange={e => setResult({ ...result, hasil: e.target.value })}><option value="BERHASIL">Berhasil — histori saja, belum menambah stok</option><option value="GAGAL">Gagal — histori saja, tidak menambah stok</option></select><input aria-label="Tanggal kembali" className={field} type="date" required min={detail.tanggal} value={result.tanggal} onChange={e => setResult({ ...result, tanggal: e.target.value })} /><textarea aria-label="Catatan hasil servis" className={field} placeholder="Catatan hasil servis" value={result.catatan} onChange={e => setResult({ ...result, catatan: e.target.value })} /><button disabled={busy} className={button}>Konfirmasi Penerimaan</button><button type="button" disabled={busy} className={button} onClick={() => setReceive(null)}>Batal</button></form>}
       </div></div>
     </>}
   </>;

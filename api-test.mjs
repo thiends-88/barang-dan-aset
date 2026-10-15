@@ -1108,12 +1108,67 @@ console.log('\n=== 6E.2 PENGIRIMAN SERVIS BARANG RUSAK ===');
     if (backdated.status === 400 && stockOf(kode) === stockBefore) ok('Servis: tanggal penerimaan sebelum kirim ditolak'); else bad('Servis: validasi tanggal kembali');
     const mark = maxTrxId();
     const success = await req('POST', `/api/service-shipments/${shipment.id}/items/${i1.id}/receive`, { hasil: 'BERHASIL', tanggal: '2026-10-16', catatan: 'Normal kembali' });
-    if (success.status === 200 && stockOf(kode) === stockBefore + 4 && trxSince(mark).some(t => t.jenis === 'MASUK' && t.jumlah === 4 && t.kategori_transaksi === 'Perbaikan Barang Rusak')) ok('Servis: hasil berhasil menambah stok dengan jejak mutasi'); else bad('Servis: penerimaan berhasil');
+    if (success.status === 200 && stockOf(kode) === stockBefore && trxSince(mark).length === 0 && !success.json?.data?.items[0]?.no_transaksi) ok('Servis: hasil berhasil hanya histori, stok dan mutasi kode asal tidak berubah'); else bad('Servis: penerimaan harus histori saja');
     const duplicate = await req('POST', `/api/service-shipments/${shipment.id}/items/${i1.id}/receive`, { hasil: 'BERHASIL' });
-    if (duplicate.status === 400 && stockOf(kode) === stockBefore + 4) ok('Servis: penerimaan ganda ditolak'); else bad('Servis: stok terduplikasi');
+    if (duplicate.status === 400 && stockOf(kode) === stockBefore) ok('Servis: penerimaan ganda ditolak'); else bad('Servis: stok terduplikasi');
     const failed = await req('POST', `/api/service-shipments/${shipment.id}/items/${i2.id}/receive`, { hasil: 'GAGAL', tanggal: '2026-10-16', catatan: 'Tidak dapat diperbaiki' });
-    if (failed.status === 200 && damaged(bid).jumlah === 3 && damaged(bid).status === 'DITAMPUNG'
-        && stockOf(kode) === stockBefore + 4 && failed.json?.data?.status === 'SELESAI') ok('Servis: hasil gagal kembali ke gudang rusak, histori pengiriman tetap tersimpan'); else bad('Servis: penerimaan gagal');
+    if (failed.status === 200 && damaged(bid).jumlah === 0 && damaged(bid).status === 'SELESAI_SERVIS'
+        && stockOf(kode) === stockBefore && trxSince(mark).length === 0 && failed.json?.data?.status === 'SELESAI') ok('Servis: hasil gagal hanya histori, tidak mengembalikan stok/ledger kode lama'); else bad('Servis: penerimaan gagal');
+    // Input barang hasil servis adalah tindakan eksplisit yang terpisah dari penerimaan.
+    const newUrl = `/api/service-shipments/${shipment.id}/items/${i1.id}/new-item`;
+    const newBody = { kode_barang: 'BRG-UJI-REKONDISI', nama_barang: 'Barang Servis Uji', jenis_barang: 'Hasil Rekondisi Uji',
+      satuan: 'unit', harga_barang: 1750, min_stok: 1, tanggal: '2026-10-16', catatan: 'Input ulang hasil servis', stok: 999 };
+    const tryFailed = await req('POST', `/api/service-shipments/${shipment.id}/items/${i2.id}/new-item`, newBody);
+    if (tryFailed.status === 400) ok('Servis: hasil gagal tidak boleh didaftarkan sebagai barang hasil servis berhasil'); else bad('Servis: input baru dari hasil gagal harus ditolak');
+    for (const invalidBody of [
+      { ...newBody, kode_barang: kode.toLowerCase() },
+      { ...newBody, harga_barang: -1 }, { ...newBody, harga_barang: '' },
+      { ...newBody, harga_barang: null }, { ...newBody, harga_barang: 'bukan-harga' },
+      { ...newBody, tanggal: '2026-10-14' }, { ...newBody, jenis_barang: '' },
+    ]) {
+      const response = await req('POST', newUrl, invalidBody);
+      if (response.status === 400 && !stockOf(newBody.kode_barang) && stockOf(kode) === stockBefore && trxSince(mark).length === 0) {
+        ok('Servis: input kode/harga/tanggal/kategori baru tidak valid ditolak tanpa stok atau mutasi');
+      } else bad('Servis: validasi input barang baru tidak atomik', JSON.stringify(invalidBody));
+    }
+    const oldToken = TOKEN;
+    for (const role of ['viewer', 'teknisi']) {
+      TOKEN = (await req('POST', '/api/auth/login', { username: role, password: `${role}123` }, { noAuth: true })).json?.data?.token;
+      const response = await req('POST', newUrl, newBody);
+      if (response.status === 403) ok(`Servis: ${role} tidak boleh input barang rekondisi`); else bad(`Servis: input rekondisi oleh ${role} harus ditolak`);
+    }
+    TOKEN = oldToken;
+    // Kegagalan log mutasi harus membatalkan master, kategori dan tautan sekaligus.
+    db.exec(`CREATE TRIGGER test_fail_rekondisi BEFORE INSERT ON transactions
+      WHEN NEW.kategori_transaksi = 'Hasil Servis / Rekondisi'
+      BEGIN SELECT RAISE(ABORT, 'Uji rollback rekondisi'); END`);
+    try {
+      const failedInsert = await req('POST', newUrl, newBody);
+      const freshLink = db.prepare('SELECT * FROM service_shipment_items WHERE id = ?').get(i1.id);
+      const category = db.prepare('SELECT * FROM categories WHERE nama_kategori = ?').get(newBody.jenis_barang);
+      if (failedInsert.status === 400 && stockOf(newBody.kode_barang) === undefined && !category && !freshLink.kode_baru
+          && stockOf(kode) === stockBefore && trxSince(mark).length === 0) ok('Servis: gagal mencatat mutasi membatalkan master baru, kategori dan referensi secara atomik');
+      else bad('Servis: rollback saat log mutasi gagal');
+    } finally { db.exec('DROP TRIGGER IF EXISTS test_fail_rekondisi'); }
+    const registered = await req('POST', newUrl, newBody);
+    const newMaster = registered.json?.data?.item;
+    const link = registered.json?.data?.shipment?.items.find(i => i.id === i1.id);
+    const logs = trxSince(mark);
+    if (registered.status === 201 && newMaster?.kode_barang === newBody.kode_barang && newMaster.nama_barang === 'Barang Servis Uji'
+        && newMaster.stok === 4 && newMaster.harga_barang === 1750 && stockOf(kode) === stockBefore
+        && newMaster.catatan.includes(shipment.no_surat) && newMaster.catatan.includes(kode)
+        && link?.kode_baru === newBody.kode_barang && link.harga_baru === 1750
+        && logs.length === 1 && logs[0].kode_barang === newBody.kode_barang && logs[0].jenis === 'MASUK'
+        && logs[0].kategori_transaksi === 'Hasil Servis / Rekondisi' && logs[0].jumlah === 4 && logs[0].harga_satuan === 1750) {
+      ok('Servis: input terpisah membuat master kode/harga baru, nama sama, jumlah sesuai hasil, referensi dan mutasi tersambung');
+    } else bad('Servis: input hasil rekondisi', JSON.stringify(registered.json));
+    const again = await req('POST', newUrl, { ...newBody, kode_barang: 'KODE-DUPLIKASI-REKONDISI' });
+    if (again.status === 400 && !stockOf('KODE-DUPLIKASI-REKONDISI') && stockOf(newBody.kode_barang) === 4 && trxSince(mark).length === 1) ok('Servis: hasil yang sama tidak boleh diinput dua kali'); else bad('Servis: input barang baru ganda harus ditolak');
+    // Histori lama yang pernah menambah stok otomatis tidak boleh didaftarkan ulang.
+    db.prepare("UPDATE service_shipment_items SET kode_baru = '', no_transaksi = 'TRX-LEGACY-UJI' WHERE id = ?").run(i1.id);
+    const legacy = await req('POST', newUrl, { ...newBody, kode_barang: 'KODE-LEGACY' });
+    if (legacy.status === 400 && !stockOf('KODE-LEGACY')) ok('Servis: histori versi lama bermutasikan stok otomatis dilindungi dari input ulang'); else bad('Servis: pengaman histori lama');
+    db.prepare('UPDATE service_shipment_items SET kode_baru = ?, no_transaksi = ? WHERE id = ?').run(newBody.kode_barang, link?.no_transaksi || '', i1.id);
     for (const role of ['viewer', 'teknisi', 'gudang']) {
       const login = await req('POST', '/api/auth/login', { username: role, password: `${role}123` }, { noAuth: true });
       const token = login.json?.data?.token;

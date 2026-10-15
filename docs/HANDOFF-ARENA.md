@@ -835,6 +835,16 @@ di README, info versi build (`/api/version`,
 - Verifikasi akhir: **182/182 API + 54/54 render lolos**, 12 pemeriksaan interaksi jsdom lolos, `npm run build` berhasil. Master barang di App ikut dimuat ulang setelah perubahan stok.
 - Belum mencakup biaya servis, pengembalian sebagian dalam satu baris, atau pembatalan pengiriman. Bila perlu jumlah kembali bertahap, pisahkan menjadi entri/pengiriman berbeda terlebih dahulu.
 
+**Keputusan TERBARU: servis hanya histori + input ulang sebagai kode/harga baru (15 Oktober 2026):**
+- **Menggantikan aturan penerimaan pada bagian Pengiriman Servis di atas.** Pemilik tidak ingin barang hasil servis masuk kembali ke kode/harga lama.
+- POST `/:id/items/:itemId/receive` hanya menyimpan hasil, tanggal, catatan dan petugas; baik BERHASIL maupun GAGAL **tidak** menambah stok siap pakai, tidak memulihkan jumlah ledger rusak dan tidak membuat mutasi. Sumber tanpa sisa/pengiriman berjalan ditutup sebagai `SELESAI_SERVIS`; sisa tetap DITAMPUNG. Pengiriman tetap mengurangi jumlah tersedia di ledger rusak (bukan stok siap pakai).
+- Setelah BERHASIL, tombol **Input sebagai Barang Baru** menawarkan tindakan terpisah. Kode/harga baru kosong wajib diisi; nama/kategori/satuan boleh mengikuti asal. Jumlah mengikuti seluruh jumlah per baris servis, bukan input bebas. Simpan membuat master baru, mendaftarkan kategori, dan mutasi MASUK **Hasil Servis / Rekondisi** dengan tanggal input serta harga baru. Kode lama tidak berubah. Semua perubahan atomik.
+- Endpoint baru POST `/api/service-shipments/:id/items/:itemId/new-item`, hanya admin/staff gudang; menolak belum selesai/gagal, kode asal/kode sudah terpakai (case-insensitive), harga/tanggal tidak valid dan input ganda. Barang hasil servis langsung terlihat di Master Barang melalui refresh data global.
+- Migrasi aman menambah `kode_baru`, `nama_baru`, `harga_baru`, `tanggal_input_baru`, `diinput_oleh` pada service_shipment_items. Nomor mutasi baru memakai field `no_transaksi`. Snapshot referensi kode/nomor surat asal disimpan di catatan master dan mutasi; kode baru tampil di histori/CSV/cetak, harga tidak tampil di surat/CSV servis.
+- Data versi lama yang BERHASIL dan sudah bermutasikan stok otomatis (`no_transaksi` terisi, `kode_baru` kosong) tetap dipertahankan, tidak ada pengurangan stok retroaktif. Input ulang dari servis diblokir dengan pesan histori lama untuk mencegah duplikasi.
+- Perbaikan langsung pada barang DITAMPUNG yang **belum dikirim servis** tetap memakai alur Perbaiki lama; aturan histori saja khusus pengiriman servis.
+- Verifikasi: **196 API + 55 render lolos**, 14 pemeriksaan interaksi jsdom (terima tanpa stok → input kode/harga baru → referensi cetak; nama sama dan input ganda) lolos. Dependensi jsdom dipasang terpisah, tidak mengubah package/lockfile proyek.
+
 **Belum dikerjakan / kandidat sesi berikutnya:**
 
 0. Bon Teknisi: opsi **tambah barang ke bon yang sudah berjalan**, pembatasan teknisi hanya melihat/merealisasi bon sendiri,

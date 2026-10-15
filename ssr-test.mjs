@@ -548,6 +548,24 @@ try {
   } else sectionBad('29.1 Render servis atau laporan tidak sesuai');
 } catch (e) { sectionBad(`29.1 Render servis gagal: ${e.message}`); }
 
+console.log('\n=== 30. Servis Histori Saja dan Input Ulang Kode Baru ===');
+try {
+  const { ServiceDocument, ServiceNewItemForm } = await vite.ssrLoadModule('/src/components/ServiceShipments.jsx');
+  const item = { id: 1, kode_barang: 'KODE-ASAL', nama_barang: 'Radio Sama', jenis_asal: 'Wireless', satuan: 'unit', jumlah: 2,
+    hasil: 'BERHASIL', tanggal_kembali: '2026-10-15', kode_baru: 'KODE-REKONDISI', nama_baru: 'Radio Sama', harga_baru: 1234567 };
+  const document = renderToString(React.createElement(ServiceDocument, { shipment: {
+    no_surat: 'SRV-UJI-HISTORI', tanggal: '2026-10-14', tujuan: 'Servis Solok', items: [item],
+  } }));
+  const form = renderToString(React.createElement(ServiceNewItemForm, { item, onSave() {}, onCancel() {} }));
+  const source = fs.readFileSync('src/components/ServiceShipments.jsx', 'utf-8');
+  if (document.includes('tidak menambah stok kode lama') && document.includes('KODE-ASAL') && document.includes('KODE-REKONDISI')
+      && !document.includes('1234567') && form.includes('Harga Baru per Satuan') && form.includes('Kode Barang Baru')
+      && form.includes('Radio Sama') && form.includes('Hasil Servis / Rekondisi') && source.includes('Belum diinput ke Master Barang')
+      && source.includes('Berhasil — histori saja, belum menambah stok') && source.includes('Gagal — histori saja, tidak menambah stok')) {
+    sectionOk('30.1 Hasil servis hanya histori; form input kode/harga baru terpisah; laporan menghubungkan kode tanpa harga');
+  } else sectionBad('30.1 Tampilan histori / input baru tidak sesuai');
+} catch (e) { sectionBad(`30.1 Render histori servis gagal: ${e.message}`); }
+
 await vite.close();
 console.log(`\nHasil: ${pass} lolos, ${fail} gagal`);
 process.exit(fail ? 1 : 0);

@@ -532,7 +532,7 @@ function teksBody(nilai, label) {
 // ==========================================================
 const KONDISI_LIST = ['Baik', 'Rusak Ringan', 'Rusak Berat', 'Afkir'];
 const KONDISI_RUSAK = ['Rusak Ringan', 'Rusak Berat', 'Afkir'];
-const DAMAGED_STATUS = ['DISERVIS', 'DITAMPUNG', 'DIPERBAIKI', 'DIMUSNAHKAN'];
+const DAMAGED_STATUS = ['SELESAI_SERVIS', 'DISERVIS', 'DITAMPUNG', 'DIPERBAIKI', 'DIMUSNAHKAN'];
 function normalizeKondisi(v) {
   if (v === undefined || v === null || String(v).trim() === '') return 'Baik';
   const s = String(v).trim();
@@ -3781,7 +3781,7 @@ app.get('/api/damaged-items', (req, res) => {
   }
 });
 
-registerServiceShipments(app, { db, todayLocal, tanggalOpsional, logStockMutation, getMasterItem });
+registerServiceShipments(app, { db, todayLocal, tanggalOpsional, logStockMutation });
 
 // GET single
 app.get('/api/damaged-items/:id', (req, res) => {

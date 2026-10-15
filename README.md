@@ -84,9 +84,14 @@ Di menu **Barang Rusak**, admin / staff gudang dapat memilih **Kirim untuk Servi
 1. Isi tempat servis, alamat/kontak, tanggal kirim dan catatan.
 2. Pilih beberapa entri berstatus **DITAMPUNG**, lalu atur jumlah masing-masing (boleh sebagian; maksimal 100 entri per pengiriman).
 3. Simpan untuk mendapatkan nomor surat **SRV-…**, histori, rincian serta **Export CSV / Cetak / Simpan PDF** khusus barang yang dipilih, tanpa harga.
-4. Dari **Detail / Cetak → Catat Hasil**, terima seluruh jumlah **per baris**. Berhasil → stok siap pakai bertambah disertai mutasi MASUK; gagal → kembali ke gudang rusak tanpa menambah stok siap pakai. Baris lain dapat diterima belakangan.
+4. Dari **Detail / Cetak → Catat Hasil**, simpan hasil dan tanggal kembali **sebagai histori saja**. Baik BERHASIL maupun GAGAL tidak otomatis menambah stok siap pakai atau mengembalikan jumlah ke ledger kode lama. Pencatatan seluruh jumlah per baris; baris lain dapat menyusul.
+5. Untuk hasil **BERHASIL**, bila siap didaftarkan, pilih **Input sebagai Barang Baru**. Isi **kode baru yang belum digunakan** dan **harga baru**; nama boleh sama. Setelah disimpan, barang muncul di **Master Barang** dan stok masuk tercatat sebagai **Hasil Servis / Rekondisi**, bukan pembelian supplier. Jumlah mengikuti seluruh baris servis tersebut.
 
-Jumlah yang sudah dikirim tidak bisa dikirim ulang atau diperbaiki/dimusnahkan dari daftar gudang rusak; sisa yang belum dikirim tetap dapat diproses. Pengiriman tidak mengurangi stok siap pakai lagi. Histori menyimpan snapshot barang/tujuan, petugas pengirim dan penerima, tanggal serta hasil servis. Viewer/teknisi hanya boleh melihat laporan; pencatatan oleh admin/staff gudang. Tidak ada penghapusan histori servis dari UI.
+Pengiriman mengurangi persediaan rusak yang tersedia, **tidak mengurangi stok siap pakai lagi**. Jika seluruh barang sudah dikirim, status sumber DISERVIS, lalu SELESAI_SERVIS setelah hasil dicatat; sisa yang belum dikirim tetap DITAMPUNG. Penerimaan hasil tidak menimbulkan mutasi stok. Stok baru hanya muncul setelah tindakan **Simpan sebagai Barang Baru**.
+
+Histori menyimpan surat/tujuan, kode asal, barang/jumlah, petugas, tanggal dan hasil servis, serta referensi kode baru dan mutasi masuk setelah input terpisah. Kode asal dan harga asal tidak diubah. Hasil yang sama tidak dapat didaftarkan dua kali. Laporan surat servis dan CSV tetap tanpa harga; informasi kode baru ikut tampil. Admin/staff gudang boleh mencatat, viewer/teknisi hanya melihat. Tidak ada penghapusan histori dari UI.
+
+**Kompatibilitas data lama:** penerimaan BERHASIL dari versi sebelumnya yang sudah otomatis menambah stok memiliki nomor mutasi. Riwayat dan stok tersebut tidak diubah/dikurangi diam-diam; tombol input ulang diblokir dan diberi keterangan untuk mencegah stok ganda. Aturan histori saja berlaku untuk penerimaan setelah pembaruan ini.
 
 
 ### 6. Bon / Barang Bawaan Teknisi (Stok Transit Lapangan)

@@ -324,6 +324,11 @@ export function initDb() {
 
   // Safe migrations for newly added columns if table already exists
   const migrations = [
+    "ALTER TABLE service_shipment_items ADD COLUMN kode_baru TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE service_shipment_items ADD COLUMN nama_baru TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE service_shipment_items ADD COLUMN harga_baru REAL DEFAULT NULL",
+    "ALTER TABLE service_shipment_items ADD COLUMN tanggal_input_baru TEXT DEFAULT NULL",
+    "ALTER TABLE service_shipment_items ADD COLUMN diinput_oleh TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE customer_items ADD COLUMN serial_number TEXT DEFAULT ''",
     "ALTER TABLE fo_items ADD COLUMN serial_number TEXT DEFAULT ''",
     "ALTER TABLE tower_items ADD COLUMN serial_number TEXT DEFAULT ''",

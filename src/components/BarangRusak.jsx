@@ -4,7 +4,7 @@ import { PackageX, Wrench, Trash2, Search, Filter, Plus, Download, RefreshCw, Al
 import { formatRupiah, formatNumber, formatDate, exportToCSV, todayLocal } from '../utils/formatters';
 import { notify } from '../utils/notify';
 
-const STATUS_OPTS = ['SEMUA', 'DISERVIS', 'DITAMPUNG', 'DIPERBAIKI', 'DIMUSNAHKAN'];
+const STATUS_OPTS = ['SEMUA', 'SELESAI_SERVIS', 'DISERVIS', 'DITAMPUNG', 'DIPERBAIKI', 'DIMUSNAHKAN'];
 const KONDISI_OPTS = ['SEMUA', 'Rusak Ringan', 'Rusak Berat', 'Afkir'];
 
 export default function BarangRusak({ items, canEdit = false, onRefreshMaster }) {
@@ -109,7 +109,7 @@ export default function BarangRusak({ items, canEdit = false, onRefreshMaster })
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-black text-slate-900 flex items-center gap-2"><PackageX className="w-5 h-5 text-rose-600" /> Gudang Barang Rusak / Afkir</h2>
-          <p className="text-xs text-slate-500">Ledger terpisah — barang tidak masuk stok siap pakai. Alur: DITAMPUNG → DISERVIS → DIPERBAIKI (kembali ke stok) atau DIMUSNAHKAN.</p>
+          <p className="text-xs text-slate-500">Ledger terpisah — barang tidak masuk stok siap pakai. Alur: DITAMPUNG → DISERVIS → SELESAI_SERVIS (histori saja). Hasil servis diinput terpisah memakai kode dan harga baru. Perbaikan langsung / pemusnahan tetap tersedia untuk barang yang belum dikirim.</p>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={fetchData} className="p-2 bg-white border border-slate-200 rounded-xl hover:bg-slate-50"><RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></button>
