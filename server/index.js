@@ -714,8 +714,22 @@ function logStockMutation({ jenis, kategori, divisi, refId = null, lokasi, item,
   return trxNo;
 }
 
-/** Penarikan saat edit pelanggan wajib punya kondisi & alasan per kode+SN, bukan pengembalian diam-diam. */
-function processCustomerItemChanges({ oldItems, validatedItems, pengembalian, refId, lokasiPenerima, label, dicatatOleh }) {
+/**
+ * Sumber catatan ledger barang rusak per divisi. Nilai lama 'Edit Barang Terpasang Pelanggan'
+ * dipertahankan apa adanya agar riwayat Barang Rusak yang sudah ada tidak berubah.
+ */
+const SUMBER_LEDGER_EDIT = {
+  PELANGGAN: 'Edit Barang Terpasang Pelanggan',
+  'DIVISI FO': 'Edit Barang Terpasang FO',
+  'DIVISI TOWER': 'Edit Barang Terpasang Tower'
+};
+
+/**
+ * Penarikan saat edit barang terpasang (pelanggan / FO / tower) wajib punya kondisi & alasan per kode+SN,
+ * bukan pengembalian diam-diam. Berlaku untuk ketiga divisi sejak alur konfirmasi FO/Tower disamakan
+ * dengan Pelanggan — kalau tidak, modal FO/Tower meminta kondisi yang ujungnya diabaikan server.
+ */
+function processInstalledItemChanges({ oldItems, validatedItems, pengembalian, divisi, refId, lokasiPenerima, label, dicatatOleh }) {
   const { returned, added } = installedItemChanges(oldItems, validatedItems);
   if (pengembalian !== undefined && !Array.isArray(pengembalian)) throw new Error('Rincian pengembalian harus berupa daftar');
   const details = new Map();
@@ -740,14 +754,14 @@ function processCustomerItemChanges({ oldItems, validatedItems, pengembalian, re
     const rusak = isKondisiRusak(item.kondisi);
     if (!rusak) db.prepare("UPDATE items SET stok = stok + ?, updated_at = datetime('now','localtime') WHERE kode_barang = ?").run(item.jumlah, item.kode_barang);
     const trx = logStockMutation({ jenis: 'MASUK', kategori: rusak ? (item.kondisi === 'Afkir' ? 'Barang Afkir' : 'Barang Rusak') : 'Penyesuaian Pengembalian',
-      divisi: 'PELANGGAN', refId, lokasi: lokasiPenerima, item, jumlah: item.jumlah, harga_satuan: item.harga_barang,
+      divisi, refId, lokasi: lokasiPenerima, item, jumlah: item.jumlah, harga_satuan: item.harga_barang,
       kondisi: item.kondisi, keterangan: `${label} — ${item.keterangan} — ${rusak ? 'masuk gudang rusak, bukan stok siap pakai' : 'kembali ke stok siap pakai'}${item.serial_number ? ` [SN: ${item.serial_number}]` : ''}` });
-    if (rusak) buatDamagedEntry({ ...item, keterangan: `${item.keterangan}${item.serial_number ? ` [SN: ${item.serial_number}]` : ''}`, sumber: 'Edit Barang Terpasang Pelanggan', sumber_id: refId,
+    if (rusak) buatDamagedEntry({ ...item, keterangan: `${item.keterangan}${item.serial_number ? ` [SN: ${item.serial_number}]` : ''}`, sumber: SUMBER_LEDGER_EDIT[divisi] || 'Edit Barang Terpasang', sumber_id: refId,
       sumber_nama: lokasiPenerima, no_transaksi: trx, dibuat_oleh: dicatatOleh });
   }
   for (const item of added) {
     db.prepare("UPDATE items SET stok = stok - ?, updated_at = datetime('now','localtime') WHERE kode_barang = ?").run(item.jumlah, item.kode_barang);
-    logStockMutation({ jenis: 'KELUAR', kategori: 'Penyesuaian Pemasangan', divisi: 'PELANGGAN', refId,
+    logStockMutation({ jenis: 'KELUAR', kategori: 'Penyesuaian Pemasangan', divisi, refId,
       lokasi: lokasiPenerima, item, jumlah: item.jumlah, harga_satuan: item.harga_barang,
       keterangan: `${label} — tambahan pemasangan ${item.jumlah} ${item.satuan}` });
   }
@@ -755,13 +769,17 @@ function processCustomerItemChanges({ oldItems, validatedItems, pengembalian, re
 
 /**
  * Sinkronkan barang terpasang pada satu data divisi (pelanggan / FO / tower).
- * Baris lama diganti baris baru, lalu stok gudang disesuaikan berdasarkan SELISIH,
+ * Baris lama diganti baris baru, lalu stok gudang disesuaikan berdasarkan SELISIH per kode+SN,
  * sehingga tidak ada stok yang hilang/tertahan dan setiap selisih tercatat sebagai mutasi.
+ *
+ * Sejak alur konfirmasi FO/Tower disamakan dengan Pelanggan (PR #19 yang belum lengkap),
+ * penyesuaian stok untuk KETIGA divisi dikerjakan processInstalledItemChanges() — termasuk
+ * kewajiban kondisi + alasan dan pengembalian rusak yang masuk ledger barang rusak.
+ * Perulangan selisih agregat per kode yang dulu dipakai FO/Tower dihapus agar tidak ada
+ * dua jalur yang sama-sama mengubah stok (kalau keduanya jalan, stok bisa dipotong dua kali).
  */
 function reconcileInstalledItems({ table, fkColumn, ownerId, oldItems, validatedItems, divisi, refId, lokasiPenerima, label, pengembalian, dicatatOleh }) {
-  if (divisi === 'PELANGGAN') processCustomerItemChanges({ oldItems, validatedItems, pengembalian, refId, lokasiPenerima, label, dicatatOleh });
-  const oldQtyByCode = sumQtyByCode(oldItems);
-  const newQtyByCode = sumQtyByCode(validatedItems);
+  processInstalledItemChanges({ oldItems, validatedItems, pengembalian, divisi, refId, lokasiPenerima, label, dicatatOleh });
 
   // Baris dihapus lalu dibuat ulang — jejak teknisi pemasang & No. Bon (dari fitur Bon Teknisi)
   // dipertahankan dengan mencocokkan kode barang + SN pada baris lama.
@@ -779,31 +797,6 @@ function reconcileInstalledItems({ table, fkColumn, ownerId, oldItems, validated
   for (const it of validatedItems) {
     const j = jejak.get(`${it.kode_barang}|${(it.serial_number || '').toUpperCase()}`) || { dipasang_oleh: '', no_bon: '' };
     insert.run(ownerId, it.kode_barang, it.nama_barang, it.jenis_barang, it.satuan, it.jumlah, it.harga_barang, it.subtotal, it.serial_number, it.referensi_suplayer, it.tanggal_pasang, j.dipasang_oleh, j.no_bon);
-  }
-
-  if (divisi === 'PELANGGAN') return; // Selisih pelanggan sudah diproses per kode+SN beserta kondisi.
-  const semuaKode = new Set([...oldQtyByCode.keys(), ...newQtyByCode.keys()]);
-  for (const kode of semuaKode) {
-    const sebelum = oldQtyByCode.get(kode) || 0;
-    const sesudah = newQtyByCode.get(kode) || 0;
-    const selisih = sesudah - sebelum; // > 0 = ambil dari gudang, < 0 = kembali ke gudang
-    if (selisih === 0) continue;
-
-    db.prepare("UPDATE items SET stok = stok - ?, updated_at = datetime('now','localtime') WHERE kode_barang = ?").run(selisih, kode);
-    const master = db.prepare('SELECT * FROM items WHERE kode_barang = ?').get(kode);
-    if (!master) continue;
-
-    logStockMutation({
-      jenis: selisih > 0 ? 'KELUAR' : 'MASUK',
-      kategori: selisih > 0 ? 'Penyesuaian Pemasangan' : 'Penyesuaian Pengembalian',
-      divisi,
-      refId,
-      lokasi: lokasiPenerima,
-      item: master,
-      jumlah: Math.abs(selisih),
-      harga_satuan: master.harga_barang,
-      keterangan: `${label} — ${selisih > 0 ? 'tambahan pemasangan' : 'pengembalian ke gudang'} ${Math.abs(selisih)} ${master.satuan}`
-    });
   }
 }
 
@@ -2164,7 +2157,8 @@ app.put('/api/fo/:id', (req, res) => {
         refId: Number(id),
         lokasiPenerima: (daerah_lokasi ? daerah_lokasi.trim() : current.daerah_lokasi),
         label: `Edit titik FO ${current.daerah_lokasi}`,
-        pengembalian: req.body.pengembalian
+        pengembalian: req.body.pengembalian,
+        dicatatOleh: req.user?.nama_lengkap || req.user?.username || ''
       });
     }
 
@@ -2423,7 +2417,8 @@ app.put('/api/tower/:id', (req, res) => {
         refId: Number(id),
         lokasiPenerima: (daerah_lokasi ? daerah_lokasi.trim() : current.daerah_lokasi),
         label: `Edit site tower ${current.daerah_lokasi}`,
-        pengembalian: req.body.pengembalian
+        pengembalian: req.body.pengembalian,
+        dicatatOleh: req.user?.nama_lengkap || req.user?.username || ''
       });
     }
 

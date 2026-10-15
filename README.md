@@ -88,6 +88,8 @@ Pada **Edit Pelanggan & Barang Terpasang**, mengurangi jumlah, menghapus baris, 
 
 Pemeriksaan juga dilakukan di server: PUT pelanggan yang mengurangi/mengganti barang wajib membawa `pengembalian` (kode_barang, serial_number, jumlah, kondisi, keterangan) sesuai selisih kode+SN. Penambahan barang atau edit data tanpa pengurangan tidak memerlukan konfirmasi. Unit pengganti tetap membutuhkan stok siap pakai; barang kembali rusak tidak bisa dihitung sebagai stok untuk penggantinya. Semua perubahan disimpan secara atomik.
 
+**Berlaku sama untuk Divisi FO dan Divisi Tower.** Mengurangi jumlah, menghapus baris, atau mengganti SN pada *Edit Titik Divisi FO* / *Edit Site Divisi Tower* juga memunculkan konfirmasi kondisi + alasan sebelum **Simpan Perubahan**, diperiksa dengan aturan yang sama di server (`PUT /api/fo/:id` dan `PUT /api/tower/:id`), dan barang rusak/afkir dicatat di Gudang Barang Rusak dengan sumber **Edit Barang Terpasang FO** / **Edit Barang Terpasang Tower**. Kode+SN yang sama di divisi mana pun memakai satu jalur pemeriksaan (`processInstalledItemChanges`), sehingga tidak ada pengurangan diam-diam di ketiga divisi.
+
 ### Pengiriman servis barang rusak
 
 Di menu **Barang Rusak**, admin / staff gudang dapat memilih **Kirim untuk Servis**:

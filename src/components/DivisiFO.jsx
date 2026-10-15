@@ -19,6 +19,9 @@ import {
 import { formatRupiah, formatNumber, formatDate, todayLocal } from '../utils/formatters';
 import { notify } from '../utils/notify';
 import WorkOrderPrintModal from './WorkOrderPrintModal';
+// Dipakai alur konfirmasi edit barang: penarikan wajib memilih kondisi & mengisi alasan.
+import ReturnInstalledItemsModal from './ReturnInstalledItemsModal';
+import { installedItemChanges } from '../../shared/installedReturns';
 
 const DEFAULT_UNITS = ['unit', 'roll', 'meter', 'bks', 'pcs'];
 
@@ -28,7 +31,6 @@ export default function DivisiFO({ foSites, items, onRefresh, canEdit = true }) 
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
   const [editingSite, setEditingSite] = useState(null);
   const [returnConfirmation, setReturnConfirmation] = useState(null);
-  const [returnPayload, setReturnPayload] = useState(null);
   const [printSite, setPrintSite] = useState(null);
 
   // Form State
@@ -197,13 +199,20 @@ export default function DivisiFO({ foSites, items, onRefresh, canEdit = true }) 
       return;
     }
 
-    const returned = installedItemChanges(formData.items || [], formData.items || []).returned;
+    // Pembandingnya WAJIB barang terpasang yang lama (editingSite.items) — kalau dibandingkan
+    // dengan formData sendiri, selisihnya selalu 0 dan modal konfirmasi tidak pernah muncul.
+    const returned = editingSite ? installedItemChanges(editingSite.items || [], formData.items).returned : [];
     if (returned.length) {
       setFormError('');
       setReturnConfirmation({ items: returned, payload: JSON.parse(JSON.stringify(formData)) });
       return;
     }
 
+    await saveFOSite(formData);
+  };
+
+  // Dipakai dua jalur: simpan biasa dan simpan setelah konfirmasi kondisi pengembalian.
+  const saveFOSite = async (payload) => {
     setIsSubmitting(true);
     setFormError('');
 
@@ -214,7 +223,7 @@ export default function DivisiFO({ foSites, items, onRefresh, canEdit = true }) 
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...formData, pengembalian: returnConfirmation ? returnConfirmation.items : undefined })
+        body: JSON.stringify(payload)
       });
 
       const data = await res.json();
@@ -223,6 +232,7 @@ export default function DivisiFO({ foSites, items, onRefresh, canEdit = true }) 
       }
 
       setIsFormModalOpen(false);
+      setReturnConfirmation(null);
       notify(editingSite ? 'Data titik FO berhasil diperbarui' : 'Titik FO baru berhasil disimpan', 'success');
       onRefresh();
     } catch (err) {
@@ -698,6 +708,7 @@ export default function DivisiFO({ foSites, items, onRefresh, canEdit = true }) 
                     <p className="text-[11px] text-slate-500">
                       Ketika pilih kode barang: nama barang, harga, jenis dan referensi otomatis muncul.
                     </p>
+                    {editingSite && <p className="text-[11px] text-amber-700 mt-1">Jika jumlah dikurangi, baris dihapus, atau SN diganti, saat Simpan Perubahan Anda wajib memilih kondisi dan mengisi alasan pengembalian.</p>}
                   </div>
                   <button
                     type="button"
@@ -848,28 +859,7 @@ export default function DivisiFO({ foSites, items, onRefresh, canEdit = true }) 
         busy={isSubmitting}
         error={formError}
         onCancel={() => { setReturnConfirmation(null); setFormError(''); }}
-        onConfirm={pengembalian => {
-          setIsFormModalOpen(false);
-          // Save with pengembalian data
-          const saveData = { ...returnPayload, pengembalian };
-          // Manually trigger the save logic
-          const url = editingSite ? `/api/fo/${editingSite.id}` : '/api/fo';
-          const method = editingSite ? 'PUT' : 'POST';
-          fetch(url, {
-            method,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(saveData)
-          }).then(async res => {
-            const data = await res.json();
-            if (!res.ok || !data.success) {
-              throw new Error(data.error || 'Gagal menyimpan titik FO');
-            }
-            notify(editingSite ? 'Data titik FO berhasil diperbarui' : 'Titik FO baru berhasil disimpan', 'success');
-            onRefresh();
-          }).catch(err => {
-            setFormError(err.message);
-          });
-        }}
+        onConfirm={pengembalian => saveFOSite({ ...returnConfirmation.payload, pengembalian })}
       />}
 
       {/* Work Order / Berita Acara FO Print Modal */}

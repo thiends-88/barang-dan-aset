@@ -1670,6 +1670,148 @@ console.log('\n=== 6H. EDIT BARANG PELANGGAN: KONDISI PENGEMBALIAN PER BARANG ==
   await req('POST', '/api/reset-seed');
 }
 
+console.log('\n=== 6I. EDIT BARANG FO & TOWER: KONDISI PENGEMBALIAN WAJIB (SEPERTI PELANGGAN) ===');
+{
+  const code = 'UJI-FO-RETURN', code2 = 'UJI-TWR-RETURN', code3 = 'UJI-TWR-NO-STOCK';
+  await req('POST', '/api/items', { kode_barang: code, nama_barang: 'Radio FO Uji', satuan: 'unit', jenis_barang: 'Wireless', stok: 20, harga_barang: 1000 });
+  await req('POST', '/api/items', { kode_barang: code2, nama_barang: 'Antena Tower Uji', satuan: 'unit', jenis_barang: 'Antena', stok: 5, harga_barang: 2000 });
+  await req('POST', '/api/items', { kode_barang: code3, nama_barang: 'Unit Tower Stok Habis', satuan: 'unit', jenis_barang: 'Antena', stok: 1, harga_barang: 500 });
+
+  const snap = allStocks();
+  const mark = maxTrxId();
+
+  // --- DIVISI FO ---
+  const fo = await req('POST', '/api/fo', { daerah_lokasi: 'UJI-FO-RETURN', items: [{ kode_barang: code, jumlah: 3 }, { kode_barang: code, jumlah: 1, serial_number: 'SN-FO-LAMA' }] });
+  const idFo = fo.json?.data?.id;
+  const stokFo = stockOf(code); // 20 - 4
+  const targetFo = [{ kode_barang: code, jumlah: 2 }, { kode_barang: code, serial_number: 'SN-FO-LAMA', jumlah: 1 }];
+  const rincianFo = [{ kode_barang: code, jumlah: 1, kondisi: 'Baik', keterangan: 'Satu unit ditarik karena mutasi jaringan' }];
+  const markFo = maxTrxId(); // setelah pemasangan awal FO, supaya mutasi pemasangan tidak ikut dihitung
+
+  const tanpaRincian = await req('PUT', `/api/fo/${idFo}`, { items: targetFo });
+  const foSetelah = (await req('GET', `/api/fo/${idFo}`)).json?.data;
+  if (tanpaRincian.status === 400 && /Pilih kondisi dan isi keterangan/.test(tanpaRincian.json?.error || '')
+      && stockOf(code) === stokFo && foSetelah?.items.length === 2 && trxSince(markFo).length === 0) {
+    ok('Edit FO: pengurangan tanpa kondisi/alasan ditolak tanpa mengubah stok maupun barang terpasang');
+  } else bad('Edit FO: pengurangan wajib konfirmasi kondisi & alasan', JSON.stringify(tanpaRincian.json));
+
+  for (const pengembalian of [[], [{ ...rincianFo[0], jumlah: 9 }], [{ ...rincianFo[0], kondisi: '' }],
+    [{ ...rincianFo[0], keterangan: '   ' }], [{ ...rincianFo[0], serial_number: 'SN-SALAH' }],
+    [{ ...rincianFo[0], kode_barang: 'KODE-TIDAK-ADA' }]]) {
+    const invalid = await req('PUT', `/api/fo/${idFo}`, { items: targetFo, pengembalian });
+    const current = (await req('GET', `/api/fo/${idFo}`)).json?.data;
+    if (invalid.status === 400 && current?.items.length === 2 && current.total_harga === 4000
+        && stockOf(code) === stokFo && trxSince(markFo).length === 0) {
+      ok('Edit FO: rincian pengembalian salah/kosong ditolak tanpa perubahan barang, nilai, stok atau mutasi');
+    } else bad('Edit FO: rollback rincian pengembalian tidak valid', JSON.stringify(invalid.json));
+  }
+
+  db.exec(`CREATE TRIGGER test_fail_fo_return BEFORE INSERT ON transactions
+    WHEN NEW.divisi = 'DIVISI FO' AND NEW.ref_id = ${Number(idFo)}
+    BEGIN SELECT RAISE(ABORT, 'Uji rollback pengembalian FO'); END`);
+  try {
+    const rejected = await req('PUT', `/api/fo/${idFo}`, { items: targetFo, pengembalian: rincianFo });
+    const original = (await req('GET', `/api/fo/${idFo}`)).json?.data;
+    const ledger = db.prepare('SELECT COUNT(*) AS n FROM damaged_items WHERE sumber_id = ? AND sumber = ?').get(idFo, 'Edit Barang Terpasang FO').n;
+    if (rejected.status === 400 && stockOf(code) === stokFo && original?.items.length === 2
+        && trxSince(markFo).length === 0 && ledger === 0) ok('Edit FO: gagal di tengah pengembalian membatalkan stok, barang terpasang, ledger dan mutasi (atomik)');
+    else bad('Edit FO: pengembalian harus atomik', JSON.stringify(rejected.json));
+  } finally { db.exec('DROP TRIGGER IF EXISTS test_fail_fo_return'); }
+
+  const foBaik = await req('PUT', `/api/fo/${idFo}`, { items: targetFo, pengembalian: rincianFo });
+  const trxFo = trxSince(markFo).filter(t => t.divisi === 'DIVISI FO');
+  if (foBaik.status === 200 && stockOf(code) === stokFo + 1 && foBaik.json?.data?.items.length === 2
+      && trxFo.length === 1 && trxFo[0].jenis === 'MASUK' && trxFo[0].kategori_transaksi === 'Penyesuaian Pengembalian'
+      && trxFo[0].kondisi === 'Baik' && trxFo[0].keterangan.includes(rincianFo[0].keterangan)) {
+    ok('Edit FO: kondisi Baik menambah stok gudang & tercatat sebagai mutasi DIVISI FO dengan alasan operator');
+  } else bad('Edit FO: pengembalian kondisi Baik', JSON.stringify(foBaik.json));
+
+  {
+    const markSn = maxTrxId();
+    const stokSebelum = stockOf(code);
+    const snRusak = await req('PUT', `/api/fo/${idFo}`, { items: [{ kode_barang: code, jumlah: 2 }],
+      pengembalian: [{ kode_barang: code, serial_number: 'SN-FO-LAMA', jumlah: 1, kondisi: 'Rusak Berat', keterangan: 'Unit mati setelah petir' }] });
+    const ledgerFo = db.prepare('SELECT * FROM damaged_items WHERE sumber_id = ? AND sumber = ?').all(idFo, 'Edit Barang Terpasang FO');
+    const mutasi = trxSince(markSn).filter(t => t.divisi === 'DIVISI FO');
+    if (snRusak.status === 200 && stockOf(code) === stokSebelum && ledgerFo.length === 1 && ledgerFo[0].kondisi === 'Rusak Berat'
+        && ledgerFo[0].keterangan.includes('SN-FO-LAMA') && ledgerFo[0].sumber_nama === 'UJI-FO-RETURN'
+        && mutasi.length === 1 && mutasi[0].kategori_transaksi === 'Barang Rusak' && mutasi[0].kondisi === 'Rusak Berat') {
+      ok('Edit FO: unit rusak tidak menambah stok siap pakai; masuk ledger barang rusak bersumber "Edit Barang Terpasang FO"');
+    } else bad('Edit FO: unit rusak harus masuk ledger, bukan stok', JSON.stringify(snRusak.json));
+  }
+
+  // --- DIVISI TOWER ---
+  const tw = await req('POST', '/api/tower', { daerah_lokasi: 'UJI-TWR-RETURN', items: [{ kode_barang: code2, jumlah: 2 }] });
+  const idTw = tw.json?.data?.id;
+  const stokTw = stockOf(code2); // 5 - 2
+  const targetTw = [{ kode_barang: code2, jumlah: 1 }];
+  const markTw = maxTrxId();
+  const tanpaRincianTw = await req('PUT', `/api/tower/${idTw}`, { items: targetTw });
+  if (tanpaRincianTw.status === 400 && stockOf(code2) === stokTw && trxSince(markTw).length === 0) {
+    ok('Edit Tower: pengurangan tanpa kondisi/alasan ditolak tanpa mengubah stok');
+  } else bad('Edit Tower: pengurangan wajib konfirmasi kondisi & alasan', `HTTP ${tanpaRincianTw.status}`);
+
+  const twAfkir = await req('PUT', `/api/tower/${idTw}`, { items: targetTw,
+    pengembalian: [{ kode_barang: code2, jumlah: 1, kondisi: 'Afkir', keterangan: 'Antena patah, tidak layak pakai' }] });
+  const ledgerTw = db.prepare('SELECT * FROM damaged_items WHERE sumber_id = ? AND sumber = ?').all(idTw, 'Edit Barang Terpasang Tower');
+  const mutasiTw = trxSince(markTw).filter(t => t.divisi === 'DIVISI TOWER');
+  if (twAfkir.status === 200 && stockOf(code2) === stokTw && ledgerTw.length === 1 && ledgerTw[0].kondisi === 'Afkir'
+      && ledgerTw[0].dibuat_oleh === 'Administrator Sistem'
+      && mutasiTw.length === 1 && mutasiTw[0].kategori_transaksi === 'Barang Afkir' && mutasiTw[0].jenis === 'MASUK') {
+    ok('Edit Tower: kondisi Afkir masuk ledger barang rusak (sumber "Edit Barang Terpasang Tower") & petugas tercatat');
+  } else bad('Edit Tower: pengembalian Afkir', JSON.stringify(twAfkir.json));
+
+  // Ganti SN (jumlah kode sama) juga pengembalian unit lama → wajib konfirmasi.
+  const snTw = await req('POST', '/api/tower', { daerah_lokasi: 'UJI-TWR-SN', items: [{ kode_barang: code2, jumlah: 1, serial_number: 'SN-TWR-LAMA' }] });
+  const idSnTw = snTw.json?.data?.id;
+  const markSwap = maxTrxId();
+  const stokSwap = stockOf(code2);
+  const tanpaKonfirmasi = await req('PUT', `/api/tower/${idSnTw}`, { items: [{ kode_barang: code2, jumlah: 1, serial_number: 'SN-TWR-BARU' }] });
+  if (tanpaKonfirmasi.status === 400 && stockOf(code2) === stokSwap && trxSince(markSwap).length === 0) {
+    ok('Edit Tower: ganti SN wajib konfirmasi penarikan unit lama meski jumlah kode tetap');
+  } else bad('Edit Tower: ganti SN tanpa konfirmasi', `HTTP ${tanpaKonfirmasi.status}`);
+
+  // Pengembalian rusak tidak boleh dijadikan stok semu untuk memasang pengganti.
+  const twZero = await req('POST', '/api/tower', { daerah_lokasi: 'UJI-TWR-NO-STOCK', items: [{ kode_barang: code3, jumlah: 1, serial_number: 'TWR-OLD' }] });
+  const idTwZero = twZero.json?.data?.id;
+  const stokZero = stockOf(code3); // 1 - 1 = 0
+  const gantiRusak = await req('PUT', `/api/tower/${idTwZero}`, { items: [{ kode_barang: code3, jumlah: 1, serial_number: 'TWR-NEW' }],
+    pengembalian: [{ kode_barang: code3, serial_number: 'TWR-OLD', jumlah: 1, kondisi: 'Afkir', keterangan: 'Rusak total, minta pengganti' }] });
+  const twZeroNow = (await req('GET', `/api/tower/${idTwZero}`)).json?.data;
+  if (gantiRusak.status === 400 && stockOf(code3) === stokZero && twZeroNow?.items[0]?.serial_number === 'TWR-OLD') {
+    ok('Edit Tower: pengembalian Afkir tidak boleh menalangi unit pengganti; stok nol menolak & perubahan atomik');
+  } else bad('Edit Tower: stok semu dari unit rusak', `HTTP ${gantiRusak.status} stok=${stockOf(code3)}`);
+
+  // Edit biasa tanpa pengurangan tetap boleh tanpa konfirmasi (FO & Tower).
+  const biasaFo = await req('PUT', `/api/fo/${idFo}`, { catatan: 'Edit catatan saja', items: [{ kode_barang: code, jumlah: 2 }] });
+  const biasaTw = await req('PUT', `/api/tower/${idTw}`, { catatan: 'Edit catatan saja', items: targetTw });
+  if (biasaFo.status === 200 && biasaTw.status === 200) ok('Edit FO & Tower: tanpa pengurangan tidak meminta konfirmasi pengembalian');
+  else bad('Edit FO & Tower: edit biasa tidak boleh diblokir', `${biasaFo.status}/${biasaTw.status}`);
+
+  // Invarian khusus alur pengembalian: mutasi MASUK ber-kondisi rusak sengaja TIDAK menambah stok
+  // siap pakai (masuk ledger barang rusak), jadi rumusnya stok = snapshot + mutasi siap pakai saja,
+  // dan setiap mutasi rusak wajib punya pasangan baris ledger dengan nomor transaksi yang sama.
+  const LEDGER_KATEGORI = ['Barang Rusak', 'Barang Afkir'];
+  const mutasi6I = trxSince(mark);
+  const siapPakaiDelta = {};
+  for (const t of mutasi6I) {
+    const keLedger = t.jenis === 'MASUK' && LEDGER_KATEGORI.includes(t.kategori_transaksi);
+    if (keLedger) continue;
+    siapPakaiDelta[t.kode_barang] = (siapPakaiDelta[t.kode_barang] || 0) + (t.jenis === 'MASUK' ? 1 : -1) * Number(t.jumlah);
+  }
+  const melenceng = [code, code2, code3].filter(k => stockOf(k) !== Number((snap[k] ?? 0) + (siapPakaiDelta[k] || 0)));
+  const mutasiRusak = mutasi6I.filter(t => t.jenis === 'MASUK' && LEDGER_KATEGORI.includes(t.kategori_transaksi));
+  const ledgerCocok = mutasiRusak.every(t => db.prepare('SELECT COUNT(*) AS n FROM damaged_items WHERE no_transaksi = ?').get(t.no_transaksi).n === 1);
+  if (melenceng.length === 0 && mutasiRusak.length === 2 && ledgerCocok) {
+    ok('Edit FO & Tower: stok = snapshot + mutasi siap pakai; tiap mutasi rusak punya baris ledger dengan nomor transaksi sama');
+  } else {
+    bad('Edit FO & Tower: invarian stok & ledger pengembalian', `melenceng=${melenceng.map(k => `${k}=${stockOf(k)}`).join(',')} mutasiRusak=${mutasiRusak.length} ledgerCocok=${ledgerCocok}`);
+  }
+  checkNoNegativeStock('setelah edit FO & Tower dengan kondisi pengembalian');
+
+  await req('POST', '/api/reset-seed');
+}
+
 console.log('\n=== PEMBERSIHAN: ringkasan publik, kosongkan data & pulihkan seed ===');
 {
   const adminToken = TOKEN;
